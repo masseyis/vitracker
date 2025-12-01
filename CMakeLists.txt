@@ -32,7 +32,8 @@ juce_generate_juce_header(Vitracker)
 
 target_sources(Vitracker PRIVATE
     src/main.cpp
-    src/App.cpp)
+    src/App.cpp
+    src/model/Pattern.cpp)
 
 target_include_directories(Vitracker PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src)
