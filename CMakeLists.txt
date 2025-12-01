@@ -39,7 +39,8 @@ target_sources(Vitracker PRIVATE
     src/model/Song.cpp
     src/model/Project.cpp
     src/input/ModeManager.cpp
-    src/input/KeyHandler.cpp)
+    src/input/KeyHandler.cpp
+    src/ui/Screen.cpp)
 
 target_include_directories(Vitracker PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src)
