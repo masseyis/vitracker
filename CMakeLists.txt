@@ -34,7 +34,8 @@ target_sources(Vitracker PRIVATE
     src/main.cpp
     src/App.cpp
     src/model/Pattern.cpp
-    src/model/Instrument.cpp)
+    src/model/Instrument.cpp
+    src/model/Chain.cpp)
 
 target_include_directories(Vitracker PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src)
