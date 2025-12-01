@@ -1,0 +1,83 @@
+#pragma once
+
+#include "Instrument.h"
+#include "Pattern.h"
+#include "Chain.h"
+#include "Song.h"
+#include <string>
+#include <vector>
+#include <memory>
+
+namespace model {
+
+class Project
+{
+public:
+    static constexpr int MAX_INSTRUMENTS = 128;
+    static constexpr int MAX_PATTERNS = 256;
+    static constexpr int MAX_CHAINS = 128;
+
+    Project();
+    explicit Project(const std::string& name);
+
+    // Project metadata
+    const std::string& getName() const { return name_; }
+    void setName(const std::string& name) { name_ = name; }
+
+    float getTempo() const { return tempo_; }
+    void setTempo(float bpm) { tempo_ = bpm; }
+
+    const std::string& getGrooveTemplate() const { return grooveTemplate_; }
+    void setGrooveTemplate(const std::string& groove) { grooveTemplate_ = groove; }
+
+    // Instruments
+    int addInstrument(const std::string& name = "Untitled");
+    Instrument* getInstrument(int index);
+    const Instrument* getInstrument(int index) const;
+    int getInstrumentCount() const { return static_cast<int>(instruments_.size()); }
+
+    // Patterns
+    int addPattern(const std::string& name = "Untitled");
+    Pattern* getPattern(int index);
+    const Pattern* getPattern(int index) const;
+    int getPatternCount() const { return static_cast<int>(patterns_.size()); }
+
+    // Chains
+    int addChain(const std::string& name = "Untitled");
+    Chain* getChain(int index);
+    const Chain* getChain(int index) const;
+    int getChainCount() const { return static_cast<int>(chains_.size()); }
+
+    // Song
+    Song& getSong() { return song_; }
+    const Song& getSong() const { return song_; }
+
+    // Mixer state
+    struct MixerState
+    {
+        std::array<float, 16> trackVolumes;
+        std::array<float, 16> trackPans;
+        std::array<bool, 16> trackMutes;
+        std::array<bool, 16> trackSolos;
+        std::array<float, 5> busLevels;  // reverb, delay, chorus, drive, sidechain
+        float masterVolume = 1.0f;
+
+        MixerState();
+    };
+
+    MixerState& getMixer() { return mixer_; }
+    const MixerState& getMixer() const { return mixer_; }
+
+private:
+    std::string name_;
+    float tempo_ = 120.0f;
+    std::string grooveTemplate_ = "None";
+
+    std::vector<std::unique_ptr<Instrument>> instruments_;
+    std::vector<std::unique_ptr<Pattern>> patterns_;
+    std::vector<std::unique_ptr<Chain>> chains_;
+    Song song_;
+    MixerState mixer_;
+};
+
+} // namespace model
