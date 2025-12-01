@@ -28,6 +28,8 @@ juce_add_gui_app(Vitracker
     ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/resources/icon.png"
     ICON_SMALL "${CMAKE_CURRENT_SOURCE_DIR}/resources/icon.png")
 
+juce_generate_juce_header(Vitracker)
+
 target_sources(Vitracker PRIVATE
     src/main.cpp
     src/App.cpp)
