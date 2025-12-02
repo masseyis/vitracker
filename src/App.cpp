@@ -3,6 +3,7 @@
 #include "ui/ProjectScreen.h"
 #include "ui/InstrumentScreen.h"
 #include "ui/MixerScreen.h"
+#include "model/ProjectSerializer.h"
 
 App::App()
 {
@@ -80,6 +81,11 @@ App::App()
 
     // Mode change callback
     modeManager_.onModeChanged = [this](input::Mode) { repaint(); };
+
+    // File operations
+    keyHandler_->onSave = [this](const std::string& filename) { saveProject(filename); };
+    keyHandler_->onLoad = [this](const std::string& filename) { loadProject(filename); };
+    keyHandler_->onNew = [this]() { newProject(); };
 
     // Start timer for UI updates (playhead position)
     startTimerHz(30);
@@ -203,4 +209,85 @@ void App::drawStatusBar(juce::Graphics& g, juce::Rectangle<int> area)
                    juce::Justification::centred, true);
         x += 55;
     }
+}
+
+void App::saveProject(const std::string& filename)
+{
+    if (filename.empty())
+    {
+        auto chooser = std::make_shared<juce::FileChooser>("Save Project",
+            juce::File::getSpecialLocation(juce::File::userHomeDirectory),
+            "*.vit");
+
+        chooser->launchAsync(juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles,
+            [this, chooser](const juce::FileChooser& fc)
+            {
+                auto results = fc.getResults();
+                if (!results.isEmpty())
+                {
+                    if (model::ProjectSerializer::save(project_, results[0]))
+                        DBG("Project saved to: " << results[0].getFullPathName());
+                    else
+                        DBG("Failed to save project");
+                }
+            });
+    }
+    else
+    {
+        auto file = juce::File::getSpecialLocation(juce::File::userHomeDirectory)
+            .getChildFile(juce::String(filename) + ".vit");
+
+        if (model::ProjectSerializer::save(project_, file))
+            DBG("Project saved to: " << file.getFullPathName());
+        else
+            DBG("Failed to save project");
+    }
+}
+
+void App::loadProject(const std::string& filename)
+{
+    if (filename.empty())
+    {
+        auto chooser = std::make_shared<juce::FileChooser>("Load Project",
+            juce::File::getSpecialLocation(juce::File::userHomeDirectory),
+            "*.vit");
+
+        chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+            [this, chooser](const juce::FileChooser& fc)
+            {
+                auto results = fc.getResults();
+                if (!results.isEmpty())
+                {
+                    if (model::ProjectSerializer::load(project_, results[0]))
+                    {
+                        DBG("Project loaded from: " << results[0].getFullPathName());
+                        audioEngine_.stop();
+                        repaint();
+                    }
+                    else
+                        DBG("Failed to load project");
+                }
+            });
+    }
+    else
+    {
+        auto file = juce::File::getSpecialLocation(juce::File::userHomeDirectory)
+            .getChildFile(juce::String(filename) + ".vit");
+
+        if (model::ProjectSerializer::load(project_, file))
+        {
+            DBG("Project loaded from: " << file.getFullPathName());
+            audioEngine_.stop();
+            repaint();
+        }
+        else
+            DBG("Failed to load project");
+    }
+}
+
+void App::newProject()
+{
+    audioEngine_.stop();
+    project_ = model::Project("Untitled");
+    repaint();
 }

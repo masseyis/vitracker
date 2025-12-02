@@ -196,6 +196,32 @@ bool KeyHandler::handleCommandMode(const juce::KeyPress& key)
 void KeyHandler::executeCommand(const std::string& command)
 {
     DBG("Executing command: " << command);
+
+    if (command == "w")
+    {
+        if (onSave) onSave("");
+    }
+    else if (command.length() > 2 && command.substr(0, 2) == "w ")
+    {
+        if (onSave) onSave(command.substr(2));
+    }
+    else if (command == "e")
+    {
+        if (onLoad) onLoad("");
+    }
+    else if (command.length() > 2 && command.substr(0, 2) == "e ")
+    {
+        if (onLoad) onLoad(command.substr(2));
+    }
+    else if (command == "new")
+    {
+        if (onNew) onNew();
+    }
+    else if (command == "q")
+    {
+        juce::JUCEApplication::getInstance()->systemRequestedQuit();
+    }
+
     if (onCommand) onCommand(command);
 }
 

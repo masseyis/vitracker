@@ -25,6 +25,9 @@ public:
     std::function<void()> onRedo;
     std::function<void(const std::string&)> onCommand;  // Executed command
     std::function<void(const juce::KeyPress&)> onEditKey;  // Forward edit keys to screen
+    std::function<void(const std::string&)> onSave;  // :w [filename]
+    std::function<void(const std::string&)> onLoad;  // :e [filename]
+    std::function<void()> onNew;  // :new
 
 private:
     bool handleNormalMode(const juce::KeyPress& key);

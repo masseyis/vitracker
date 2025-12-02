@@ -28,6 +28,10 @@ private:
     void switchScreen(int screenIndex);
     void drawStatusBar(juce::Graphics& g, juce::Rectangle<int> area);
 
+    void saveProject(const std::string& filename = "");
+    void loadProject(const std::string& filename);
+    void newProject();
+
     model::Project project_;
     input::ModeManager modeManager_;
     std::unique_ptr<input::KeyHandler> keyHandler_;
