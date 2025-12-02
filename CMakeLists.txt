@@ -30,6 +30,14 @@ juce_add_gui_app(Vitracker
 
 juce_generate_juce_header(Vitracker)
 
+# Collect Plaits/stmlib DSP source files
+file(GLOB_RECURSE DSP_SOURCES
+    src/dsp/*.cpp
+    src/dsp/*.cc)
+
+# Exclude STM32-specific system files that won't compile on desktop
+list(FILTER DSP_SOURCES EXCLUDE REGEX ".*stmlib/system/.*")
+
 target_sources(Vitracker PRIVATE
     src/main.cpp
     src/App.cpp
@@ -41,10 +49,13 @@ target_sources(Vitracker PRIVATE
     src/input/ModeManager.cpp
     src/input/KeyHandler.cpp
     src/ui/Screen.cpp
-    src/ui/PatternScreen.cpp)
+    src/ui/PatternScreen.cpp
+    src/audio/Voice.cpp
+    ${DSP_SOURCES})
 
 target_include_directories(Vitracker PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/dsp)
 
 target_compile_definitions(Vitracker PUBLIC
     JUCE_WEB_BROWSER=0
