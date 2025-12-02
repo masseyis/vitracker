@@ -99,6 +99,37 @@ App::App()
     keyHandler_->onLoad = [this](const std::string& filename) { loadProject(filename); };
     keyHandler_->onNew = [this]() { newProject(); };
 
+    // Selection and clipboard operations
+    keyHandler_->onStartSelection = [this]() {
+        if (auto* ps = dynamic_cast<ui::PatternScreen*>(screens_[currentScreen_].get()))
+            ps->startSelection();
+    };
+
+    keyHandler_->onUpdateSelection = [this]() {
+        if (auto* ps = dynamic_cast<ui::PatternScreen*>(screens_[currentScreen_].get()))
+            ps->updateSelection();
+    };
+
+    keyHandler_->onYank = [this]() {
+        if (auto* ps = dynamic_cast<ui::PatternScreen*>(screens_[currentScreen_].get()))
+            ps->yankSelection();
+    };
+
+    keyHandler_->onPaste = [this]() {
+        if (auto* ps = dynamic_cast<ui::PatternScreen*>(screens_[currentScreen_].get()))
+            ps->paste();
+    };
+
+    keyHandler_->onDelete = [this]() {
+        if (auto* ps = dynamic_cast<ui::PatternScreen*>(screens_[currentScreen_].get()))
+            ps->deleteSelection();
+    };
+
+    keyHandler_->onTranspose = [this](int semitones) {
+        if (auto* ps = dynamic_cast<ui::PatternScreen*>(screens_[currentScreen_].get()))
+            ps->transpose(semitones);
+    };
+
     // Start timer for UI updates (playhead position)
     startTimerHz(30);
 }

@@ -21,6 +21,9 @@ public:
     std::function<void()> onYank;
     std::function<void()> onPaste;
     std::function<void()> onDelete;
+    std::function<void(int)> onTranspose;  // semitones
+    std::function<void()> onStartSelection;
+    std::function<void()> onUpdateSelection;
     std::function<void()> onUndo;
     std::function<void()> onRedo;
     std::function<void(const std::string&)> onCommand;  // Executed command

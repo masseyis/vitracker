@@ -58,6 +58,7 @@ bool KeyHandler::handleNormalMode(const juce::KeyPress& key)
     }
     if (textChar == 'v')
     {
+        if (onStartSelection) onStartSelection();
         modeManager_.setMode(Mode::Visual);
         return true;
     }
@@ -141,8 +142,10 @@ bool KeyHandler::handleVisualMode(const juce::KeyPress& key)
     if (keyCode == juce::KeyPress::upKey || keyCode == juce::KeyPress::downKey ||
         keyCode == juce::KeyPress::leftKey || keyCode == juce::KeyPress::rightKey)
     {
-        // TODO: Extend selection
-        return handleNormalMode(key);
+        // Navigate and update selection
+        bool result = handleNormalMode(key);
+        if (onUpdateSelection) onUpdateSelection();
+        return result;
     }
 
     auto textChar = key.getTextCharacter();
@@ -156,6 +159,30 @@ bool KeyHandler::handleVisualMode(const juce::KeyPress& key)
     {
         if (onDelete) onDelete();
         modeManager_.setMode(Mode::Normal);
+        return true;
+    }
+
+    // Transpose up/down
+    if (textChar == '>')
+    {
+        if (onTranspose) onTranspose(1);
+        return true;
+    }
+    if (textChar == '<')
+    {
+        if (onTranspose) onTranspose(-1);
+        return true;
+    }
+
+    // Transpose by octave with Shift+</> or +/-
+    if (textChar == '+' || textChar == '=')
+    {
+        if (onTranspose) onTranspose(12);
+        return true;
+    }
+    if (textChar == '-')
+    {
+        if (onTranspose) onTranspose(-12);
         return true;
     }
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Screen.h"
+#include "../model/Clipboard.h"
 
 namespace ui {
 
@@ -24,6 +25,16 @@ public:
     int getCurrentPatternIndex() const { return currentPattern_; }
     void setCurrentPattern(int index) { currentPattern_ = index; }
 
+    // Selection and clipboard operations
+    void startSelection();
+    void updateSelection();
+    void yankSelection();
+    void deleteSelection();
+    void paste();
+    void transpose(int semitones);
+
+    bool hasSelection() const { return hasSelection_; }
+
 private:
     void drawHeader(juce::Graphics& g, juce::Rectangle<int> area);
     void drawTrackHeaders(juce::Graphics& g, juce::Rectangle<int> area);
@@ -42,6 +53,10 @@ private:
     static constexpr int TRACK_HEADER_HEIGHT = 24;
     static constexpr int ROW_HEIGHT = 18;
     static constexpr int COLUMN_WIDTHS[] = {36, 24, 24, 48, 48, 48};  // note, inst, vol, fx1, fx2, fx3
+
+    // Selection state
+    model::Selection selection_;
+    bool hasSelection_ = false;
 };
 
 } // namespace ui

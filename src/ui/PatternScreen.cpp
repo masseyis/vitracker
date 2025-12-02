@@ -1,6 +1,7 @@
 #include "PatternScreen.h"
 #include <map>
 #include <cctype>
+#include <algorithm>
 
 namespace ui {
 
@@ -265,6 +266,124 @@ std::string PatternScreen::noteToString(int8_t note) const
     int octave = note / 12;
     int noteName = note % 12;
     return std::string(noteNames[noteName]) + std::to_string(octave);
+}
+
+void PatternScreen::startSelection()
+{
+    selection_.startTrack = cursorTrack_;
+    selection_.startRow = cursorRow_;
+    selection_.endTrack = cursorTrack_;
+    selection_.endRow = cursorRow_;
+    hasSelection_ = true;
+}
+
+void PatternScreen::updateSelection()
+{
+    if (hasSelection_)
+    {
+        selection_.endTrack = cursorTrack_;
+        selection_.endRow = cursorRow_;
+    }
+}
+
+void PatternScreen::yankSelection()
+{
+    if (!hasSelection_) return;
+
+    auto* pattern = project_.getPattern(currentPattern_);
+    if (!pattern) return;
+
+    int minT = selection_.minTrack();
+    int maxT = selection_.maxTrack();
+    int minR = selection_.minRow();
+    int maxR = selection_.maxRow();
+
+    std::vector<std::vector<model::Step>> data;
+    data.resize(static_cast<size_t>(maxT - minT + 1));
+
+    for (int t = minT; t <= maxT; ++t)
+    {
+        for (int r = minR; r <= maxR; ++r)
+        {
+            data[static_cast<size_t>(t - minT)].push_back(pattern->getStep(t, r));
+        }
+    }
+
+    model::Clipboard::instance().copy(data);
+    hasSelection_ = false;
+    repaint();
+}
+
+void PatternScreen::deleteSelection()
+{
+    if (!hasSelection_) return;
+
+    auto* pattern = project_.getPattern(currentPattern_);
+    if (!pattern) return;
+
+    int minT = selection_.minTrack();
+    int maxT = selection_.maxTrack();
+    int minR = selection_.minRow();
+    int maxR = selection_.maxRow();
+
+    for (int t = minT; t <= maxT; ++t)
+    {
+        for (int r = minR; r <= maxR; ++r)
+        {
+            pattern->getStep(t, r) = model::Step{};
+        }
+    }
+
+    hasSelection_ = false;
+    repaint();
+}
+
+void PatternScreen::paste()
+{
+    auto& clipboard = model::Clipboard::instance();
+    if (clipboard.isEmpty()) return;
+
+    auto* pattern = project_.getPattern(currentPattern_);
+    if (!pattern) return;
+
+    const auto& data = clipboard.getData();
+    int width = clipboard.getWidth();
+    int height = clipboard.getHeight();
+
+    for (int t = 0; t < width && (cursorTrack_ + t) < 16; ++t)
+    {
+        for (int r = 0; r < height && (cursorRow_ + r) < pattern->getLength(); ++r)
+        {
+            pattern->getStep(cursorTrack_ + t, cursorRow_ + r) = data[static_cast<size_t>(t)][static_cast<size_t>(r)];
+        }
+    }
+
+    repaint();
+}
+
+void PatternScreen::transpose(int semitones)
+{
+    auto* pattern = project_.getPattern(currentPattern_);
+    if (!pattern) return;
+
+    int minT = hasSelection_ ? selection_.minTrack() : cursorTrack_;
+    int maxT = hasSelection_ ? selection_.maxTrack() : cursorTrack_;
+    int minR = hasSelection_ ? selection_.minRow() : cursorRow_;
+    int maxR = hasSelection_ ? selection_.maxRow() : cursorRow_;
+
+    for (int t = minT; t <= maxT; ++t)
+    {
+        for (int r = minR; r <= maxR; ++r)
+        {
+            auto& step = pattern->getStep(t, r);
+            if (step.note > 0 && step.note <= 127)  // Valid MIDI note
+            {
+                step.note = static_cast<int8_t>(std::clamp(static_cast<int>(step.note) + semitones, 0, 127));
+            }
+        }
+    }
+
+    repaint();
 }
 
 } // namespace ui
