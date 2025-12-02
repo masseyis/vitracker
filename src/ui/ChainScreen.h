@@ -12,6 +12,7 @@ public:
     void paint(juce::Graphics& g) override;
     void resized() override;
     void navigate(int dx, int dy) override;
+    void handleEdit(const juce::KeyPress& key) override;
     void handleEditKey(const juce::KeyPress& key);
 
     std::string getTitle() const override { return "CHAIN"; }

@@ -161,6 +161,11 @@ void ChainScreen::navigate(int dx, int dy)
     repaint();
 }
 
+void ChainScreen::handleEdit(const juce::KeyPress& key)
+{
+    handleEditKey(key);
+}
+
 void ChainScreen::handleEditKey(const juce::KeyPress& key)
 {
     auto* chain = project_.getChain(currentChain_);

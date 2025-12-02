@@ -162,6 +162,11 @@ void InstrumentScreen::navigate(int dx, int dy)
     repaint();
 }
 
+void InstrumentScreen::handleEdit(const juce::KeyPress& key)
+{
+    handleEditKey(key);
+}
+
 void InstrumentScreen::handleEditKey(const juce::KeyPress& key)
 {
     auto* instrument = project_.getInstrument(currentInstrument_);

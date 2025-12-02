@@ -115,6 +115,11 @@ void MixerScreen::navigate(int dx, int dy)
     repaint();
 }
 
+void MixerScreen::handleEdit(const juce::KeyPress& key)
+{
+    handleEditKey(key);
+}
+
 void MixerScreen::handleEditKey(const juce::KeyPress& key)
 {
     auto& mixer = project_.getMixer();

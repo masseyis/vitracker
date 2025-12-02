@@ -129,6 +129,11 @@ void SongScreen::navigate(int dx, int dy)
     repaint();
 }
 
+void SongScreen::handleEdit(const juce::KeyPress& key)
+{
+    handleEditKey(key);
+}
+
 void SongScreen::handleEditKey(const juce::KeyPress& key)
 {
     auto textChar = key.getTextCharacter();
