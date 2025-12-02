@@ -1,4 +1,6 @@
 #include "PatternScreen.h"
+#include <map>
+#include <cctype>
 
 namespace ui {
 
@@ -53,8 +55,82 @@ void PatternScreen::navigate(int dx, int dy)
 
 void PatternScreen::handleEdit(const juce::KeyPress& key)
 {
-    // TODO: Implement value editing
-    juce::ignoreUnused(key);
+    // Forward to handleEditKey
+    handleEditKey(key);
+}
+
+void PatternScreen::handleEditKey(const juce::KeyPress& key)
+{
+    auto* pattern = project_.getPattern(currentPattern_);
+    if (!pattern) return;
+
+    auto& step = pattern->getStep(cursorTrack_, cursorRow_);
+    auto textChar = key.getTextCharacter();
+
+    // Note entry using keyboard layout (like a piano)
+    // Lower row: Z=C, X=D, C=E, V=F, B=G, N=A, M=B
+    // Upper row: Q=C, W=D, E=E, R=F, T=G, Y=A, U=B (one octave up)
+    // S=C#, D=D#, G=F#, H=G#, J=A#, 2=C#, 3=D#, 5=F#, 6=G#, 7=A#
+
+    static const std::map<char, int> noteMap = {
+        // Lower octave (octave 4)
+        {'z', 48}, {'s', 49}, {'x', 50}, {'d', 51}, {'c', 52},
+        {'v', 53}, {'g', 54}, {'b', 55}, {'h', 56}, {'n', 57},
+        {'j', 58}, {'m', 59}, {',', 60},
+        // Upper octave (octave 5)
+        {'q', 60}, {'2', 61}, {'w', 62}, {'3', 63}, {'e', 64},
+        {'r', 65}, {'5', 66}, {'t', 67}, {'6', 68}, {'y', 69},
+        {'7', 70}, {'u', 71}, {'i', 72},
+    };
+
+    char lowerChar = static_cast<char>(std::tolower(textChar));
+
+    auto it = noteMap.find(lowerChar);
+    if (it != noteMap.end())
+    {
+        step.note = static_cast<int8_t>(it->second);
+        if (step.instrument < 0) step.instrument = 0;  // Default instrument
+
+        // Preview the note
+        if (onNotePreview) onNotePreview(step.note, step.instrument);
+
+        // Move down to next row
+        cursorRow_ = std::min(cursorRow_ + 1, pattern->getLength() - 1);
+        repaint();
+        return;
+    }
+
+    // Backspace/Delete clears cell
+    if (key.getKeyCode() == juce::KeyPress::backspaceKey ||
+        key.getKeyCode() == juce::KeyPress::deleteKey)
+    {
+        step.clear();
+        repaint();
+        return;
+    }
+
+    // Period for note off
+    if (textChar == '.')
+    {
+        step.note = model::Step::NOTE_OFF;
+        cursorRow_ = std::min(cursorRow_ + 1, pattern->getLength() - 1);
+        repaint();
+        return;
+    }
+
+    // +/- to change octave of current note
+    if (textChar == '+' || textChar == '=')
+    {
+        if (step.note >= 0 && step.note < 120) step.note += 12;
+        repaint();
+        return;
+    }
+    if (textChar == '-')
+    {
+        if (step.note >= 12) step.note -= 12;
+        repaint();
+        return;
+    }
 }
 
 void PatternScreen::drawHeader(juce::Graphics& g, juce::Rectangle<int> area)

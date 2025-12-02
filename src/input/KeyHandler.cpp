@@ -118,7 +118,13 @@ bool KeyHandler::handleEditMode(const juce::KeyPress& key)
         return handleNormalMode(key);
     }
 
-    // TODO: Handle value entry
+    // Forward to edit handler callback
+    if (onEditKey)
+    {
+        onEditKey(key);
+        return true;
+    }
+
     return false;
 }
 

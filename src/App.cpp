@@ -40,6 +40,22 @@ App::App()
         addAndMakeVisible(screens_[currentScreen_].get());
     }
 
+    // Edit mode key forwarding
+    keyHandler_->onEditKey = [this](const juce::KeyPress& key) {
+        if (auto* patternScreen = dynamic_cast<ui::PatternScreen*>(screens_[currentScreen_].get()))
+        {
+            patternScreen->handleEditKey(key);
+        }
+    };
+
+    // Wire up note preview for PatternScreen
+    if (auto* patternScreen = dynamic_cast<ui::PatternScreen*>(screens_[3].get()))
+    {
+        patternScreen->onNotePreview = [this](int note, int instrument) {
+            audioEngine_.triggerNote(0, note, instrument, 1.0f);
+        };
+    }
+
     // Mode change callback
     modeManager_.onModeChanged = [this](input::Mode) { repaint(); };
 

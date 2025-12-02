@@ -14,8 +14,12 @@ public:
 
     void navigate(int dx, int dy) override;
     void handleEdit(const juce::KeyPress& key) override;
+    void handleEditKey(const juce::KeyPress& key);
 
     std::string getTitle() const override { return "PATTERN"; }
+
+    // For external triggering
+    std::function<void(int note, int instrument)> onNotePreview;
 
     int getCurrentPatternIndex() const { return currentPattern_; }
     void setCurrentPattern(int index) { currentPattern_ = index; }
