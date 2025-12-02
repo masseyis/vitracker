@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Voice.h"
+#include "Effects.h"
 #include "../model/Project.h"
 #include <JuceHeader.h>
 #include <array>
@@ -54,6 +55,8 @@ private:
     double samplesUntilNextRow_ = 0.0;
 
     std::mutex mutex_;
+
+    EffectsProcessor effects_;
 };
 
 } // namespace audio

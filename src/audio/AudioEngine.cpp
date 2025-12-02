@@ -54,6 +54,13 @@ void AudioEngine::triggerNote(int track, int note, int instrumentIndex, float ve
     {
         voice->noteOn(note, velocity, *instrument);
         trackVoices_[track] = voice;
+
+        // Trigger sidechain if this instrument has high sidechainDuck
+        // (typically bass drums or similar trigger instruments)
+        if (instrument->getSends().sidechainDuck > 0.5f)
+        {
+            effects_.sidechain.trigger();
+        }
     }
 }
 
@@ -101,6 +108,10 @@ void AudioEngine::prepareToPlay(int samplesPerBlockExpected, double sampleRate)
     {
         voice.init();
     }
+
+    // Initialize effects processor
+    effects_.init(sampleRate);
+    effects_.setTempo(project_ ? project_->getTempo() : 120.0f);
 }
 
 void AudioEngine::releaseResources()
@@ -118,6 +129,10 @@ void AudioEngine::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferTo
     float* outR = bufferToFill.buffer->getWritePointer(1, bufferToFill.startSample);
 
     int numSamples = bufferToFill.numSamples;
+
+    // Update tempo for effects
+    if (project_)
+        effects_.setTempo(project_->getTempo());
 
     // If playing, process pattern
     if (playing_ && project_)
@@ -172,6 +187,39 @@ void AudioEngine::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferTo
         }
     }
 
+    // Process effects per sample using average send levels from active voices
+    float avgReverb = 0.0f, avgDelay = 0.0f, avgChorus = 0.0f;
+    float avgDrive = 0.0f, avgSidechain = 0.0f;
+    int activeCount = 0;
+
+    for (const auto& voice : voices_)
+    {
+        if (voice.isActive())
+        {
+            avgReverb += voice.getReverbSend();
+            avgDelay += voice.getDelaySend();
+            avgChorus += voice.getChorusSend();
+            avgDrive += voice.getDriveSend();
+            avgSidechain += voice.getSidechainSend();
+            activeCount++;
+        }
+    }
+
+    if (activeCount > 0)
+    {
+        avgReverb /= static_cast<float>(activeCount);
+        avgDelay /= static_cast<float>(activeCount);
+        avgChorus /= static_cast<float>(activeCount);
+        avgDrive /= static_cast<float>(activeCount);
+        avgSidechain /= static_cast<float>(activeCount);
+    }
+
+    // Apply effects per sample
+    for (int i = 0; i < numSamples; ++i)
+    {
+        effects_.process(outL[i], outR[i], avgReverb, avgDelay, avgChorus, avgDrive, avgSidechain);
+    }
+
     // Apply master volume from mixer
     if (project_)
     {
@@ -180,6 +228,10 @@ void AudioEngine::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferTo
         {
             outL[i] *= masterVol;
             outR[i] *= masterVol;
+
+            // Clip to prevent distortion
+            outL[i] = std::clamp(outL[i], -1.0f, 1.0f);
+            outR[i] = std::clamp(outR[i], -1.0f, 1.0f);
         }
     }
 }
