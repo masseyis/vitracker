@@ -51,6 +51,7 @@ target_sources(Vitracker PRIVATE
     src/ui/Screen.cpp
     src/ui/PatternScreen.cpp
     src/audio/Voice.cpp
+    src/audio/AudioEngine.cpp
     ${DSP_SOURCES})
 
 target_include_directories(Vitracker PRIVATE
