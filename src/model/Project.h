@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 #include <memory>
+#include <array>
 
 namespace model {
 
@@ -52,6 +53,15 @@ public:
     Song& getSong() { return song_; }
     const Song& getSong() const { return song_; }
 
+    // Per-track groove
+    int getTrackGroove(int track) const {
+        if (track >= 0 && track < 16) return trackGrooves_[static_cast<size_t>(track)];
+        return 0;
+    }
+    void setTrackGroove(int track, int grooveIndex) {
+        if (track >= 0 && track < 16) trackGrooves_[static_cast<size_t>(track)] = grooveIndex;
+    }
+
     // Mixer state
     struct MixerState
     {
@@ -72,6 +82,7 @@ private:
     std::string name_;
     float tempo_ = 120.0f;
     std::string grooveTemplate_ = "None";
+    std::array<int, 16> trackGrooves_ = {};  // Groove template index per track (0 = straight)
 
     std::vector<std::unique_ptr<Instrument>> instruments_;
     std::vector<std::unique_ptr<Pattern>> patterns_;

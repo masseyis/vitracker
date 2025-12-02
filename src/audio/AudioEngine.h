@@ -3,6 +3,7 @@
 #include "Voice.h"
 #include "Effects.h"
 #include "../model/Project.h"
+#include "../model/Groove.h"
 #include <JuceHeader.h>
 #include <array>
 #include <mutex>
@@ -58,6 +59,7 @@ private:
     std::mutex mutex_;
 
     EffectsProcessor effects_;
+    model::GrooveManager grooveManager_;
 };
 
 } // namespace audio

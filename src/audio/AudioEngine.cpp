@@ -178,7 +178,14 @@ void AudioEngine::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferTo
 
                     // Advance row
                     currentRow_ = (currentRow_ + 1) % pattern->getLength();
-                    samplesUntilNextRow_ = samplesPerRow;
+
+                    // Apply groove timing from track 0's groove template
+                    float grooveOffset = 0.0f;
+                    int grooveIdx = project_->getTrackGroove(0);
+                    const auto& groove = grooveManager_.getTemplate(grooveIdx);
+                    grooveOffset = groove.timings[static_cast<size_t>(currentRow_ % 16)];
+
+                    samplesUntilNextRow_ = samplesPerRow * (1.0 + static_cast<double>(grooveOffset));
                 }
 
                 int blockSamples = std::min(numSamples - processed,
