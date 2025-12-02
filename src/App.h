@@ -4,12 +4,14 @@
 #include "model/Project.h"
 #include "input/ModeManager.h"
 #include "input/KeyHandler.h"
+#include "audio/AudioEngine.h"
 #include "ui/Screen.h"
 #include <memory>
 #include <array>
 
 class App : public juce::Component,
-            public juce::KeyListener
+            public juce::KeyListener,
+            public juce::Timer
 {
 public:
     App();
@@ -20,6 +22,8 @@ public:
 
     bool keyPressed(const juce::KeyPress& key, juce::Component* originatingComponent) override;
 
+    void timerCallback() override;
+
 private:
     void switchScreen(int screenIndex);
     void drawStatusBar(juce::Graphics& g, juce::Rectangle<int> area);
@@ -28,10 +32,12 @@ private:
     input::ModeManager modeManager_;
     std::unique_ptr<input::KeyHandler> keyHandler_;
 
-    std::array<std::unique_ptr<ui::Screen>, 6> screens_;
-    int currentScreen_ = 3;  // Start on Pattern screen (index 3, key '4')
+    audio::AudioEngine audioEngine_;
+    juce::AudioDeviceManager deviceManager_;
+    juce::AudioSourcePlayer audioSourcePlayer_;
 
-    bool isPlaying_ = false;
+    std::array<std::unique_ptr<ui::Screen>, 6> screens_;
+    int currentScreen_ = 3;
 
     static constexpr int STATUS_BAR_HEIGHT = 28;
 

@@ -7,18 +7,31 @@ App::App()
     setWantsKeyboardFocus(true);
     addKeyListener(this);
 
+    // Set up audio
+    audioEngine_.setProject(&project_);
+
+    deviceManager_.initialiseWithDefaultDevices(0, 2);
+    audioSourcePlayer_.setSource(&audioEngine_);
+    deviceManager_.addAudioCallback(&audioSourcePlayer_);
+
     // Create key handler
     keyHandler_ = std::make_unique<input::KeyHandler>(modeManager_);
 
     // Set up key handler callbacks
     keyHandler_->onScreenSwitch = [this](int screen) { switchScreen(screen - 1); };
-    keyHandler_->onPlayStop = [this]() { isPlaying_ = !isPlaying_; repaint(); };
+    keyHandler_->onPlayStop = [this]() {
+        if (audioEngine_.isPlaying())
+            audioEngine_.stop();
+        else
+            audioEngine_.play();
+        repaint();
+    };
     keyHandler_->onNavigate = [this](int dx, int dy) {
         if (screens_[currentScreen_])
             screens_[currentScreen_]->navigate(dx, dy);
     };
 
-    // Create screens (only PatternScreen for now, others will be placeholders)
+    // Create screens
     screens_[3] = std::make_unique<ui::PatternScreen>(project_, modeManager_);
 
     // Add active screen as child
@@ -29,11 +42,25 @@ App::App()
 
     // Mode change callback
     modeManager_.onModeChanged = [this](input::Mode) { repaint(); };
+
+    // Start timer for UI updates (playhead position)
+    startTimerHz(30);
 }
 
 App::~App()
 {
+    stopTimer();
+    deviceManager_.removeAudioCallback(&audioSourcePlayer_);
+    audioSourcePlayer_.setSource(nullptr);
     removeKeyListener(this);
+}
+
+void App::timerCallback()
+{
+    if (audioEngine_.isPlaying())
+    {
+        repaint();  // Update playhead display
+    }
 }
 
 void App::paint(juce::Graphics& g)
@@ -115,10 +142,13 @@ void App::drawStatusBar(juce::Graphics& g, juce::Rectangle<int> area)
     g.drawText("-- " + juce::String(modeManager_.getModeString()) + " --",
                area.removeFromLeft(200), juce::Justification::centredLeft, true);
 
-    // Transport (center)
-    g.setColour(isPlaying_ ? juce::Colours::lightgreen : juce::Colours::grey);
-    g.drawText(isPlaying_ ? "PLAYING" : "STOPPED",
-               area.reduced(100, 0), juce::Justification::centred, true);
+    // Transport (center-left)
+    bool isPlaying = audioEngine_.isPlaying();
+    g.setColour(isPlaying ? juce::Colours::lightgreen : juce::Colours::grey);
+    juce::String transportText = isPlaying ?
+        juce::String("PLAYING Row ") + juce::String(audioEngine_.getCurrentRow()) :
+        "STOPPED";
+    g.drawText(transportText, area.removeFromLeft(150), juce::Justification::centred, true);
 
     // Tempo (right)
     g.setColour(juce::Colours::white);
