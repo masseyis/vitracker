@@ -4,6 +4,7 @@
 #include "ui/InstrumentScreen.h"
 #include "ui/MixerScreen.h"
 #include "ui/SongScreen.h"
+#include "ui/ChainScreen.h"
 #include "model/ProjectSerializer.h"
 
 App::App()
@@ -39,6 +40,7 @@ App::App()
     // Create screens
     screens_[0] = std::make_unique<ui::ProjectScreen>(project_, modeManager_);
     screens_[1] = std::make_unique<ui::SongScreen>(project_, modeManager_);
+    screens_[2] = std::make_unique<ui::ChainScreen>(project_, modeManager_);
     screens_[3] = std::make_unique<ui::PatternScreen>(project_, modeManager_);
     screens_[4] = std::make_unique<ui::InstrumentScreen>(project_, modeManager_);
     screens_[5] = std::make_unique<ui::MixerScreen>(project_, modeManager_);
@@ -66,6 +68,10 @@ App::App()
         else if (auto* songScreen = dynamic_cast<ui::SongScreen*>(screens_[currentScreen_].get()))
         {
             songScreen->handleEditKey(key);
+        }
+        else if (auto* chainScreen = dynamic_cast<ui::ChainScreen*>(screens_[currentScreen_].get()))
+        {
+            chainScreen->handleEditKey(key);
         }
     };
 
