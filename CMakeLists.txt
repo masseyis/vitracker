@@ -46,6 +46,7 @@ target_sources(Vitracker PRIVATE
     src/model/Chain.cpp
     src/model/Song.cpp
     src/model/Project.cpp
+    src/model/ProjectSerializer.cpp
     src/input/ModeManager.cpp
     src/input/KeyHandler.cpp
     src/ui/Screen.cpp
