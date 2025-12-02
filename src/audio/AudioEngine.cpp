@@ -5,6 +5,7 @@ namespace audio {
 AudioEngine::AudioEngine()
 {
     trackVoices_.fill(nullptr);
+    trackChainPositions_.fill(0);
 }
 
 AudioEngine::~AudioEngine() = default;
@@ -17,6 +18,11 @@ void AudioEngine::play()
         playing_ = true;
         currentRow_ = 0;
         samplesUntilNextRow_ = 0.0;
+
+        // Reset song playback state
+        currentSongRow_ = 0;
+        currentChainPosition_ = 0;
+        trackChainPositions_.fill(0);
     }
 }
 
@@ -149,7 +155,9 @@ void AudioEngine::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferTo
     // If playing, process pattern
     if (playing_ && project_)
     {
-        auto* pattern = project_->getPattern(currentPattern_);
+        int patternIdx = getCurrentPatternIndex();
+        auto* pattern = project_->getPattern(patternIdx);
+
         if (pattern)
         {
             double samplesPerBeat = sampleRate_ * 60.0 / project_->getTempo();
@@ -176,8 +184,23 @@ void AudioEngine::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferTo
                         }
                     }
 
-                    // Advance row
-                    currentRow_ = (currentRow_ + 1) % pattern->getLength();
+                    // Advance row within pattern
+                    currentRow_++;
+                    if (currentRow_ >= pattern->getLength())
+                    {
+                        currentRow_ = 0;
+
+                        if (playMode_ == PlayMode::Song)
+                        {
+                            // Advance to next pattern in chain, or next chain in song
+                            advanceChain();
+
+                            // Get the new pattern for next iteration
+                            patternIdx = getCurrentPatternIndex();
+                            pattern = project_->getPattern(patternIdx);
+                        }
+                        // In Pattern mode, just loop the same pattern
+                    }
 
                     // Apply groove timing from track 0's groove template
                     float grooveOffset = 0.0f;
@@ -261,10 +284,108 @@ void AudioEngine::advancePlayhead()
     // Called from audio thread - advance to next row
     if (!project_) return;
 
-    auto* pattern = project_->getPattern(currentPattern_);
+    auto* pattern = project_->getPattern(getCurrentPatternIndex());
     if (pattern)
     {
         currentRow_ = (currentRow_ + 1) % pattern->getLength();
+    }
+}
+
+int AudioEngine::getCurrentPatternIndex() const
+{
+    if (playMode_ == PlayMode::Pattern)
+    {
+        // In pattern mode, just return the current pattern
+        return currentPattern_;
+    }
+
+    // In song mode, get the pattern from the current chain position
+    if (!project_) return currentPattern_;
+
+    const auto& song = project_->getSong();
+
+    // Get chain index from track 0 at current song row (track 0 drives timing)
+    const auto& track0 = song.getTrack(0);
+    if (currentSongRow_ >= static_cast<int>(track0.size()))
+    {
+        return currentPattern_;  // Fallback
+    }
+
+    int chainIndex = track0[static_cast<size_t>(currentSongRow_)];
+    if (chainIndex < 0)
+    {
+        return currentPattern_;  // Empty slot
+    }
+
+    auto* chain = project_->getChain(chainIndex);
+    if (!chain || chain->getPatternCount() == 0)
+    {
+        return currentPattern_;  // Empty chain
+    }
+
+    // Get pattern index from current position in chain
+    if (currentChainPosition_ >= chain->getPatternCount())
+    {
+        return currentPattern_;
+    }
+
+    return chain->getPatternIndices()[static_cast<size_t>(currentChainPosition_)];
+}
+
+void AudioEngine::advanceChain()
+{
+    // Called when we finish a pattern in song mode
+    if (!project_) return;
+
+    const auto& song = project_->getSong();
+    const auto& track0 = song.getTrack(0);
+
+    if (track0.empty() || song.getLength() == 0)
+    {
+        // No song data - stay on current pattern
+        return;
+    }
+
+    // Get current chain
+    if (currentSongRow_ >= static_cast<int>(track0.size()))
+    {
+        currentSongRow_ = 0;
+        currentChainPosition_ = 0;
+        return;
+    }
+
+    int chainIndex = track0[static_cast<size_t>(currentSongRow_)];
+    auto* chain = (chainIndex >= 0) ? project_->getChain(chainIndex) : nullptr;
+
+    if (chain && chain->getPatternCount() > 0)
+    {
+        // Advance to next pattern in chain
+        currentChainPosition_++;
+
+        if (currentChainPosition_ >= chain->getPatternCount())
+        {
+            // Finished this chain, move to next song row
+            currentChainPosition_ = 0;
+            currentSongRow_++;
+
+            // Check for end of song
+            if (currentSongRow_ >= song.getLength())
+            {
+                currentSongRow_ = 0;  // Loop back to beginning
+            }
+        }
+    }
+    else
+    {
+        // Empty chain slot - skip to next song row
+        currentChainPosition_ = 0;
+        currentSongRow_++;
+
+        // Check for end of song
+        if (currentSongRow_ >= song.getLength())
+        {
+            currentSongRow_ = 0;  // Loop back to beginning
+        }
     }
 }
 

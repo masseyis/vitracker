@@ -28,9 +28,19 @@ App::App()
     keyHandler_->onScreenSwitch = [this](int screen) { switchScreen(screen - 1); };
     keyHandler_->onPlayStop = [this]() {
         if (audioEngine_.isPlaying())
+        {
             audioEngine_.stop();
+        }
         else
+        {
+            // Set play mode based on current screen
+            if (currentScreen_ == 1)  // Song screen
+                audioEngine_.setPlayMode(audio::AudioEngine::PlayMode::Song);
+            else
+                audioEngine_.setPlayMode(audio::AudioEngine::PlayMode::Pattern);
+
             audioEngine_.play();
+        }
         repaint();
     };
     keyHandler_->onNavigate = [this](int dx, int dy) {

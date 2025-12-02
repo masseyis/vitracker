@@ -16,6 +16,8 @@ public:
     static constexpr int NUM_VOICES = 64;
     static constexpr int NUM_TRACKS = 16;
 
+    enum class PlayMode { Pattern, Song };
+
     AudioEngine();
     ~AudioEngine() override;
 
@@ -26,8 +28,14 @@ public:
     void stop();
     bool isPlaying() const { return playing_; }
 
+    // Play mode
+    void setPlayMode(PlayMode mode) { playMode_ = mode; }
+    PlayMode getPlayMode() const { return playMode_; }
+
     int getCurrentRow() const { return currentRow_; }
     int getCurrentPattern() const { return currentPattern_; }
+    int getSongRow() const { return currentSongRow_; }
+    int getChainPosition() const { return currentChainPosition_; }
 
     // Trigger a note
     void triggerNote(int track, int note, int instrumentIndex, float velocity);
@@ -42,6 +50,8 @@ public:
 private:
     Voice* allocateVoice(int note);
     void advancePlayhead();
+    void advanceChain();
+    int getCurrentPatternIndex() const;
 
     model::Project* project_ = nullptr;
 
@@ -55,6 +65,12 @@ private:
     int currentRow_ = 0;
     int currentPattern_ = 0;
     double samplesUntilNextRow_ = 0.0;
+
+    // Song playback state
+    PlayMode playMode_ = PlayMode::Pattern;
+    int currentSongRow_ = 0;           // Position in song (which row of chains)
+    int currentChainPosition_ = 0;     // Position within current chain (which pattern)
+    std::array<int, NUM_TRACKS> trackChainPositions_;  // Per-track chain position
 
     std::mutex mutex_;
 
