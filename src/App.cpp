@@ -1,5 +1,8 @@
 #include "App.h"
 #include "ui/PatternScreen.h"
+#include "ui/ProjectScreen.h"
+#include "ui/InstrumentScreen.h"
+#include "ui/MixerScreen.h"
 
 App::App()
 {
@@ -32,7 +35,10 @@ App::App()
     };
 
     // Create screens
+    screens_[0] = std::make_unique<ui::ProjectScreen>(project_, modeManager_);
     screens_[3] = std::make_unique<ui::PatternScreen>(project_, modeManager_);
+    screens_[4] = std::make_unique<ui::InstrumentScreen>(project_, modeManager_);
+    screens_[5] = std::make_unique<ui::MixerScreen>(project_, modeManager_);
 
     // Add active screen as child
     if (screens_[currentScreen_])
@@ -46,12 +52,28 @@ App::App()
         {
             patternScreen->handleEditKey(key);
         }
+        else if (auto* instrumentScreen = dynamic_cast<ui::InstrumentScreen*>(screens_[currentScreen_].get()))
+        {
+            instrumentScreen->handleEditKey(key);
+        }
+        else if (auto* mixerScreen = dynamic_cast<ui::MixerScreen*>(screens_[currentScreen_].get()))
+        {
+            mixerScreen->handleEditKey(key);
+        }
     };
 
     // Wire up note preview for PatternScreen
     if (auto* patternScreen = dynamic_cast<ui::PatternScreen*>(screens_[3].get()))
     {
         patternScreen->onNotePreview = [this](int note, int instrument) {
+            audioEngine_.triggerNote(0, note, instrument, 1.0f);
+        };
+    }
+
+    // Wire up note preview for InstrumentScreen
+    if (auto* instrumentScreen = dynamic_cast<ui::InstrumentScreen*>(screens_[4].get()))
+    {
+        instrumentScreen->onNotePreview = [this](int note, int instrument) {
             audioEngine_.triggerNote(0, note, instrument, 1.0f);
         };
     }
