@@ -91,4 +91,87 @@ void Voice::render(float* outL, float* outR, int numSamples)
     }
 }
 
+void Voice::setFX(model::FXType type, uint8_t value)
+{
+    switch (type)
+    {
+        case model::FXType::ARP:
+            arpNotes_[0] = 0;
+            arpNotes_[1] = (value >> 4) & 0x0F;
+            arpNotes_[2] = value & 0x0F;
+            arpIndex_ = 0;
+            arpTicks_ = 0;
+            break;
+
+        case model::FXType::POR:
+            portamentoSpeed_ = value / 255.0f * 0.1f;  // Speed factor
+            break;
+
+        case model::FXType::VIB:
+            vibratoSpeed_ = ((value >> 4) & 0x0F) / 15.0f * 10.0f;  // 0-10 Hz
+            vibratoDepth_ = (value & 0x0F) / 15.0f * 0.5f;  // 0-0.5 semitones
+            break;
+
+        case model::FXType::VOL:
+            // Volume slide - high nibble = up, low nibble = down
+            volumeSlide_ = ((value >> 4) & 0x0F) - (value & 0x0F);
+            break;
+
+        case model::FXType::PAN:
+            // Pan handled in mixer (not per-voice)
+            break;
+
+        case model::FXType::DLY:
+            // Retrigger handled in AudioEngine
+            break;
+
+        default:
+            break;
+    }
+}
+
+void Voice::processFX()
+{
+    // Arpeggio
+    if (arpNotes_[1] != 0 || arpNotes_[2] != 0)
+    {
+        arpTicks_++;
+        if (arpTicks_ >= 6)  // Every 6 samples (fast arpeggio)
+        {
+            arpTicks_ = 0;
+            arpIndex_ = (arpIndex_ + 1) % 3;
+        }
+        // Adjust pitch based on arp
+        float arpOffset = static_cast<float>(arpNotes_[arpIndex_]);
+        modulations_.note = arpOffset;
+    }
+
+    // Portamento
+    if (portamentoSpeed_ > 0.0f && portamentoTarget_ != currentPitch_)
+    {
+        float diff = portamentoTarget_ - currentPitch_;
+        if (std::abs(diff) > 0.01f)
+        {
+            currentPitch_ += diff * portamentoSpeed_;
+            modulations_.note = currentPitch_ - static_cast<float>(currentNote_);
+        }
+    }
+
+    // Vibrato
+    if (vibratoDepth_ > 0.0f)
+    {
+        vibratoPhase_ += vibratoSpeed_ / static_cast<float>(sampleRate_);
+        if (vibratoPhase_ >= 1.0f) vibratoPhase_ -= 1.0f;
+
+        float vibrato = std::sin(vibratoPhase_ * 2.0f * 3.14159f) * vibratoDepth_;
+        modulations_.note += vibrato;
+    }
+
+    // Volume slide (applied per tick, small increments)
+    if (volumeSlide_ != 0.0f)
+    {
+        modulations_.level = std::clamp(modulations_.level + volumeSlide_ * 0.001f, 0.0f, 1.0f);
+    }
+}
+
 } // namespace audio

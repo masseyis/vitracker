@@ -2,7 +2,9 @@
 
 #include "plaits/dsp/voice.h"
 #include "../model/Instrument.h"
+#include "../model/Step.h"
 #include <memory>
+#include <cmath>
 
 namespace audio {
 
@@ -13,6 +15,7 @@ public:
     ~Voice();
 
     void init();
+    void setSampleRate(double sampleRate) { sampleRate_ = sampleRate; }
     void noteOn(int note, float velocity, const model::Instrument& instrument);
     void noteOff();
 
@@ -28,6 +31,11 @@ public:
     float getChorusSend() const { return chorusSend_; }
     float getDriveSend() const { return driveSend_; }
     float getSidechainSend() const { return sidechainSend_; }
+
+    // FX command processing
+    void setFX(model::FXType type, uint8_t value);
+    void processFX();
+    void setPortamentoTarget(int targetNote) { portamentoTarget_ = targetNote; }
 
 private:
     plaits::Voice plaitsVoice_;
@@ -48,6 +56,19 @@ private:
     float chorusSend_ = 0.0f;
     float driveSend_ = 0.0f;
     float sidechainSend_ = 0.0f;
+
+    // FX state
+    double sampleRate_ = 48000.0;
+    float currentPitch_ = 0.0f;
+    float portamentoTarget_ = 0.0f;
+    float portamentoSpeed_ = 0.0f;
+    float vibratoPhase_ = 0.0f;
+    float vibratoSpeed_ = 0.0f;
+    float vibratoDepth_ = 0.0f;
+    int arpIndex_ = 0;
+    int arpNotes_[3] = {0, 0, 0};
+    int arpTicks_ = 0;
+    float volumeSlide_ = 0.0f;
 
     static uint64_t globalTime_;
 };

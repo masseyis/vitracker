@@ -236,17 +236,17 @@ juce::var ProjectSerializer::patternToVar(const Pattern& pattern)
                 // FX commands
                 if (!step.fx1.isEmpty())
                 {
-                    s->setProperty("fx1c", static_cast<int>(step.fx1.command));
+                    s->setProperty("fx1c", static_cast<int>(step.fx1.type));
                     s->setProperty("fx1v", static_cast<int>(step.fx1.value));
                 }
                 if (!step.fx2.isEmpty())
                 {
-                    s->setProperty("fx2c", static_cast<int>(step.fx2.command));
+                    s->setProperty("fx2c", static_cast<int>(step.fx2.type));
                     s->setProperty("fx2v", static_cast<int>(step.fx2.value));
                 }
                 if (!step.fx3.isEmpty())
                 {
-                    s->setProperty("fx3c", static_cast<int>(step.fx3.command));
+                    s->setProperty("fx3c", static_cast<int>(step.fx3.type));
                     s->setProperty("fx3v", static_cast<int>(step.fx3.value));
                 }
 
@@ -291,17 +291,17 @@ void ProjectSerializer::varToPattern(Pattern& pattern, const juce::var& v)
 
                 if (stepObj->hasProperty("fx1c"))
                 {
-                    step.fx1.command = static_cast<uint8_t>(static_cast<int>(stepObj->getProperty("fx1c")));
+                    step.fx1.type = static_cast<FXType>(static_cast<int>(stepObj->getProperty("fx1c")));
                     step.fx1.value = static_cast<uint8_t>(static_cast<int>(stepObj->getProperty("fx1v")));
                 }
                 if (stepObj->hasProperty("fx2c"))
                 {
-                    step.fx2.command = static_cast<uint8_t>(static_cast<int>(stepObj->getProperty("fx2c")));
+                    step.fx2.type = static_cast<FXType>(static_cast<int>(stepObj->getProperty("fx2c")));
                     step.fx2.value = static_cast<uint8_t>(static_cast<int>(stepObj->getProperty("fx2v")));
                 }
                 if (stepObj->hasProperty("fx3c"))
                 {
-                    step.fx3.command = static_cast<uint8_t>(static_cast<int>(stepObj->getProperty("fx3c")));
+                    step.fx3.type = static_cast<FXType>(static_cast<int>(stepObj->getProperty("fx3c")));
                     step.fx3.value = static_cast<uint8_t>(static_cast<int>(stepObj->getProperty("fx3v")));
                 }
             }

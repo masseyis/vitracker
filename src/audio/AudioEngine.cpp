@@ -36,6 +36,12 @@ void AudioEngine::stop()
 
 void AudioEngine::triggerNote(int track, int note, int instrumentIndex, float velocity)
 {
+    model::Step emptyStep;
+    triggerNote(track, note, instrumentIndex, velocity, emptyStep);
+}
+
+void AudioEngine::triggerNote(int track, int note, int instrumentIndex, float velocity, const model::Step& step)
+{
     std::lock_guard<std::mutex> lock(mutex_);
 
     if (!project_) return;
@@ -52,8 +58,14 @@ void AudioEngine::triggerNote(int track, int note, int instrumentIndex, float ve
     Voice* voice = allocateVoice(note);
     if (voice)
     {
+        voice->setSampleRate(sampleRate_);
         voice->noteOn(note, velocity, *instrument);
         trackVoices_[track] = voice;
+
+        // Apply FX commands from the step
+        if (!step.fx1.isEmpty()) voice->setFX(step.fx1.type, step.fx1.value);
+        if (!step.fx2.isEmpty()) voice->setFX(step.fx2.type, step.fx2.value);
+        if (!step.fx3.isEmpty()) voice->setFX(step.fx3.type, step.fx3.value);
 
         // Trigger sidechain if this instrument has high sidechainDuck
         // (typically bass drums or similar trigger instruments)
@@ -160,7 +172,7 @@ void AudioEngine::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferTo
                         else if (step.note >= 0 && step.instrument >= 0)
                         {
                             float vel = step.volume < 0xFF ? step.volume / 255.0f : 1.0f;
-                            triggerNote(track, step.note, step.instrument, vel);
+                            triggerNote(track, step.note, step.instrument, vel, step);
                         }
                     }
 
@@ -178,11 +190,12 @@ void AudioEngine::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferTo
         }
     }
 
-    // Render all active voices
+    // Render all active voices and process FX
     for (auto& voice : voices_)
     {
         if (voice.isActive())
         {
+            voice.processFX();  // Process per-voice FX (arp, portamento, vibrato, etc.)
             voice.render(outL, outR, numSamples);
         }
     }

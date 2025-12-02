@@ -2,16 +2,36 @@
 
 #include <cstdint>
 #include <string>
+#include <cstdio>
 
 namespace model {
 
+enum class FXType : uint8_t
+{
+    None = 0,
+    ARP,   // Arpeggio - value = semitones (high nibble up, low nibble down)
+    POR,   // Portamento - value = speed
+    VIB,   // Vibrato - value = speed/depth
+    VOL,   // Volume slide - value = up/down amount
+    PAN,   // Pan - value = position
+    DLY    // Retrigger/delay - value = ticks
+};
+
 struct FXCommand
 {
-    uint8_t command = 0;   // 0 = none, 1 = ARP, 2 = POR, etc.
+    FXType type = FXType::None;
     uint8_t value = 0;
 
-    bool isEmpty() const { return command == 0; }
-    void clear() { command = 0; value = 0; }
+    bool isEmpty() const { return type == FXType::None; }
+    void clear() { type = FXType::None; value = 0; }
+
+    std::string toString() const {
+        if (type == FXType::None) return "....";
+        static const char* names[] = {"....", "ARP", "POR", "VIB", "VOL", "PAN", "DLY"};
+        char buf[8];
+        snprintf(buf, sizeof(buf), "%s%02X", names[static_cast<int>(type)], value);
+        return buf;
+    }
 };
 
 struct Step

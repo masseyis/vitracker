@@ -30,6 +30,7 @@ public:
 
     // Trigger a note
     void triggerNote(int track, int note, int instrumentIndex, float velocity);
+    void triggerNote(int track, int note, int instrumentIndex, float velocity, const model::Step& step);
     void releaseNote(int track);
 
     // AudioSource interface
