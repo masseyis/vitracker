@@ -386,4 +386,99 @@ void PatternScreen::transpose(int semitones)
     repaint();
 }
 
+void PatternScreen::interpolate()
+{
+    if (!hasSelection_) return;
+
+    auto* pattern = project_.getPattern(currentPattern_);
+    if (!pattern) return;
+
+    // For each track in selection
+    for (int t = selection_.minTrack(); t <= selection_.maxTrack(); ++t)
+    {
+        int minR = selection_.minRow();
+        int maxR = selection_.maxRow();
+        int range = maxR - minR;
+        if (range <= 0) continue;
+
+        auto& first = pattern->getStep(t, minR);
+        auto& last = pattern->getStep(t, maxR);
+
+        // Interpolate volume if both have values
+        if (first.volume < 0xFF && last.volume < 0xFF)
+        {
+            for (int r = minR + 1; r < maxR; ++r)
+            {
+                auto& step = pattern->getStep(t, r);
+                float t_factor = static_cast<float>(r - minR) / static_cast<float>(range);
+                step.volume = static_cast<uint8_t>(
+                    static_cast<float>(first.volume) +
+                    (static_cast<float>(last.volume) - static_cast<float>(first.volume)) * t_factor
+                );
+            }
+        }
+    }
+
+    repaint();
+}
+
+void PatternScreen::randomize(int percent)
+{
+    auto* pattern = project_.getPattern(currentPattern_);
+    if (!pattern) return;
+
+    int minT = hasSelection_ ? selection_.minTrack() : cursorTrack_;
+    int maxT = hasSelection_ ? selection_.maxTrack() : cursorTrack_;
+    int minR = hasSelection_ ? selection_.minRow() : cursorRow_;
+    int maxR = hasSelection_ ? selection_.maxRow() : cursorRow_;
+
+    for (int t = minT; t <= maxT; ++t)
+    {
+        for (int r = minR; r <= maxR; ++r)
+        {
+            auto& step = pattern->getStep(t, r);
+            if (step.note > 0 && step.note <= 127)
+            {
+                int variance = (std::rand() % (percent * 2 + 1)) - percent;
+                int semitoneVariance = variance * 12 / 100;
+                step.note = static_cast<int8_t>(std::clamp(static_cast<int>(step.note) + semitoneVariance, 1, 127));
+            }
+        }
+    }
+
+    repaint();
+}
+
+void PatternScreen::doublePattern()
+{
+    auto* pattern = project_.getPattern(currentPattern_);
+    if (!pattern) return;
+
+    int oldLength = pattern->getLength();
+    int newLength = std::min(oldLength * 2, 128);
+
+    pattern->setLength(newLength);
+
+    // Duplicate steps
+    for (int t = 0; t < 16; ++t)
+    {
+        for (int r = 0; r < oldLength; ++r)
+        {
+            pattern->getStep(t, r + oldLength) = pattern->getStep(t, r);
+        }
+    }
+
+    repaint();
+}
+
+void PatternScreen::halvePattern()
+{
+    auto* pattern = project_.getPattern(currentPattern_);
+    if (!pattern) return;
+
+    int newLength = std::max(pattern->getLength() / 2, 1);
+    pattern->setLength(newLength);
+    repaint();
+}
+
 } // namespace ui

@@ -32,6 +32,10 @@ public:
     void deleteSelection();
     void paste();
     void transpose(int semitones);
+    void interpolate();
+    void randomize(int percent);
+    void doublePattern();
+    void halvePattern();
 
     bool hasSelection() const { return hasSelection_; }
 

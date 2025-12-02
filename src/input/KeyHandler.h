@@ -31,6 +31,10 @@ public:
     std::function<void(const std::string&)> onSave;  // :w [filename]
     std::function<void(const std::string&)> onLoad;  // :e [filename]
     std::function<void()> onNew;  // :new
+    std::function<void()> onInterpolate;  // :interpolate
+    std::function<void(int)> onRandomize;  // :randomize N
+    std::function<void()> onDouble;  // :double
+    std::function<void()> onHalve;  // :halve
 
 private:
     bool handleNormalMode(const juce::KeyPress& key);

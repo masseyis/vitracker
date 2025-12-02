@@ -131,6 +131,26 @@ App::App()
             ps->transpose(semitones);
     };
 
+    keyHandler_->onInterpolate = [this]() {
+        if (auto* ps = dynamic_cast<ui::PatternScreen*>(screens_[currentScreen_].get()))
+            ps->interpolate();
+    };
+
+    keyHandler_->onRandomize = [this](int percent) {
+        if (auto* ps = dynamic_cast<ui::PatternScreen*>(screens_[currentScreen_].get()))
+            ps->randomize(percent);
+    };
+
+    keyHandler_->onDouble = [this]() {
+        if (auto* ps = dynamic_cast<ui::PatternScreen*>(screens_[currentScreen_].get()))
+            ps->doublePattern();
+    };
+
+    keyHandler_->onHalve = [this]() {
+        if (auto* ps = dynamic_cast<ui::PatternScreen*>(screens_[currentScreen_].get()))
+            ps->halvePattern();
+    };
+
     // Undo/Redo
     keyHandler_->onUndo = [this]() {
         model::UndoManager::instance().undo();

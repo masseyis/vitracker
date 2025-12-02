@@ -248,6 +248,32 @@ void KeyHandler::executeCommand(const std::string& command)
     {
         juce::JUCEApplication::getInstance()->systemRequestedQuit();
     }
+    else if (command.length() >= 10 && command.substr(0, 10) == "transpose ")
+    {
+        try {
+            int semitones = std::stoi(command.substr(10));
+            if (onTranspose) onTranspose(semitones);
+        } catch (...) {}
+    }
+    else if (command == "interpolate")
+    {
+        if (onInterpolate) onInterpolate();
+    }
+    else if (command.length() >= 10 && command.substr(0, 10) == "randomize ")
+    {
+        try {
+            int percent = std::stoi(command.substr(10));
+            if (onRandomize) onRandomize(percent);
+        } catch (...) {}
+    }
+    else if (command == "double")
+    {
+        if (onDouble) onDouble();
+    }
+    else if (command == "halve")
+    {
+        if (onHalve) onHalve();
+    }
 
     if (onCommand) onCommand(command);
 }
