@@ -6,6 +6,7 @@
 #include "ui/SongScreen.h"
 #include "ui/ChainScreen.h"
 #include "model/ProjectSerializer.h"
+#include "model/UndoManager.h"
 
 App::App()
 {
@@ -128,6 +129,17 @@ App::App()
     keyHandler_->onTranspose = [this](int semitones) {
         if (auto* ps = dynamic_cast<ui::PatternScreen*>(screens_[currentScreen_].get()))
             ps->transpose(semitones);
+    };
+
+    // Undo/Redo
+    keyHandler_->onUndo = [this]() {
+        model::UndoManager::instance().undo();
+        repaint();
+    };
+
+    keyHandler_->onRedo = [this]() {
+        model::UndoManager::instance().redo();
+        repaint();
     };
 
     // Start timer for UI updates (playhead position)
