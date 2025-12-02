@@ -160,6 +160,34 @@ void App::timerCallback()
     {
         repaint();  // Update playhead display
     }
+
+    // Autosave every 60 seconds (1800 frames at 30fps)
+    autosaveCounter_++;
+    if (autosaveCounter_ >= 1800)
+    {
+        autosaveCounter_ = 0;
+        autosave();
+    }
+}
+
+juce::File App::getAutosavePath() const
+{
+    auto dir = juce::File::getSpecialLocation(juce::File::userHomeDirectory)
+        .getChildFile(".vitracker")
+        .getChildFile("autosave");
+
+    if (!dir.exists())
+        dir.createDirectory();
+
+    return dir.getChildFile("autosave.vit");
+}
+
+void App::autosave()
+{
+    if (model::ProjectSerializer::save(project_, getAutosavePath()))
+    {
+        DBG("Autosaved to: " << getAutosavePath().getFullPathName());
+    }
 }
 
 void App::paint(juce::Graphics& g)

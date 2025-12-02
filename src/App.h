@@ -31,6 +31,8 @@ private:
     void saveProject(const std::string& filename = "");
     void loadProject(const std::string& filename);
     void newProject();
+    void autosave();
+    juce::File getAutosavePath() const;
 
     model::Project project_;
     input::ModeManager modeManager_;
@@ -42,6 +44,7 @@ private:
 
     std::array<std::unique_ptr<ui::Screen>, 6> screens_;
     int currentScreen_ = 3;
+    int autosaveCounter_ = 0;
 
     static constexpr int STATUS_BAR_HEIGHT = 28;
 
