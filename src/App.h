@@ -19,6 +19,7 @@ public:
 
     void paint(juce::Graphics& g) override;
     void resized() override;
+    void visibilityChanged() override;
 
     bool keyPressed(const juce::KeyPress& key, juce::Component* originatingComponent) override;
 
@@ -45,8 +46,10 @@ private:
     std::array<std::unique_ptr<ui::Screen>, 6> screens_;
     int currentScreen_ = 3;
     int autosaveCounter_ = 0;
+    int previewNoteCounter_ = 0;  // Countdown to release preview note
 
     static constexpr int STATUS_BAR_HEIGHT = 28;
+    static constexpr int PREVIEW_NOTE_FRAMES = 6;  // ~200ms at 30fps
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(App)
 };

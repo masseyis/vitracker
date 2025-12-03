@@ -25,7 +25,22 @@ App::App()
     keyHandler_ = std::make_unique<input::KeyHandler>(modeManager_);
 
     // Set up key handler callbacks
-    keyHandler_->onScreenSwitch = [this](int screen) { switchScreen(screen - 1); };
+    keyHandler_->onScreenSwitch = [this](int screen) {
+        if (screen == -1)  // Previous screen (Shift+[)
+        {
+            int prev = (currentScreen_ - 1 + 6) % 6;
+            switchScreen(prev);
+        }
+        else if (screen == -2)  // Next screen (Shift+])
+        {
+            int next = (currentScreen_ + 1) % 6;
+            switchScreen(next);
+        }
+        else
+        {
+            switchScreen(screen - 1);  // Number keys 1-6
+        }
+    };
     keyHandler_->onPlayStop = [this]() {
         if (audioEngine_.isPlaying())
         {
@@ -38,6 +53,12 @@ App::App()
                 audioEngine_.setPlayMode(audio::AudioEngine::PlayMode::Song);
             else
                 audioEngine_.setPlayMode(audio::AudioEngine::PlayMode::Pattern);
+
+            // Sync current pattern from PatternScreen
+            if (auto* patternScreen = dynamic_cast<ui::PatternScreen*>(screens_[3].get()))
+            {
+                audioEngine_.setCurrentPattern(patternScreen->getCurrentPatternIndex());
+            }
 
             audioEngine_.play();
         }
@@ -56,34 +77,26 @@ App::App()
     screens_[4] = std::make_unique<ui::InstrumentScreen>(project_, modeManager_);
     screens_[5] = std::make_unique<ui::MixerScreen>(project_, modeManager_);
 
+    // Give screens access to audio engine for playhead display
+    for (auto& screen : screens_)
+    {
+        if (screen)
+            screen->setAudioEngine(&audioEngine_);
+    }
+
     // Add active screen as child
     if (screens_[currentScreen_])
     {
         addAndMakeVisible(screens_[currentScreen_].get());
     }
 
-    // Edit mode key forwarding
-    keyHandler_->onEditKey = [this](const juce::KeyPress& key) {
-        if (auto* patternScreen = dynamic_cast<ui::PatternScreen*>(screens_[currentScreen_].get()))
+    // Edit mode key forwarding - use virtual handleEdit() on all screens
+    keyHandler_->onEditKey = [this](const juce::KeyPress& key) -> bool {
+        if (screens_[currentScreen_])
         {
-            patternScreen->handleEditKey(key);
+            return screens_[currentScreen_]->handleEdit(key);
         }
-        else if (auto* instrumentScreen = dynamic_cast<ui::InstrumentScreen*>(screens_[currentScreen_].get()))
-        {
-            instrumentScreen->handleEditKey(key);
-        }
-        else if (auto* mixerScreen = dynamic_cast<ui::MixerScreen*>(screens_[currentScreen_].get()))
-        {
-            mixerScreen->handleEditKey(key);
-        }
-        else if (auto* songScreen = dynamic_cast<ui::SongScreen*>(screens_[currentScreen_].get()))
-        {
-            songScreen->handleEditKey(key);
-        }
-        else if (auto* chainScreen = dynamic_cast<ui::ChainScreen*>(screens_[currentScreen_].get()))
-        {
-            chainScreen->handleEditKey(key);
-        }
+        return false;
     };
 
     // Wire up note preview for PatternScreen
@@ -91,6 +104,7 @@ App::App()
     {
         patternScreen->onNotePreview = [this](int note, int instrument) {
             audioEngine_.triggerNote(0, note, instrument, 1.0f);
+            previewNoteCounter_ = PREVIEW_NOTE_FRAMES;  // Start countdown to release
         };
     }
 
@@ -99,8 +113,79 @@ App::App()
     {
         instrumentScreen->onNotePreview = [this](int note, int instrument) {
             audioEngine_.triggerNote(0, note, instrument, 1.0f);
+            previewNoteCounter_ = PREVIEW_NOTE_FRAMES;  // Start countdown to release
         };
     }
+
+    // Wire up chain navigation from SongScreen
+    if (auto* songScreen = dynamic_cast<ui::SongScreen*>(screens_[1].get()))
+    {
+        songScreen->onJumpToChain = [this](int chainIndex) {
+            if (auto* chainScreen = dynamic_cast<ui::ChainScreen*>(screens_[2].get()))
+            {
+                chainScreen->setCurrentChain(chainIndex);
+            }
+            switchScreen(2);  // Switch to Chain screen
+        };
+    }
+
+    // Wire up pattern navigation from ChainScreen
+    if (auto* chainScreen = dynamic_cast<ui::ChainScreen*>(screens_[2].get()))
+    {
+        chainScreen->onJumpToPattern = [this](int patternIndex) {
+            if (auto* patternScreen = dynamic_cast<ui::PatternScreen*>(screens_[3].get()))
+            {
+                patternScreen->setCurrentPattern(patternIndex);
+            }
+            switchScreen(3);  // Switch to Pattern screen
+        };
+    }
+
+    // Wire up instrument navigation from PatternScreen
+    if (auto* patternScreen = dynamic_cast<ui::PatternScreen*>(screens_[3].get()))
+    {
+        patternScreen->onJumpToInstrument = [this](int instrumentIndex) {
+            if (auto* instrumentScreen = dynamic_cast<ui::InstrumentScreen*>(screens_[4].get()))
+            {
+                instrumentScreen->setCurrentInstrument(instrumentIndex);
+            }
+            switchScreen(4);  // Switch to Instrument screen
+        };
+    }
+
+    // Enter key confirms/activates (e.g., jump to chain from song screen, pattern from chain screen)
+    keyHandler_->onConfirm = [this]() {
+        // Song screen -> Chain screen
+        if (auto* songScreen = dynamic_cast<ui::SongScreen*>(screens_[currentScreen_].get()))
+        {
+            if (songScreen->onJumpToChain)
+            {
+                int chainIdx = songScreen->getChainAtCursor();
+                if (chainIdx >= 0)
+                    songScreen->onJumpToChain(chainIdx);
+            }
+        }
+        // Chain screen -> Pattern screen
+        else if (auto* chainScreen = dynamic_cast<ui::ChainScreen*>(screens_[currentScreen_].get()))
+        {
+            if (chainScreen->onJumpToPattern)
+            {
+                int patternIdx = chainScreen->getPatternAtCursor();
+                if (patternIdx >= 0)
+                    chainScreen->onJumpToPattern(patternIdx);
+            }
+        }
+        // Pattern screen -> Instrument screen
+        else if (auto* patternScreen = dynamic_cast<ui::PatternScreen*>(screens_[currentScreen_].get()))
+        {
+            if (patternScreen->onJumpToInstrument)
+            {
+                int instIdx = patternScreen->getInstrumentAtCursor();
+                if (instIdx >= 0)
+                    patternScreen->onJumpToInstrument(instIdx);
+            }
+        }
+    };
 
     // Mode change callback
     modeManager_.onModeChanged = [this](input::Mode) { repaint(); };
@@ -191,6 +276,16 @@ void App::timerCallback()
         repaint();  // Update playhead display
     }
 
+    // Release preview note after timeout
+    if (previewNoteCounter_ > 0)
+    {
+        previewNoteCounter_--;
+        if (previewNoteCounter_ == 0)
+        {
+            audioEngine_.releaseNote(0);  // Release on track 0 (preview track)
+        }
+    }
+
     // Autosave every 60 seconds (1800 frames at 30fps)
     autosaveCounter_++;
     if (autosaveCounter_ >= 1800)
@@ -249,6 +344,22 @@ void App::resized()
     {
         if (screen)
             screen->setBounds(area);
+    }
+}
+
+void App::visibilityChanged()
+{
+    if (isVisible())
+    {
+        // Delay focus grab and repaint - component may not be ready immediately
+        juce::Timer::callAfterDelay(100, [this]() {
+            if (isVisible())
+            {
+                grabKeyboardFocus();
+                resized();  // Ensure screen bounds are set
+                repaint();
+            }
+        });
     }
 }
 

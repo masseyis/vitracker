@@ -51,6 +51,9 @@ juce::String ProjectSerializer::toJson(const Project& project)
     }
     root->setProperty("chains", chains);
 
+    // Song
+    root->setProperty("song", songToVar(project.getSong()));
+
     // Mixer
     juce::DynamicObject::Ptr mixer = new juce::DynamicObject();
     const auto& m = project.getMixer();
@@ -125,6 +128,13 @@ bool ProjectSerializer::fromJson(Project& project, const juce::String& json)
         }
     }
 
+    // Load song
+    auto songVar = obj->getProperty("song");
+    if (songVar.isObject())
+    {
+        varToSong(project.getSong(), songVar);
+    }
+
     // Load mixer
     auto mixerVar = obj->getProperty("mixer");
     if (auto* mixerObj = mixerVar.getDynamicObject())
@@ -170,6 +180,45 @@ juce::var ProjectSerializer::instrumentToVar(const Instrument& inst)
     obj->setProperty("attack", p.attack);
     obj->setProperty("decay", p.decay);
     obj->setProperty("lpgColour", p.lpgColour);
+    obj->setProperty("polyphony", p.polyphony);
+
+    // Filter
+    juce::DynamicObject::Ptr filter = new juce::DynamicObject();
+    filter->setProperty("cutoff", p.filter.cutoff);
+    filter->setProperty("resonance", p.filter.resonance);
+    obj->setProperty("filter", juce::var(filter.get()));
+
+    // LFO1
+    juce::DynamicObject::Ptr lfo1 = new juce::DynamicObject();
+    lfo1->setProperty("rate", p.lfo1.rate);
+    lfo1->setProperty("shape", p.lfo1.shape);
+    lfo1->setProperty("dest", p.lfo1.dest);
+    lfo1->setProperty("amount", p.lfo1.amount);
+    obj->setProperty("lfo1", juce::var(lfo1.get()));
+
+    // LFO2
+    juce::DynamicObject::Ptr lfo2 = new juce::DynamicObject();
+    lfo2->setProperty("rate", p.lfo2.rate);
+    lfo2->setProperty("shape", p.lfo2.shape);
+    lfo2->setProperty("dest", p.lfo2.dest);
+    lfo2->setProperty("amount", p.lfo2.amount);
+    obj->setProperty("lfo2", juce::var(lfo2.get()));
+
+    // ENV1
+    juce::DynamicObject::Ptr env1 = new juce::DynamicObject();
+    env1->setProperty("attack", p.env1.attack);
+    env1->setProperty("decay", p.env1.decay);
+    env1->setProperty("dest", p.env1.dest);
+    env1->setProperty("amount", p.env1.amount);
+    obj->setProperty("env1", juce::var(env1.get()));
+
+    // ENV2
+    juce::DynamicObject::Ptr env2 = new juce::DynamicObject();
+    env2->setProperty("attack", p.env2.attack);
+    env2->setProperty("decay", p.env2.decay);
+    env2->setProperty("dest", p.env2.dest);
+    env2->setProperty("amount", p.env2.amount);
+    obj->setProperty("env2", juce::var(env2.get()));
 
     const auto& s = inst.getSends();
     juce::DynamicObject::Ptr sends = new juce::DynamicObject();
@@ -179,6 +228,12 @@ juce::var ProjectSerializer::instrumentToVar(const Instrument& inst)
     sends->setProperty("drive", s.drive);
     sends->setProperty("sidechainDuck", s.sidechainDuck);
     obj->setProperty("sends", juce::var(sends.get()));
+
+    // Per-instrument mixer controls
+    obj->setProperty("volume", inst.getVolume());
+    obj->setProperty("pan", inst.getPan());
+    obj->setProperty("muted", inst.isMuted());
+    obj->setProperty("soloed", inst.isSoloed());
 
     return juce::var(obj.get());
 }
@@ -199,6 +254,58 @@ void ProjectSerializer::varToInstrument(Instrument& inst, const juce::var& v)
     p.decay = static_cast<float>(obj->getProperty("decay"));
     p.lpgColour = static_cast<float>(obj->getProperty("lpgColour"));
 
+    // Polyphony (with default for old files)
+    if (obj->hasProperty("polyphony"))
+        p.polyphony = static_cast<int>(obj->getProperty("polyphony"));
+
+    // Filter
+    auto filterVar = obj->getProperty("filter");
+    if (auto* filterObj = filterVar.getDynamicObject())
+    {
+        p.filter.cutoff = static_cast<float>(filterObj->getProperty("cutoff"));
+        p.filter.resonance = static_cast<float>(filterObj->getProperty("resonance"));
+    }
+
+    // LFO1
+    auto lfo1Var = obj->getProperty("lfo1");
+    if (auto* lfo1Obj = lfo1Var.getDynamicObject())
+    {
+        p.lfo1.rate = static_cast<int>(lfo1Obj->getProperty("rate"));
+        p.lfo1.shape = static_cast<int>(lfo1Obj->getProperty("shape"));
+        p.lfo1.dest = static_cast<int>(lfo1Obj->getProperty("dest"));
+        p.lfo1.amount = static_cast<int>(lfo1Obj->getProperty("amount"));
+    }
+
+    // LFO2
+    auto lfo2Var = obj->getProperty("lfo2");
+    if (auto* lfo2Obj = lfo2Var.getDynamicObject())
+    {
+        p.lfo2.rate = static_cast<int>(lfo2Obj->getProperty("rate"));
+        p.lfo2.shape = static_cast<int>(lfo2Obj->getProperty("shape"));
+        p.lfo2.dest = static_cast<int>(lfo2Obj->getProperty("dest"));
+        p.lfo2.amount = static_cast<int>(lfo2Obj->getProperty("amount"));
+    }
+
+    // ENV1
+    auto env1Var = obj->getProperty("env1");
+    if (auto* env1Obj = env1Var.getDynamicObject())
+    {
+        p.env1.attack = static_cast<float>(env1Obj->getProperty("attack"));
+        p.env1.decay = static_cast<float>(env1Obj->getProperty("decay"));
+        p.env1.dest = static_cast<int>(env1Obj->getProperty("dest"));
+        p.env1.amount = static_cast<int>(env1Obj->getProperty("amount"));
+    }
+
+    // ENV2
+    auto env2Var = obj->getProperty("env2");
+    if (auto* env2Obj = env2Var.getDynamicObject())
+    {
+        p.env2.attack = static_cast<float>(env2Obj->getProperty("attack"));
+        p.env2.decay = static_cast<float>(env2Obj->getProperty("decay"));
+        p.env2.dest = static_cast<int>(env2Obj->getProperty("dest"));
+        p.env2.amount = static_cast<int>(env2Obj->getProperty("amount"));
+    }
+
     auto sendsVar = obj->getProperty("sends");
     if (auto* sendsObj = sendsVar.getDynamicObject())
     {
@@ -209,6 +316,16 @@ void ProjectSerializer::varToInstrument(Instrument& inst, const juce::var& v)
         s.drive = static_cast<float>(sendsObj->getProperty("drive"));
         s.sidechainDuck = static_cast<float>(sendsObj->getProperty("sidechainDuck"));
     }
+
+    // Per-instrument mixer controls (defaults for old files)
+    if (obj->hasProperty("volume"))
+        inst.setVolume(static_cast<float>(obj->getProperty("volume")));
+    if (obj->hasProperty("pan"))
+        inst.setPan(static_cast<float>(obj->getProperty("pan")));
+    if (obj->hasProperty("muted"))
+        inst.setMuted(static_cast<bool>(obj->getProperty("muted")));
+    if (obj->hasProperty("soloed"))
+        inst.setSoloed(static_cast<bool>(obj->getProperty("soloed")));
 }
 
 juce::var ProjectSerializer::patternToVar(const Pattern& pattern)
@@ -343,6 +460,54 @@ void ProjectSerializer::varToChain(Chain& chain, const juce::var& v)
         for (const auto& p : *patternsArray)
         {
             chain.addPattern(static_cast<int>(p));
+        }
+    }
+}
+
+juce::var ProjectSerializer::songToVar(const Song& song)
+{
+    juce::DynamicObject::Ptr obj = new juce::DynamicObject();
+
+    // Save each track (column) as an array of chain indices
+    juce::Array<juce::var> tracks;
+    for (int t = 0; t < Song::NUM_TRACKS; ++t)
+    {
+        const auto& track = song.getTrack(t);
+        juce::Array<juce::var> chainIndices;
+        for (int chainIdx : track)
+        {
+            chainIndices.add(chainIdx);
+        }
+        tracks.add(chainIndices);
+    }
+    obj->setProperty("tracks", tracks);
+
+    return juce::var(obj.get());
+}
+
+void ProjectSerializer::varToSong(Song& song, const juce::var& v)
+{
+    auto* obj = v.getDynamicObject();
+    if (!obj) return;
+
+    // Clear existing song data
+    song.clear();
+
+    // Load tracks
+    auto* tracksArray = obj->getProperty("tracks").getArray();
+    if (tracksArray)
+    {
+        for (int t = 0; t < std::min(Song::NUM_TRACKS, tracksArray->size()); ++t)
+        {
+            auto* chainIndices = (*tracksArray)[t].getArray();
+            if (chainIndices)
+            {
+                for (int pos = 0; pos < chainIndices->size(); ++pos)
+                {
+                    int chainIdx = static_cast<int>((*chainIndices)[pos]);
+                    song.setChain(t, pos, chainIdx);
+                }
+            }
         }
     }
 }

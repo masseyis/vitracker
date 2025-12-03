@@ -15,9 +15,10 @@ Project::Project() : Project("Untitled") {}
 
 Project::Project(const std::string& name) : name_(name)
 {
-    // Create one default instrument and pattern
+    // Create one default instrument, pattern, and chain
     addInstrument("Init");
     addPattern("Pattern 1");
+    addChain("Chain 1");
 }
 
 int Project::addInstrument(const std::string& name)

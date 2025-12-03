@@ -27,7 +27,7 @@ public:
     std::function<void()> onUndo;
     std::function<void()> onRedo;
     std::function<void(const std::string&)> onCommand;  // Executed command
-    std::function<void(const juce::KeyPress&)> onEditKey;  // Forward edit keys to screen
+    std::function<bool(const juce::KeyPress&)> onEditKey;  // Forward edit keys to screen, returns true if consumed
     std::function<void(const std::string&)> onSave;  // :w [filename]
     std::function<void(const std::string&)> onLoad;  // :e [filename]
     std::function<void()> onNew;  // :new
@@ -35,6 +35,7 @@ public:
     std::function<void(int)> onRandomize;  // :randomize N
     std::function<void()> onDouble;  // :double
     std::function<void()> onHalve;  // :halve
+    std::function<void()> onConfirm;  // Enter key in normal mode
 
 private:
     bool handleNormalMode(const juce::KeyPress& key);

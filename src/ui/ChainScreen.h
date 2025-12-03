@@ -12,13 +12,22 @@ public:
     void paint(juce::Graphics& g) override;
     void resized() override;
     void navigate(int dx, int dy) override;
-    void handleEdit(const juce::KeyPress& key) override;
-    void handleEditKey(const juce::KeyPress& key);
+    bool handleEdit(const juce::KeyPress& key) override;
+    bool handleEditKey(const juce::KeyPress& key);
 
     std::string getTitle() const override { return "CHAIN"; }
 
+    void setCurrentChain(int chainIndex) { currentChain_ = chainIndex; }
+    int getCurrentChain() const { return currentChain_; }
+
+    // Callback when Enter is pressed on a pattern row
+    std::function<void(int patternIndex)> onJumpToPattern;
+
+    // Get pattern at current cursor position (-1 if not on a pattern row)
+    int getPatternAtCursor() const;
+
 private:
-    void drawChainList(juce::Graphics& g, juce::Rectangle<int> area);
+    void drawChainTabs(juce::Graphics& g, juce::Rectangle<int> area);
     void drawPatternList(juce::Graphics& g, juce::Rectangle<int> area);
     void drawScaleLock(juce::Graphics& g, juce::Rectangle<int> area);
     int getScaleIndex(const std::string& scale) const;
@@ -26,6 +35,7 @@ private:
 
     int currentChain_ = 0;
     int cursorRow_ = 0;  // 0 = name, 1 = scale lock, 2+ = patterns
+    int cursorColumn_ = 0;  // 0 = pattern, 1 = transpose (only used for pattern rows)
     int scrollOffset_ = 0;
     bool editingName_ = false;
     std::string nameBuffer_;

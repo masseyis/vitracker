@@ -4,6 +4,8 @@
 #include "../model/Project.h"
 #include "../input/ModeManager.h"
 
+namespace audio { class AudioEngine; }
+
 namespace ui {
 
 class Screen : public juce::Component
@@ -16,13 +18,16 @@ public:
     virtual void onExit() {}    // Called when leaving screen
 
     virtual void navigate(int dx, int dy) { juce::ignoreUnused(dx, dy); }
-    virtual void handleEdit(const juce::KeyPress& key) { juce::ignoreUnused(key); }
+    virtual bool handleEdit(const juce::KeyPress& key) { juce::ignoreUnused(key); return false; }
 
     virtual std::string getTitle() const = 0;
+
+    virtual void setAudioEngine(audio::AudioEngine* engine) { audioEngine_ = engine; }
 
 protected:
     model::Project& project_;
     input::ModeManager& modeManager_;
+    audio::AudioEngine* audioEngine_ = nullptr;
 
     // Common colors
     static inline const juce::Colour bgColor{0xff1a1a2e};
@@ -30,6 +35,7 @@ protected:
     static inline const juce::Colour highlightColor{0xff4a4a6e};
     static inline const juce::Colour cursorColor{0xff7c7cff};
     static inline const juce::Colour headerColor{0xff2a2a4e};
+    static inline const juce::Colour playheadColor{0xff44dd44};  // Green for playhead
 };
 
 } // namespace ui

@@ -28,7 +28,113 @@ bool KeyHandler::handleNormalMode(const juce::KeyPress& key)
         return true;
     }
 
-    // Navigation
+    // Alt+Arrow = temporary edit mode (adjust values without switching modes)
+    if (key.getModifiers().isAltDown())
+    {
+        if (keyCode == juce::KeyPress::upKey || keyCode == juce::KeyPress::downKey ||
+            keyCode == juce::KeyPress::leftKey || keyCode == juce::KeyPress::rightKey)
+        {
+            if (onEditKey && onEditKey(key)) return true;
+            return true;  // Still consume Alt+arrows even if not handled
+        }
+    }
+
+    // Shift+N creates new item (chain, pattern, etc.) - forward to screen
+    if (key.getModifiers().isShiftDown() && (textChar == 'N'))
+    {
+        if (onEditKey) onEditKey(key);
+        return true;
+    }
+
+    // 'r' for rename - forward to screen
+    if (textChar == 'r' || textChar == 'R')
+    {
+        if (onEditKey && onEditKey(key)) return true;
+        // If not consumed (not in a renameable context), fall through
+    }
+
+    // '[' and ']' for quick navigation (patterns, etc.) - forward to screen
+    if (textChar == '[' || textChar == ']')
+    {
+        if (onEditKey) onEditKey(key);
+        return true;
+    }
+
+    // 'd' for delete - forward to screen in Normal mode too
+    if (textChar == 'd')
+    {
+        if (onEditKey && onEditKey(key)) return true;
+        // If not consumed, fall through to normal 'd' handling (if any)
+    }
+
+    // Backspace/Delete for clearing - forward to screen
+    if (keyCode == juce::KeyPress::backspaceKey || keyCode == juce::KeyPress::deleteKey)
+    {
+        if (onEditKey && onEditKey(key)) return true;
+    }
+
+    // Enter and Escape need to reach screens for name editing mode
+    // Forward them to onEditKey so screens can handle them if needed
+    if (keyCode == juce::KeyPress::returnKey || keyCode == juce::KeyPress::escapeKey)
+    {
+        if (onEditKey && onEditKey(key)) return true;
+        // If not consumed, continue with normal handling
+    }
+
+    // '{' and '}' (Shift+[]) for screen switching
+    if (textChar == '{')
+    {
+        if (onScreenSwitch)
+        {
+            // Get current screen and go to previous
+            // This will be handled by MainComponent
+            onScreenSwitch(-1);  // Use negative for previous
+        }
+        return true;
+    }
+    if (textChar == '}')
+    {
+        if (onScreenSwitch)
+        {
+            onScreenSwitch(-2);  // Use -2 for next
+        }
+        return true;
+    }
+
+    // Forward ALL printable keys to screen first (for name editing, note entry, etc.)
+    // Screen returns true if it consumed the key (e.g., in name editing mode)
+    // Only fall through to mode switches/actions if screen doesn't consume
+    if ((textChar >= 'a' && textChar <= 'z') ||
+        (textChar >= 'A' && textChar <= 'Z') ||
+        (textChar >= '0' && textChar <= '9') ||
+        textChar == '.' || textChar == ',' ||
+        textChar == '+' || textChar == '=' || textChar == '-' ||
+        textChar == ':')
+    {
+        if (onEditKey && onEditKey(key)) return true;
+        // Fall through to mode switches/actions below if not consumed
+    }
+
+    // Left/Right: forward to screen first for non-grid value adjustment
+    // (e.g., scale lock in chains, non-mod params in instruments)
+    // Screen returns true if it consumed the key
+    if (keyCode == juce::KeyPress::leftKey || keyCode == juce::KeyPress::rightKey)
+    {
+        if (onEditKey && onEditKey(key)) return true;
+        // Not consumed - do navigation
+        if (keyCode == juce::KeyPress::leftKey)
+        {
+            if (onNavigate) onNavigate(-1, 0);
+            return true;
+        }
+        if (keyCode == juce::KeyPress::rightKey)
+        {
+            if (onNavigate) onNavigate(1, 0);
+            return true;
+        }
+    }
+
+    // Up/Down: always navigate (use Alt+Up/Down for value editing)
     if (keyCode == juce::KeyPress::upKey)
     {
         if (onNavigate) onNavigate(0, -1);
@@ -39,19 +145,9 @@ bool KeyHandler::handleNormalMode(const juce::KeyPress& key)
         if (onNavigate) onNavigate(0, 1);
         return true;
     }
-    if (keyCode == juce::KeyPress::leftKey)
-    {
-        if (onNavigate) onNavigate(-1, 0);
-        return true;
-    }
-    if (keyCode == juce::KeyPress::rightKey)
-    {
-        if (onNavigate) onNavigate(1, 0);
-        return true;
-    }
 
-    // Mode switches
-    if (textChar == 'i')
+    // Mode switches (only reached if screen didn't consume the key)
+    if (textChar == 'i' || keyCode == juce::KeyPress::escapeKey)
     {
         modeManager_.setMode(Mode::Edit);
         return true;
@@ -100,6 +196,13 @@ bool KeyHandler::handleNormalMode(const juce::KeyPress& key)
         return true;
     }
 
+    // Enter confirms/activates current selection
+    if (keyCode == juce::KeyPress::returnKey)
+    {
+        if (onConfirm) onConfirm();
+        return true;
+    }
+
     return false;
 }
 
@@ -111,15 +214,8 @@ bool KeyHandler::handleEditMode(const juce::KeyPress& key)
         return true;
     }
 
-    // Navigation also works in edit mode
-    auto keyCode = key.getKeyCode();
-    if (keyCode == juce::KeyPress::upKey || keyCode == juce::KeyPress::downKey ||
-        keyCode == juce::KeyPress::leftKey || keyCode == juce::KeyPress::rightKey)
-    {
-        return handleNormalMode(key);
-    }
-
-    // Forward to edit handler callback
+    // In edit mode, ALL keys (including arrows) go to the screen's edit handler
+    // Arrow keys adjust values, not navigate
     if (onEditKey)
     {
         onEditKey(key);

@@ -23,6 +23,9 @@ private:
 
     static juce::var chainToVar(const Chain& chain);
     static void varToChain(Chain& chain, const juce::var& v);
+
+    static juce::var songToVar(const Song& song);
+    static void varToSong(Song& song, const juce::var& v);
 };
 
 } // namespace model

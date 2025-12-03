@@ -13,17 +13,24 @@ public:
     void resized() override;
 
     void navigate(int dx, int dy) override;
-    void handleEdit(const juce::KeyPress& key) override;
-    void handleEditKey(const juce::KeyPress& key);
+    bool handleEdit(const juce::KeyPress& key) override;
+    bool handleEditKey(const juce::KeyPress& key);
 
     std::string getTitle() const override { return "MIXER"; }
 
 private:
-    void drawTrackStrip(juce::Graphics& g, juce::Rectangle<int> area, int track);
+    void drawInstrumentStrip(juce::Graphics& g, juce::Rectangle<int> area, int instrumentIndex, bool isSelected);
     void drawMasterStrip(juce::Graphics& g, juce::Rectangle<int> area);
 
-    int cursorTrack_ = 0;  // 0-15 = tracks, 16 = master
-    int cursorRow_ = 0;    // 0 = volume, 1 = pan, 2 = mute, 3 = solo
+    int getVisibleInstrumentCount() const;
+    int getMaxVisibleStrips() const;
+
+    int cursorInstrument_ = 0;  // Index into instrument list, or -1 for master
+    int cursorRow_ = 0;         // 0 = volume, 1 = pan, 2 = mute, 3 = solo
+    int scrollOffset_ = 0;      // For scrolling when many instruments
+
+    static constexpr int kStripWidth = 60;
+    static constexpr int kMasterWidth = 80;
 };
 
 } // namespace ui

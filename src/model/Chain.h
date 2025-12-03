@@ -5,6 +5,13 @@
 
 namespace model {
 
+// Each entry in a chain: pattern index + transpose (in scale degrees)
+struct ChainEntry
+{
+    int patternIndex = -1;
+    int transpose = 0;  // Scale degrees to transpose (e.g., +2 = up 2 scale degrees)
+};
+
 class Chain
 {
 public:
@@ -17,16 +24,25 @@ public:
     const std::string& getScaleLock() const { return scaleLock_; }
     void setScaleLock(const std::string& scale) { scaleLock_ = scale; }
 
-    const std::vector<int>& getPatternIndices() const { return patternIndices_; }
+    // Legacy accessors for pattern indices only
+    std::vector<int> getPatternIndices() const;
     void addPattern(int patternIndex);
     void removePattern(int position);
     void setPattern(int position, int patternIndex);
-    int getPatternCount() const { return static_cast<int>(patternIndices_.size()); }
+    int getPatternCount() const { return static_cast<int>(entries_.size()); }
+
+    // New accessors for full entry data
+    const std::vector<ChainEntry>& getEntries() const { return entries_; }
+    const ChainEntry& getEntry(int position) const;
+    void setTranspose(int position, int transpose);
+    int getTranspose(int position) const;
 
 private:
     std::string name_;
     std::string scaleLock_;  // e.g., "C minor", empty = no lock
-    std::vector<int> patternIndices_;
+    std::vector<ChainEntry> entries_;
+
+    static const ChainEntry emptyEntry_;
 };
 
 } // namespace model

@@ -1,4 +1,5 @@
 #include "InstrumentScreen.h"
+#include "../audio/AudioEngine.h"
 
 namespace ui {
 
@@ -9,136 +10,463 @@ const char* InstrumentScreen::engineNames_[16] = {
     "Modal", "Bass Drum", "Snare Drum", "Hi-Hat"
 };
 
+// Per-engine parameter labels [engine][harmonics, timbre, morph]
+const char* InstrumentScreen::engineParamLabels_[16][3] = {
+    {"DETUNE", "SQUARE", "SAW"},           // VA
+    {"WAVEFORM", "FOLD", "ASYMMETRY"},     // Waveshaper
+    {"RATIO", "MOD IDX", "FEEDBACK"},      // FM
+    {"FORMNT 2", "FORMANT", "WIDTH"},      // Grain
+    {"BUMPS", "HARMONIC", "SHAPE"},        // Additive
+    {"BANK", "ROW", "COLUMN"},             // Wavetable
+    {"CHORD", "INVERS", "WAVEFORM"},       // Chord
+    {"TYPE", "SPECIES", "PHONEME"},        // Speech
+    {"PITCH", "DENSITY", "OVERLAP"},       // Swarm
+    {"FILTER", "CLOCK", "RESONAN"},        // Noise
+    {"FREQ RND", "DENSITY", "REVERB"},     // Particle
+    {"INHARM", "EXCITER", "DECAY"},        // String
+    {"MATERIAL", "EXCITER", "DECAY"},      // Modal
+    {"ATTACK", "TONE", "DECAY"},           // Bass Drum
+    {"NOISE", "MODES", "DECAY"},           // Snare
+    {"METAL", "HIGHPASS", "DECAY"},        // Hi-Hat
+};
+
+static const char* kLfoRateNames[] = {"1/16", "1/16T", "1/8", "1/8T", "1/4", "1/4T", "1/2", "1BAR", "2BAR", "4BAR"};
+static const char* kLfoShapeNames[] = {"TRI", "SAW", "SQR", "S&H"};
+static const char* kModDestNames[] = {"HARM", "TIMB", "MRPH", "CUTF", "RESO", "LFO1R", "LFO1A", "LFO2R", "LFO2A"};
+
 InstrumentScreen::InstrumentScreen(model::Project& project, input::ModeManager& modeManager)
     : Screen(project, modeManager)
 {
+}
+
+void InstrumentScreen::setAudioEngine(audio::AudioEngine* engine)
+{
+    audioEngine_ = engine;
+}
+
+void InstrumentScreen::drawInstrumentTabs(juce::Graphics& g, juce::Rectangle<int> area)
+{
+    g.setFont(12.0f);
+
+    int numInstruments = project_.getInstrumentCount();
+    if (numInstruments == 0)
+    {
+        g.setColour(fgColor.darker(0.5f));
+        g.drawText("No instruments - press Ctrl+N to create one", area.reduced(10, 0), juce::Justification::centredLeft);
+        return;
+    }
+
+    g.setColour(fgColor.darker(0.5f));
+    g.drawText("[", area.removeFromLeft(20), juce::Justification::centred);
+
+    int tabWidth = 80;
+    int maxTabs = std::min(numInstruments, 12);
+    int startIdx = std::max(0, currentInstrument_ - 5);
+
+    for (int i = startIdx; i < startIdx + maxTabs && i < numInstruments; ++i)
+    {
+        auto* instrument = project_.getInstrument(i);
+        bool isSelected = (i == currentInstrument_);
+
+        auto tabArea = area.removeFromLeft(tabWidth);
+
+        if (isSelected)
+        {
+            g.setColour(cursorColor.withAlpha(0.3f));
+            g.fillRect(tabArea.reduced(2));
+        }
+
+        g.setColour(isSelected ? cursorColor : fgColor.darker(0.3f));
+        juce::String text = juce::String::toHexString(i).toUpperCase().paddedLeft('0', 2);
+        if (instrument && !instrument->getName().empty())
+            text += ":" + juce::String(instrument->getName()).substring(0, 5);
+        g.drawText(text, tabArea, juce::Justification::centred);
+    }
+
+    g.setColour(fgColor.darker(0.5f));
+    g.drawText("]", area.removeFromLeft(20), juce::Justification::centred);
 }
 
 void InstrumentScreen::paint(juce::Graphics& g)
 {
     g.fillAll(bgColor);
 
+    auto area = getLocalBounds();
+
+    // Instrument selector tabs at top
+    drawInstrumentTabs(g, area.removeFromTop(30));
+
+    // Header bar (matches Pattern screen style)
+    auto headerArea = area.removeFromTop(30);
+    g.setColour(headerColor);
+    g.fillRect(headerArea);
+
     auto* instrument = project_.getInstrument(currentInstrument_);
-    if (!instrument) return;
+    if (!instrument)
+    {
+        g.setColour(fgColor.darker(0.5f));
+        g.drawText("No instruments - press Ctrl+N to create one", area.reduced(20), juce::Justification::centred);
+        return;
+    }
 
-    auto area = getLocalBounds().reduced(20);
-
-    // Header
-    g.setFont(20.0f);
+    // Header text
     g.setColour(fgColor);
-    juce::String title = "INSTRUMENT " + juce::String(currentInstrument_ + 1) + ": " + instrument->getName();
-    g.drawText(title, area.removeFromTop(40), juce::Justification::centredLeft);
+    g.setFont(18.0f);
+    juce::String title = "INSTRUMENT: ";
+    if (editingName_)
+        title += juce::String(nameBuffer_) + "_";
+    else
+        title += juce::String(instrument->getName());
+    title += " [" + juce::String(engineNames_[instrument->getParams().engine]) + "]";
+    g.drawText(title, headerArea.reduced(10, 0), juce::Justification::centredLeft, true);
 
-    area.removeFromTop(10);
+    area = area.reduced(16);
+    area.removeFromTop(8);
 
-    // Engine selector
-    drawEngineSelector(g, area.removeFromTop(50));
+    // Get processor for modulated values
+    audio::PlaitsInstrument* processor = nullptr;
+    if (audioEngine_)
+        processor = audioEngine_->getInstrumentProcessor(currentInstrument_);
 
-    area.removeFromTop(20);
-
-    // Parameters
-    drawParameters(g, area.removeFromTop(200));
-
-    area.removeFromTop(20);
-
-    // Sends
-    drawSends(g, area.removeFromTop(150));
+    // Draw all rows
+    int y = area.getY();
+    for (int row = 0; row < kNumRows; ++row)
+    {
+        juce::Rectangle<int> rowArea(area.getX(), y, area.getWidth(), kRowHeight);
+        drawRow(g, rowArea, row, cursorRow_ == row);
+        y += kRowHeight + 2;
+    }
 }
 
-void InstrumentScreen::drawEngineSelector(juce::Graphics& g, juce::Rectangle<int> area)
+bool InstrumentScreen::isModRow(int row) const
 {
+    auto type = static_cast<InstrumentRowType>(row);
+    return type == InstrumentRowType::Lfo1 || type == InstrumentRowType::Lfo2 ||
+           type == InstrumentRowType::Env1 || type == InstrumentRowType::Env2;
+}
+
+int InstrumentScreen::getNumFieldsForRow(int row) const
+{
+    return isModRow(row) ? 4 : 1;
+}
+
+void InstrumentScreen::drawRow(juce::Graphics& g, juce::Rectangle<int> area, int row, bool selected)
+{
+    auto type = static_cast<InstrumentRowType>(row);
+
+    // Get model instrument for basic params
     auto* instrument = project_.getInstrument(currentInstrument_);
     if (!instrument) return;
 
-    g.setFont(16.0f);
-    g.setColour(cursorRow_ == 0 ? cursorColor : fgColor);
+    // Get processor for extended params
+    audio::PlaitsInstrument* processor = nullptr;
+    if (audioEngine_)
+        processor = audioEngine_->getInstrumentProcessor(currentInstrument_);
 
-    int engine = instrument->getParams().engine;
-    g.drawText("Engine: " + juce::String(engineNames_[engine]), area, juce::Justification::centredLeft);
+    const auto& params = instrument->getParams();
+    const auto& sends = instrument->getSends();
+    int engine = params.engine;
+
+    // Background
+    if (selected)
+    {
+        g.setColour(highlightColor.withAlpha(0.3f));
+        g.fillRect(area);
+    }
+
+    g.setFont(14.0f);
+    g.setColour(selected ? cursorColor : fgColor);
+
+    // Handle modulation rows specially
+    if (isModRow(row))
+    {
+        drawModRow(g, area, row, selected);
+        return;
+    }
+
+    // Get label and value based on row type
+    const char* label = "";
+    float value = 0.0f;
+    float modValue = -1.0f;  // -1 means no modulation display
+    juce::String valueText;
+
+    switch (type)
+    {
+        case InstrumentRowType::Engine:
+            label = "ENGINE";
+            value = static_cast<float>(engine) / 15.0f;
+            valueText = engineNames_[engine];
+            break;
+
+        case InstrumentRowType::Harmonics:
+            label = engineParamLabels_[engine][0];
+            value = params.harmonics;
+            if (processor) modValue = processor->getModulatedHarmonics();
+            valueText = juce::String(static_cast<int>(value * 127));
+            break;
+
+        case InstrumentRowType::Timbre:
+            label = engineParamLabels_[engine][1];
+            value = params.timbre;
+            if (processor) modValue = processor->getModulatedTimbre();
+            valueText = juce::String(static_cast<int>(value * 127));
+            break;
+
+        case InstrumentRowType::Morph:
+            label = engineParamLabels_[engine][2];
+            value = params.morph;
+            if (processor) modValue = processor->getModulatedMorph();
+            valueText = juce::String(static_cast<int>(value * 127));
+            break;
+
+        case InstrumentRowType::Attack:
+            label = "ATTACK";
+            value = params.attack;
+            {
+                float ms = 1.0f + value * value * 1999.0f;
+                valueText = juce::String(static_cast<int>(ms)) + "ms";
+            }
+            break;
+
+        case InstrumentRowType::Decay:
+            label = "DECAY";
+            value = params.decay;
+            {
+                float ms = 1.0f + value * value * 9999.0f;
+                valueText = juce::String(static_cast<int>(ms)) + "ms";
+            }
+            break;
+
+        case InstrumentRowType::Polyphony:
+            label = "VOICES";
+            {
+                int poly = params.polyphony;
+                value = static_cast<float>(poly - 1) / 15.0f;
+                valueText = juce::String(poly);
+            }
+            break;
+
+        case InstrumentRowType::Cutoff:
+            label = "CUTOFF";
+            {
+                value = params.filter.cutoff;
+                if (processor) modValue = processor->getModulatedCutoff();
+                float hz = 20.0f * std::pow(1000.0f, value);
+                valueText = juce::String(static_cast<int>(hz)) + "Hz";
+            }
+            break;
+
+        case InstrumentRowType::Resonance:
+            label = "RESO";
+            {
+                value = params.filter.resonance;
+                if (processor) modValue = processor->getModulatedResonance();
+                valueText = juce::String(static_cast<int>(value * 127));
+            }
+            break;
+
+        case InstrumentRowType::Reverb:
+            label = "REVERB";
+            value = sends.reverb;
+            valueText = juce::String(static_cast<int>(value * 100)) + "%";
+            break;
+
+        case InstrumentRowType::Delay:
+            label = "DELAY";
+            value = sends.delay;
+            valueText = juce::String(static_cast<int>(value * 100)) + "%";
+            break;
+
+        case InstrumentRowType::Chorus:
+            label = "CHORUS";
+            value = sends.chorus;
+            valueText = juce::String(static_cast<int>(value * 100)) + "%";
+            break;
+
+        case InstrumentRowType::Drive:
+            label = "DRIVE";
+            value = sends.drive;
+            valueText = juce::String(static_cast<int>(value * 100)) + "%";
+            break;
+
+        case InstrumentRowType::Sidechain:
+            label = "SIDECHAIN";
+            value = sends.sidechainDuck;
+            valueText = juce::String(static_cast<int>(value * 100)) + "%";
+            break;
+
+        case InstrumentRowType::Volume:
+            label = "VOLUME";
+            value = instrument->getVolume();
+            valueText = juce::String(static_cast<int>(value * 100)) + "%";
+            break;
+
+        case InstrumentRowType::Pan:
+            label = "PAN";
+            {
+                float pan = instrument->getPan();
+                value = (pan + 1.0f) / 2.0f;  // Convert -1..1 to 0..1 for display
+                if (pan < -0.01f)
+                    valueText = "L" + juce::String(static_cast<int>(-pan * 100));
+                else if (pan > 0.01f)
+                    valueText = "R" + juce::String(static_cast<int>(pan * 100));
+                else
+                    valueText = "C";
+            }
+            break;
+
+        default:
+            break;
+    }
+
+    // Draw label
+    g.drawText(label, area.getX(), area.getY(), kLabelWidth, kRowHeight, juce::Justification::centredLeft);
+
+    // Draw slider bar
+    int barX = area.getX() + kLabelWidth;
+    int barY = area.getY() + (kRowHeight - 10) / 2;
+
+    // Background bar
+    g.setColour(juce::Colour(0xff303030));
+    g.fillRect(barX, barY, kBarWidth, 10);
+
+    // Value bar
+    g.setColour(selected ? cursorColor : juce::Colour(0xff4a9090));
+    g.fillRect(barX, barY, static_cast<int>(kBarWidth * value), 10);
+
+    // Modulation overlay
+    if (modValue >= 0.0f && modValue != value)
+    {
+        g.setColour(juce::Colour(0x80ffffff));
+        int modX = barX + static_cast<int>(kBarWidth * std::min(value, modValue));
+        int modWidth = static_cast<int>(kBarWidth * std::abs(modValue - value));
+        g.fillRect(modX, barY, modWidth, 10);
+    }
+
+    // Value text
+    g.setColour(selected ? cursorColor : fgColor);
+    g.drawText(valueText, barX + kBarWidth + 10, area.getY(), 100, kRowHeight, juce::Justification::centredLeft);
 }
 
-void InstrumentScreen::drawParameters(juce::Graphics& g, juce::Rectangle<int> area)
+void InstrumentScreen::drawModRow(juce::Graphics& g, juce::Rectangle<int> area, int row, bool selected)
 {
+    auto type = static_cast<InstrumentRowType>(row);
+
     auto* instrument = project_.getInstrument(currentInstrument_);
     if (!instrument) return;
 
     const auto& params = instrument->getParams();
 
-    struct ParamInfo { const char* name; float value; };
-    ParamInfo paramList[] = {
-        {"Harmonics", params.harmonics},
-        {"Timbre", params.timbre},
-        {"Morph", params.morph},
-        {"Attack", params.attack},
-        {"Decay", params.decay},
-        {"LPG Colour", params.lpgColour}
-    };
+    // Determine which LFO/ENV
+    const char* label = "";
+    int rate = 4, shape = 0, dest = 0, amount = 0;
 
-    g.setFont(14.0f);
-    int y = area.getY();
-    int rowHeight = 30;
-
-    for (int i = 0; i < 6; ++i)
+    switch (type)
     {
-        bool selected = (cursorRow_ == i + 1);
-        g.setColour(selected ? cursorColor : fgColor);
-
-        g.drawText(paramList[i].name, area.getX(), y, 100, rowHeight, juce::Justification::centredLeft);
-
-        // Draw slider bar
-        int barX = area.getX() + 110;
-        int barWidth = 200;
-        g.setColour(highlightColor);
-        g.fillRect(barX, y + 10, barWidth, 10);
-        g.setColour(selected ? cursorColor : fgColor);
-        g.fillRect(barX, y + 10, static_cast<int>(barWidth * paramList[i].value), 10);
-
-        // Value text
-        g.drawText(juce::String(paramList[i].value, 2), barX + barWidth + 10, y, 50, rowHeight, juce::Justification::centredLeft);
-
-        y += rowHeight;
+        case InstrumentRowType::Lfo1:
+            label = "LFO1";
+            rate = params.lfo1.rate;
+            shape = params.lfo1.shape;
+            dest = params.lfo1.dest;
+            amount = params.lfo1.amount;
+            break;
+        case InstrumentRowType::Lfo2:
+            label = "LFO2";
+            rate = params.lfo2.rate;
+            shape = params.lfo2.shape;
+            dest = params.lfo2.dest;
+            amount = params.lfo2.amount;
+            break;
+        case InstrumentRowType::Env1:
+            label = "ENV1";
+            // For ENVs, convert attack/decay to ms for display
+            rate = static_cast<int>(params.env1.attack * 500.0f + 0.5f);  // ms
+            shape = static_cast<int>(params.env1.decay * 2000.0f + 0.5f);  // ms
+            dest = params.env1.dest;
+            amount = params.env1.amount;
+            break;
+        case InstrumentRowType::Env2:
+            label = "ENV2";
+            rate = static_cast<int>(params.env2.attack * 500.0f + 0.5f);
+            shape = static_cast<int>(params.env2.decay * 2000.0f + 0.5f);
+            dest = params.env2.dest;
+            amount = params.env2.amount;
+            break;
+        default:
+            break;
     }
+
+    // Draw label
+    g.setColour(selected ? cursorColor : fgColor);
+    g.drawText(label, area.getX(), area.getY(), kLabelWidth, kRowHeight, juce::Justification::centredLeft);
+
+    // Draw 4 fields: rate/attack, shape/decay, dest, amount
+    int fieldX = area.getX() + kLabelWidth;
+    int fieldWidth = 50;
+    int fieldGap = 8;
+
+    bool isEnv = (type == InstrumentRowType::Env1 || type == InstrumentRowType::Env2);
+
+    // Field 0: Rate (LFO) or Attack (ENV)
+    bool field0Selected = selected && cursorField_ == 0;
+    g.setColour(field0Selected ? cursorColor : juce::Colour(0xff606060));
+    g.fillRect(fieldX, area.getY() + 4, fieldWidth, kRowHeight - 8);
+    g.setColour(field0Selected ? juce::Colours::black : fgColor);
+    if (isEnv)
+        g.drawText(juce::String(rate) + "ms", fieldX, area.getY(), fieldWidth, kRowHeight, juce::Justification::centred);
+    else
+        g.drawText(getLfoRateName(rate), fieldX, area.getY(), fieldWidth, kRowHeight, juce::Justification::centred);
+
+    fieldX += fieldWidth + fieldGap;
+
+    // Field 1: Shape (LFO) or Decay (ENV)
+    bool field1Selected = selected && cursorField_ == 1;
+    g.setColour(field1Selected ? cursorColor : juce::Colour(0xff606060));
+    g.fillRect(fieldX, area.getY() + 4, fieldWidth, kRowHeight - 8);
+    g.setColour(field1Selected ? juce::Colours::black : fgColor);
+    if (isEnv)
+        g.drawText(juce::String(shape) + "ms", fieldX, area.getY(), fieldWidth, kRowHeight, juce::Justification::centred);
+    else
+        g.drawText(getLfoShapeName(shape), fieldX, area.getY(), fieldWidth, kRowHeight, juce::Justification::centred);
+
+    fieldX += fieldWidth + fieldGap;
+
+    // Field 2: Destination
+    bool field2Selected = selected && cursorField_ == 2;
+    g.setColour(field2Selected ? cursorColor : juce::Colour(0xff606060));
+    g.fillRect(fieldX, area.getY() + 4, fieldWidth, kRowHeight - 8);
+    g.setColour(field2Selected ? juce::Colours::black : fgColor);
+    g.drawText(getModDestName(dest), fieldX, area.getY(), fieldWidth, kRowHeight, juce::Justification::centred);
+
+    fieldX += fieldWidth + fieldGap;
+
+    // Field 3: Amount
+    bool field3Selected = selected && cursorField_ == 3;
+    g.setColour(field3Selected ? cursorColor : juce::Colour(0xff606060));
+    g.fillRect(fieldX, area.getY() + 4, fieldWidth, kRowHeight - 8);
+    g.setColour(field3Selected ? juce::Colours::black : fgColor);
+    g.drawText((amount >= 0 ? "+" : "") + juce::String(amount), fieldX, area.getY(), fieldWidth, kRowHeight, juce::Justification::centred);
 }
 
-void InstrumentScreen::drawSends(juce::Graphics& g, juce::Rectangle<int> area)
+const char* InstrumentScreen::getLfoRateName(int rate)
 {
-    auto* instrument = project_.getInstrument(currentInstrument_);
-    if (!instrument) return;
+    if (rate >= 0 && rate < 10)
+        return kLfoRateNames[rate];
+    return "???";
+}
 
-    const auto& sends = instrument->getSends();
+const char* InstrumentScreen::getLfoShapeName(int shape)
+{
+    if (shape >= 0 && shape < 4)
+        return kLfoShapeNames[shape];
+    return "???";
+}
 
-    g.setFont(14.0f);
-    g.setColour(fgColor);
-    g.drawText("SENDS", area.removeFromTop(25), juce::Justification::centredLeft);
-
-    struct SendInfo { const char* name; float value; };
-    SendInfo sendList[] = {
-        {"Reverb", sends.reverb},
-        {"Delay", sends.delay},
-        {"Chorus", sends.chorus},
-        {"Drive", sends.drive},
-        {"Sidechain", sends.sidechainDuck}
-    };
-
-    int y = area.getY();
-    int rowHeight = 24;
-
-    for (int i = 0; i < 5; ++i)
-    {
-        bool selected = (cursorRow_ == i + 7);
-        g.setColour(selected ? cursorColor : fgColor);
-
-        g.drawText(sendList[i].name, area.getX(), y, 80, rowHeight, juce::Justification::centredLeft);
-
-        int barX = area.getX() + 90;
-        int barWidth = 150;
-        g.setColour(highlightColor);
-        g.fillRect(barX, y + 6, barWidth, 10);
-        g.setColour(selected ? cursorColor : fgColor);
-        g.fillRect(barX, y + 6, static_cast<int>(barWidth * sendList[i].value), 10);
-
-        y += rowHeight;
-    }
+const char* InstrumentScreen::getModDestName(int dest)
+{
+    if (dest >= 0 && dest < 9)
+        return kModDestNames[dest];
+    return "???";
 }
 
 void InstrumentScreen::resized()
@@ -147,66 +475,439 @@ void InstrumentScreen::resized()
 
 void InstrumentScreen::navigate(int dx, int dy)
 {
-    if (dx != 0)
+    if (dx != 0 && !isModRow(cursorRow_))
     {
         // Switch instruments
         int numInstruments = project_.getInstrumentCount();
         currentInstrument_ = (currentInstrument_ + dx + numInstruments) % numInstruments;
     }
+    else if (dx != 0 && isModRow(cursorRow_))
+    {
+        // Move between fields in mod row
+        cursorField_ = std::clamp(cursorField_ + dx, 0, 3);
+    }
 
     if (dy != 0)
     {
-        cursorRow_ = std::clamp(cursorRow_ + dy, 0, 11);  // 0=engine, 1-6=params, 7-11=sends
+        cursorRow_ = std::clamp(cursorRow_ + dy, 0, kNumRows - 1);
+        // Reset field when entering/leaving mod rows
+        if (!isModRow(cursorRow_))
+            cursorField_ = 0;
     }
 
     repaint();
 }
 
-void InstrumentScreen::handleEdit(const juce::KeyPress& key)
+bool InstrumentScreen::handleEdit(const juce::KeyPress& key)
 {
-    handleEditKey(key);
+    return handleEditKey(key);
 }
 
-void InstrumentScreen::handleEditKey(const juce::KeyPress& key)
+bool InstrumentScreen::handleEditKey(const juce::KeyPress& key)
 {
-    auto* instrument = project_.getInstrument(currentInstrument_);
-    if (!instrument) return;
-
+    auto keyCode = key.getKeyCode();
     auto textChar = key.getTextCharacter();
+    bool shiftHeld = key.getModifiers().isShiftDown();
+
+    // Handle name editing mode
+    if (editingName_)
+    {
+        auto* instrument = project_.getInstrument(currentInstrument_);
+        if (!instrument)
+        {
+            editingName_ = false;
+            repaint();
+            return true;  // Consumed
+        }
+
+        if (keyCode == juce::KeyPress::returnKey || keyCode == juce::KeyPress::escapeKey)
+        {
+            if (keyCode == juce::KeyPress::returnKey)
+                instrument->setName(nameBuffer_);
+            editingName_ = false;
+            repaint();
+            return true;  // Consumed - important for Enter/Escape
+        }
+        if (keyCode == juce::KeyPress::backspaceKey && !nameBuffer_.empty())
+        {
+            nameBuffer_.pop_back();
+            repaint();
+            return true;  // Consumed
+        }
+        if (textChar >= ' ' && textChar <= '~' && nameBuffer_.length() < 16)
+        {
+            nameBuffer_ += static_cast<char>(textChar);
+            repaint();
+            return true;  // Consumed
+        }
+        return true;  // In name editing mode, consume all keys
+    }
+
+    // Shift+N creates new instrument and enters edit mode
+    if (shiftHeld && textChar == 'N')
+    {
+        currentInstrument_ = project_.addInstrument("Inst " + std::to_string(project_.getInstrumentCount() + 1));
+        auto* instrument = project_.getInstrument(currentInstrument_);
+        if (instrument)
+        {
+            editingName_ = true;
+            nameBuffer_ = instrument->getName();
+        }
+        repaint();
+        return false;  // Let other handlers run too
+    }
+
+    // 'r' starts renaming current instrument
+    if (textChar == 'r' || textChar == 'R')
+    {
+        auto* instrument = project_.getInstrument(currentInstrument_);
+        if (instrument)
+        {
+            editingName_ = true;
+            nameBuffer_ = instrument->getName();
+            repaint();
+            return true;  // Consumed - starting rename mode
+        }
+        return false;
+    }
+
+    // '[' and ']' switch instruments quickly
+    if (textChar == '[')
+    {
+        int numInstruments = project_.getInstrumentCount();
+        if (numInstruments > 0)
+            currentInstrument_ = (currentInstrument_ - 1 + numInstruments) % numInstruments;
+        repaint();
+        return true;  // Consumed
+    }
+    if (textChar == ']')
+    {
+        int numInstruments = project_.getInstrumentCount();
+        if (numInstruments > 0)
+            currentInstrument_ = (currentInstrument_ + 1) % numInstruments;
+        repaint();
+        return true;  // Consumed
+    }
+
+    // For mod rows (grid), require Alt for editing, plain arrows navigate
+    if (isModRow(cursorRow_))
+    {
+        bool altHeld = key.getModifiers().isAltDown();
+
+        // Alt+Left/Right adjusts field value at edges, otherwise navigates fields
+        if (altHeld && (keyCode == juce::KeyPress::leftKey || keyCode == juce::KeyPress::rightKey))
+        {
+            int delta = (keyCode == juce::KeyPress::rightKey) ? 1 : -1;
+            adjustModField(cursorRow_, cursorField_, delta);
+            if (onNotePreview) onNotePreview(60, currentInstrument_);
+            repaint();
+            return true;  // Consumed
+        }
+        // Alt+Up/Down adjusts current field value
+        if (altHeld && keyCode == juce::KeyPress::upKey)
+        {
+            adjustModField(cursorRow_, cursorField_, 1, shiftHeld);
+            if (onNotePreview) onNotePreview(60, currentInstrument_);
+            repaint();
+            return true;  // Consumed
+        }
+        if (altHeld && keyCode == juce::KeyPress::downKey)
+        {
+            adjustModField(cursorRow_, cursorField_, -1, shiftHeld);
+            if (onNotePreview) onNotePreview(60, currentInstrument_);
+            repaint();
+            return true;  // Consumed
+        }
+        // +/- always adjusts (no Alt needed)
+        int modDelta = shiftHeld ? 1 : 1;  // Mod fields use int steps
+        if (textChar == '+' || textChar == '=')
+        {
+            adjustModField(cursorRow_, cursorField_, modDelta, shiftHeld);
+            if (onNotePreview) onNotePreview(60, currentInstrument_);
+            repaint();
+            return true;  // Consumed
+        }
+        if (textChar == '-')
+        {
+            adjustModField(cursorRow_, cursorField_, -modDelta, shiftHeld);
+            if (onNotePreview) onNotePreview(60, currentInstrument_);
+            repaint();
+            return true;  // Consumed
+        }
+        // Plain arrows not consumed - let navigation handle field movement
+        return false;
+    }
+
+    // Standard (non-grid) value adjustment
+    // Left/Right adjust values directly, Up/Down are for navigation (not consumed)
+    float baseDelta = shiftHeld ? 0.01f : 0.05f;
     float delta = 0.0f;
 
-    if (textChar == '+' || textChar == '=' || key.getKeyCode() == juce::KeyPress::rightKey)
-        delta = 0.05f;
-    else if (textChar == '-' || key.getKeyCode() == juce::KeyPress::leftKey)
-        delta = -0.05f;
+    if (textChar == '+' || textChar == '=' || keyCode == juce::KeyPress::rightKey)
+        delta = baseDelta;
+    else if (textChar == '-' || keyCode == juce::KeyPress::leftKey)
+        delta = -baseDelta;
 
-    if (delta == 0.0f) return;
+    if (delta != 0.0f)
+    {
+        setRowValue(cursorRow_, delta);
+        if (onNotePreview) onNotePreview(60, currentInstrument_);
+        repaint();
+        return true;  // Consumed
+    }
+
+    return false;  // Key not consumed - let Up/Down navigate between rows
+}
+
+void InstrumentScreen::setRowValue(int row, float delta)
+{
+    auto type = static_cast<InstrumentRowType>(row);
+    auto* instrument = project_.getInstrument(currentInstrument_);
+    if (!instrument) return;
 
     auto& params = instrument->getParams();
     auto& sends = instrument->getSends();
 
     auto clamp01 = [](float& v, float d) { v = std::clamp(v + d, 0.0f, 1.0f); };
+    auto clampInt = [](int& v, int d, int minVal, int maxVal) { v = std::clamp(v + d, minVal, maxVal); };
 
-    switch (cursorRow_)
+    switch (type)
     {
-        case 0: params.engine = std::clamp(params.engine + (delta > 0 ? 1 : -1), 0, 15); break;
-        case 1: clamp01(params.harmonics, delta); break;
-        case 2: clamp01(params.timbre, delta); break;
-        case 3: clamp01(params.morph, delta); break;
-        case 4: clamp01(params.attack, delta); break;
-        case 5: clamp01(params.decay, delta); break;
-        case 6: clamp01(params.lpgColour, delta); break;
-        case 7: clamp01(sends.reverb, delta); break;
-        case 8: clamp01(sends.delay, delta); break;
-        case 9: clamp01(sends.chorus, delta); break;
-        case 10: clamp01(sends.drive, delta); break;
-        case 11: clamp01(sends.sidechainDuck, delta); break;
+        case InstrumentRowType::Engine:
+            params.engine = std::clamp(params.engine + (delta > 0 ? 1 : -1), 0, 15);
+            break;
+        case InstrumentRowType::Harmonics:
+            clamp01(params.harmonics, delta);
+            break;
+        case InstrumentRowType::Timbre:
+            clamp01(params.timbre, delta);
+            break;
+        case InstrumentRowType::Morph:
+            clamp01(params.morph, delta);
+            break;
+        case InstrumentRowType::Attack:
+            clamp01(params.attack, delta);
+            break;
+        case InstrumentRowType::Decay:
+            clamp01(params.decay, delta);
+            break;
+        case InstrumentRowType::Polyphony:
+            clampInt(params.polyphony, delta > 0 ? 1 : -1, 1, 16);
+            break;
+        case InstrumentRowType::Cutoff:
+            clamp01(params.filter.cutoff, delta);
+            break;
+        case InstrumentRowType::Resonance:
+            clamp01(params.filter.resonance, delta);
+            break;
+        case InstrumentRowType::Reverb:
+            clamp01(sends.reverb, delta);
+            break;
+        case InstrumentRowType::Delay:
+            clamp01(sends.delay, delta);
+            break;
+        case InstrumentRowType::Chorus:
+            clamp01(sends.chorus, delta);
+            break;
+        case InstrumentRowType::Drive:
+            clamp01(sends.drive, delta);
+            break;
+        case InstrumentRowType::Sidechain:
+            clamp01(sends.sidechainDuck, delta);
+            break;
+        case InstrumentRowType::Volume:
+            instrument->setVolume(instrument->getVolume() + delta);
+            break;
+        case InstrumentRowType::Pan:
+            instrument->setPan(instrument->getPan() + delta);
+            break;
+        default:
+            break;
     }
 
-    // Preview note when changing parameters
-    if (onNotePreview) onNotePreview(60, currentInstrument_);
+    // Sync changes to processor immediately for audio feedback
+    if (audioEngine_)
+    {
+        if (auto* processor = audioEngine_->getInstrumentProcessor(currentInstrument_))
+        {
+            // Update the relevant processor parameter
+            switch (type)
+            {
+                case InstrumentRowType::Engine:
+                    processor->setParameter(audio::kParamEngine, params.engine / 15.0f);
+                    break;
+                case InstrumentRowType::Harmonics:
+                    processor->setParameter(audio::kParamHarmonics, params.harmonics);
+                    break;
+                case InstrumentRowType::Timbre:
+                    processor->setParameter(audio::kParamTimbre, params.timbre);
+                    break;
+                case InstrumentRowType::Morph:
+                    processor->setParameter(audio::kParamMorph, params.morph);
+                    break;
+                case InstrumentRowType::Attack:
+                    processor->setParameter(audio::kParamAttack, params.attack);
+                    break;
+                case InstrumentRowType::Decay:
+                    processor->setParameter(audio::kParamDecay, params.decay);
+                    break;
+                case InstrumentRowType::Polyphony:
+                    processor->setParameter(audio::kParamPolyphony, (params.polyphony - 1) / 15.0f);
+                    break;
+                case InstrumentRowType::Cutoff:
+                    processor->setParameter(audio::kParamCutoff, params.filter.cutoff);
+                    break;
+                case InstrumentRowType::Resonance:
+                    processor->setParameter(audio::kParamResonance, params.filter.resonance);
+                    break;
+                default:
+                    break;
+            }
+        }
+    }
+}
 
-    repaint();
+void InstrumentScreen::adjustModField(int row, int field, int delta, bool fineAdjust)
+{
+    auto type = static_cast<InstrumentRowType>(row);
+
+    auto* instrument = project_.getInstrument(currentInstrument_);
+    if (!instrument) return;
+
+    auto& params = instrument->getParams();
+
+    // Get references to the appropriate modulation params
+    model::LfoParams* lfoParams = nullptr;
+    model::EnvModParams* envParams = nullptr;
+    bool isEnv = false;
+
+    switch (type)
+    {
+        case InstrumentRowType::Lfo1:
+            lfoParams = &params.lfo1;
+            break;
+        case InstrumentRowType::Lfo2:
+            lfoParams = &params.lfo2;
+            break;
+        case InstrumentRowType::Env1:
+            envParams = &params.env1;
+            isEnv = true;
+            break;
+        case InstrumentRowType::Env2:
+            envParams = &params.env2;
+            isEnv = true;
+            break;
+        default:
+            return;
+    }
+
+    // Step sizes - smaller with fineAdjust (shift held)
+    float envAttackStep = fineAdjust ? 0.004f : 0.02f;   // 2ms vs 10ms at 500ms range
+    float envDecayStep = fineAdjust ? 0.005f : 0.025f;   // 10ms vs 50ms at 2000ms range
+    int amountStep = fineAdjust ? 1 : 4;                  // 1 vs 4 for -64..+63
+
+    // Update the model::Instrument parameter
+    switch (field)
+    {
+        case 0:  // Rate or Attack
+            if (isEnv && envParams)
+            {
+                envParams->attack = std::clamp(envParams->attack + delta * envAttackStep, 0.0f, 1.0f);
+            }
+            else if (lfoParams)
+            {
+                // Rate: 0-15 discrete values (no fine adjust, always step by 1)
+                lfoParams->rate = std::clamp(lfoParams->rate + delta, 0, 15);
+            }
+            break;
+        case 1:  // Shape or Decay
+            if (isEnv && envParams)
+            {
+                envParams->decay = std::clamp(envParams->decay + delta * envDecayStep, 0.0f, 1.0f);
+            }
+            else if (lfoParams)
+            {
+                // Shape: 0-4 discrete values (no fine adjust)
+                lfoParams->shape = std::clamp(lfoParams->shape + delta, 0, 4);
+            }
+            break;
+        case 2:  // Destination
+            if (isEnv && envParams)
+            {
+                envParams->dest = std::clamp(envParams->dest + delta, 0, 8);
+            }
+            else if (lfoParams)
+            {
+                lfoParams->dest = std::clamp(lfoParams->dest + delta, 0, 8);
+            }
+            break;
+        case 3:  // Amount
+            if (isEnv && envParams)
+            {
+                envParams->amount = std::clamp(envParams->amount + delta * amountStep, -64, 63);
+            }
+            else if (lfoParams)
+            {
+                lfoParams->amount = std::clamp(lfoParams->amount + delta * amountStep, -64, 63);
+            }
+            break;
+    }
+
+    // Sync changes to processor immediately for audio feedback
+    if (audioEngine_)
+    {
+        if (auto* processor = audioEngine_->getInstrumentProcessor(currentInstrument_))
+        {
+            // Determine parameter indices based on row type
+            int rateParam = 0, shapeParam = 0, destParam = 0, amountParam = 0;
+
+            switch (type)
+            {
+                case InstrumentRowType::Lfo1:
+                    rateParam = audio::kParamLfo1Rate;
+                    shapeParam = audio::kParamLfo1Shape;
+                    destParam = audio::kParamLfo1Dest;
+                    amountParam = audio::kParamLfo1Amount;
+                    break;
+                case InstrumentRowType::Lfo2:
+                    rateParam = audio::kParamLfo2Rate;
+                    shapeParam = audio::kParamLfo2Shape;
+                    destParam = audio::kParamLfo2Dest;
+                    amountParam = audio::kParamLfo2Amount;
+                    break;
+                case InstrumentRowType::Env1:
+                    rateParam = audio::kParamEnv1Attack;
+                    shapeParam = audio::kParamEnv1Decay;
+                    destParam = audio::kParamEnv1Dest;
+                    amountParam = audio::kParamEnv1Amount;
+                    break;
+                case InstrumentRowType::Env2:
+                    rateParam = audio::kParamEnv2Attack;
+                    shapeParam = audio::kParamEnv2Decay;
+                    destParam = audio::kParamEnv2Dest;
+                    amountParam = audio::kParamEnv2Amount;
+                    break;
+                default:
+                    return;
+            }
+
+            // Update the appropriate processor parameter
+            if (isEnv && envParams)
+            {
+                processor->setParameter(rateParam, envParams->attack);
+                processor->setParameter(shapeParam, envParams->decay);
+                processor->setParameter(destParam, envParams->dest / 8.0f);
+                processor->setParameter(amountParam, (envParams->amount + 64) / 127.0f);
+            }
+            else if (lfoParams)
+            {
+                processor->setParameter(rateParam, lfoParams->rate / 15.0f);
+                processor->setParameter(shapeParam, lfoParams->shape / 4.0f);
+                processor->setParameter(destParam, lfoParams->dest / 8.0f);
+                processor->setParameter(amountParam, (lfoParams->amount + 64) / 127.0f);
+            }
+        }
+    }
 }
 
 } // namespace ui

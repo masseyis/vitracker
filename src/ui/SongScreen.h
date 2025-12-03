@@ -12,14 +12,20 @@ public:
     void paint(juce::Graphics& g) override;
     void resized() override;
     void navigate(int dx, int dy) override;
-    void handleEdit(const juce::KeyPress& key) override;
-    void handleEditKey(const juce::KeyPress& key);
+    bool handleEdit(const juce::KeyPress& key) override;
+    bool handleEditKey(const juce::KeyPress& key);
 
     std::string getTitle() const override { return "SONG"; }
 
+    // Callback when Enter is pressed on a chain cell
+    std::function<void(int chainIndex)> onJumpToChain;
+
+    // Get chain at current cursor position
+    int getChainAtCursor() const { return getChainAt(cursorTrack_, cursorRow_); }
+
 private:
     void drawGrid(juce::Graphics& g, juce::Rectangle<int> area);
-    void drawCell(juce::Graphics& g, juce::Rectangle<int> area, int track, int row);
+    void drawCell(juce::Graphics& g, juce::Rectangle<int> area, int track, int row, bool isPlayheadRow = false);
     int getChainAt(int track, int row) const;
     void setChainAt(int track, int row, int chainIndex);
 
