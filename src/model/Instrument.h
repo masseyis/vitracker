@@ -5,6 +5,7 @@
 #include <algorithm>
 #include "FilterParams.h"
 #include "SamplerParams.h"
+#include "SlicerParams.h"
 
 namespace model {
 
@@ -76,6 +77,9 @@ public:
     SamplerParams& getSamplerParams() { return samplerParams_; }
     const SamplerParams& getSamplerParams() const { return samplerParams_; }
 
+    SlicerParams& getSlicerParams() { return slicerParams_; }
+    const SlicerParams& getSlicerParams() const { return slicerParams_; }
+
     // Mixer controls (per-instrument)
     float getVolume() const { return volume_; }
     void setVolume(float v) { volume_ = std::max(0.0f, std::min(1.0f, v)); }
@@ -97,6 +101,7 @@ private:
     PlaitsParams params_;
     SendLevels sends_;
     SamplerParams samplerParams_;
+    SlicerParams slicerParams_;
 
     // Mixer state
     float volume_ = 1.0f;    // 0.0-1.0
