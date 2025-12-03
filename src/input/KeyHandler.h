@@ -39,6 +39,7 @@ public:
     std::function<void(const std::string&)> onSavePreset;  // :save-preset name
     std::function<void(const std::string&)> onDeletePreset;  // :delete-preset name
     std::function<void()> onCreateSampler;  // :sampler
+    std::function<void()> onCreateSlicer;  // :slicer
 
 private:
     bool handleNormalMode(const juce::KeyPress& key);

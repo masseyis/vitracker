@@ -340,6 +340,36 @@ App::App()
         }
     };
 
+    keyHandler_->onCreateSlicer = [this]() {
+        // Find first unused instrument slot or use slot 0
+        int slot = -1;
+        for (int i = 0; i < project_.getInstrumentCount(); ++i)
+        {
+            auto* instrument = project_.getInstrument(i);
+            if (instrument && instrument->getName() == "Instrument " + std::to_string(i))
+            {
+                slot = i;
+                break;
+            }
+        }
+        if (slot == -1) slot = 0;
+
+        // Set instrument type and name
+        auto* instrument = project_.getInstrument(slot);
+        if (instrument)
+        {
+            instrument->setType(model::InstrumentType::Slicer);
+            instrument->setName("Slicer " + std::to_string(slot));
+
+            // Switch to instrument screen showing this instrument
+            if (auto* instScreen = dynamic_cast<ui::InstrumentScreen*>(screens_[4].get()))
+            {
+                instScreen->setCurrentInstrument(slot);
+            }
+            switchScreen(4);
+        }
+    };
+
     // Start timer for UI updates (playhead position)
     startTimerHz(30);
 }

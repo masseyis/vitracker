@@ -382,6 +382,10 @@ void KeyHandler::executeCommand(const std::string& command)
     {
         if (onCreateSampler) onCreateSampler();
     }
+    else if (command == "slicer")
+    {
+        if (onCreateSlicer) onCreateSlicer();
+    }
 
     if (onCommand) onCommand(command);
 }
