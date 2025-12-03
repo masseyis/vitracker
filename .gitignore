@@ -1,4 +1,5 @@
 build/
+.worktrees/
 .DS_Store
 *.user
 .idea/
