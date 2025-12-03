@@ -4,6 +4,8 @@
 #include "../audio/PlaitsInstrument.h"
 #include "../audio/SamplerInstrument.h"
 #include "../model/PresetManager.h"
+#include "SliceWaveformDisplay.h"
+#include "../audio/SlicerInstrument.h"
 
 namespace ui {
 
@@ -50,7 +52,7 @@ public:
     std::function<void(int note, int instrument)> onNotePreview;
 
     int getCurrentInstrument() const { return currentInstrument_; }
-    void setCurrentInstrument(int index) { currentInstrument_ = index; }
+    void setCurrentInstrument(int index);
 
     void setAudioEngine(audio::AudioEngine* engine) override;
     void setPresetManager(model::PresetManager* manager) { presetManager_ = manager; }
@@ -69,6 +71,11 @@ private:
 
     // Sampler-specific key handling
     bool handleSamplerKey(const juce::KeyPress& key, bool isEditMode);
+
+    // Slicer-specific methods
+    void updateSlicerDisplay();
+    bool handleSlicerKey(const juce::KeyPress& key, bool isEditMode);
+    void paintSlicerUI(juce::Graphics& g);
 
     bool editingName_ = false;
     std::string nameBuffer_;
@@ -97,6 +104,9 @@ private:
     // Per-engine preset tracking
     int currentPresetIndex_ = 0;
     bool presetModified_ = false;
+
+    // Slicer UI component
+    std::unique_ptr<SliceWaveformDisplay> sliceWaveformDisplay_;
 
     static constexpr int kNumRows = static_cast<int>(InstrumentRowType::NumRows);
     static constexpr int kRowHeight = 24;

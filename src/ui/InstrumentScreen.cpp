@@ -37,6 +37,26 @@ static const char* kModDestNames[] = {"HARM", "TIMB", "MRPH", "CUTF", "RESO", "L
 InstrumentScreen::InstrumentScreen(model::Project& project, input::ModeManager& modeManager)
     : Screen(project, modeManager)
 {
+    sliceWaveformDisplay_ = std::make_unique<SliceWaveformDisplay>();
+    addChildComponent(sliceWaveformDisplay_.get());
+
+    sliceWaveformDisplay_->onAddSlice = [this](size_t pos) {
+        if (audioEngine_) {
+            if (auto* slicer = audioEngine_->getSlicerProcessor(currentInstrument_)) {
+                slicer->addSliceAtPosition(pos);
+                updateSlicerDisplay();
+            }
+        }
+    };
+
+    sliceWaveformDisplay_->onDeleteSlice = [this](int index) {
+        if (audioEngine_) {
+            if (auto* slicer = audioEngine_->getSlicerProcessor(currentInstrument_)) {
+                slicer->removeSlice(index);
+                updateSlicerDisplay();
+            }
+        }
+    };
 }
 
 void InstrumentScreen::setAudioEngine(audio::AudioEngine* engine)
@@ -163,6 +183,13 @@ void InstrumentScreen::paint(juce::Graphics& g)
         }
         return;
     }
+
+    // Check if this is a slicer instrument and render slicer UI
+    if (instrument && instrument->getType() == model::InstrumentType::Slicer) {
+        paintSlicerUI(g);
+        return;
+    }
+
     if (!instrument)
     {
         g.setColour(fgColor.darker(0.5f));
@@ -565,6 +592,11 @@ const char* InstrumentScreen::getModDestName(int dest)
 
 void InstrumentScreen::resized()
 {
+    if (sliceWaveformDisplay_) {
+        auto bounds = getLocalBounds();
+        bounds.removeFromTop(28);  // Title
+        sliceWaveformDisplay_->setBounds(bounds.removeFromTop(100));
+    }
 }
 
 void InstrumentScreen::navigate(int dx, int dy)
@@ -603,6 +635,11 @@ bool InstrumentScreen::handleEditKey(const juce::KeyPress& key)
     auto* instrument = project_.getInstrument(currentInstrument_);
     if (instrument && instrument->getType() == model::InstrumentType::Sampler) {
         return handleSamplerKey(key, true);
+    }
+
+    // Check if this is a slicer instrument and handle slicer keys
+    if (instrument && instrument->getType() == model::InstrumentType::Slicer) {
+        return handleSlicerKey(key, true);
     }
 
     auto keyCode = key.getKeyCode();
@@ -1240,6 +1277,166 @@ bool InstrumentScreen::handleSamplerKey(const juce::KeyPress& key, bool /*isEdit
     }
 
     return false;
+}
+
+void InstrumentScreen::updateSlicerDisplay() {
+    if (!audioEngine_) return;
+
+    auto* inst = project_.getInstrument(currentInstrument_);
+    if (!inst || inst->getType() != model::InstrumentType::Slicer) return;
+
+    auto* slicer = audioEngine_->getSlicerProcessor(currentInstrument_);
+    if (!slicer) return;
+
+    sliceWaveformDisplay_->setAudioData(&slicer->getSampleBuffer(), slicer->getSampleRate());
+    sliceWaveformDisplay_->setSlicePoints(inst->getSlicerParams().slicePoints);
+    sliceWaveformDisplay_->setCurrentSlice(inst->getSlicerParams().currentSlice);
+}
+
+void InstrumentScreen::paintSlicerUI(juce::Graphics& g) {
+    auto bounds = getLocalBounds();
+    g.fillAll(juce::Colour(0xFF1E1E1E));
+
+    g.setColour(juce::Colours::white);
+    g.setFont(16.0f);
+
+    auto* inst = project_.getInstrument(currentInstrument_);
+    if (!inst) return;
+
+    g.drawText("SLICER - " + juce::String(inst->getName()),
+               bounds.removeFromTop(28), juce::Justification::centredLeft);
+
+    // Waveform takes top portion - handled by child component
+    bounds.removeFromTop(100);
+
+    g.setFont(14.0f);
+    g.setColour(juce::Colours::grey);
+
+    const auto& params = inst->getSlicerParams();
+    juce::String sampleName = params.sample.path.empty() ? "(no sample)"
+        : juce::File(params.sample.path).getFileName();
+
+    g.drawText("Sample: " + sampleName, bounds.removeFromTop(24), juce::Justification::centredLeft);
+    g.drawText("Slices: " + juce::String(static_cast<int>(params.slicePoints.size())),
+               bounds.removeFromTop(24), juce::Justification::centredLeft);
+    g.drawText("Current: " + juce::String(params.currentSlice + 1),
+               bounds.removeFromTop(24), juce::Justification::centredLeft);
+
+    g.setColour(juce::Colours::white.withAlpha(0.5f));
+    g.drawText("Press 'o' to load sample, h/l to navigate slices, s to add, d to delete",
+               bounds.removeFromTop(24), juce::Justification::centredLeft);
+}
+
+bool InstrumentScreen::handleSlicerKey(const juce::KeyPress& key, bool /*isEditMode*/) {
+    auto textChar = key.getTextCharacter();
+
+    // Load sample
+    if (textChar == 'o' || textChar == 'O') {
+        auto chooser = std::make_shared<juce::FileChooser>(
+            "Load Sample",
+            juce::File::getSpecialLocation(juce::File::userHomeDirectory),
+            "*.wav;*.aiff;*.aif"
+        );
+
+        chooser->launchAsync(
+            juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+            [this, chooser](const juce::FileChooser& fc) {
+                auto file = fc.getResult();
+                if (file.existsAsFile() && audioEngine_) {
+                    if (auto* slicer = audioEngine_->getSlicerProcessor(currentInstrument_)) {
+                        slicer->setInstrument(project_.getInstrument(currentInstrument_));
+                        slicer->loadSample(file);
+                        updateSlicerDisplay();
+                        repaint();
+                    }
+                }
+            }
+        );
+        return true;
+    }
+
+    // Navigate slices: h = previous, l = next
+    if (textChar == 'h' || textChar == 'H') {
+        if (sliceWaveformDisplay_) {
+            sliceWaveformDisplay_->previousSlice();
+            auto* inst = project_.getInstrument(currentInstrument_);
+            if (inst) {
+                inst->getSlicerParams().currentSlice = sliceWaveformDisplay_->getCurrentSlice();
+            }
+            repaint();
+        }
+        return true;
+    }
+
+    if (textChar == 'l' || textChar == 'L') {
+        if (sliceWaveformDisplay_) {
+            sliceWaveformDisplay_->nextSlice();
+            auto* inst = project_.getInstrument(currentInstrument_);
+            if (inst) {
+                inst->getSlicerParams().currentSlice = sliceWaveformDisplay_->getCurrentSlice();
+            }
+            repaint();
+        }
+        return true;
+    }
+
+    // Add slice at cursor: s
+    if (textChar == 's') {
+        if (sliceWaveformDisplay_) {
+            sliceWaveformDisplay_->addSliceAtCursor();
+            repaint();
+        }
+        return true;
+    }
+
+    // Delete current slice: d
+    if (textChar == 'd') {
+        if (sliceWaveformDisplay_) {
+            sliceWaveformDisplay_->deleteCurrentSlice();
+            repaint();
+        }
+        return true;
+    }
+
+    // Zoom: +/-
+    if (textChar == '+' || textChar == '=') {
+        if (sliceWaveformDisplay_) sliceWaveformDisplay_->zoomIn();
+        return true;
+    }
+    if (textChar == '-') {
+        if (sliceWaveformDisplay_) sliceWaveformDisplay_->zoomOut();
+        return true;
+    }
+
+    // Scroll: Shift+h/l
+    if (key.getModifiers().isShiftDown()) {
+        if (textChar == 'H' || textChar == 'h') {
+            if (sliceWaveformDisplay_) sliceWaveformDisplay_->scrollLeft();
+            return true;
+        }
+        if (textChar == 'L' || textChar == 'l') {
+            if (sliceWaveformDisplay_) sliceWaveformDisplay_->scrollRight();
+            return true;
+        }
+    }
+
+    return false;
+}
+
+void InstrumentScreen::setCurrentInstrument(int index) {
+    currentInstrument_ = index;
+
+    auto* inst = project_.getInstrument(index);
+    if (inst) {
+        auto type = inst->getType();
+        if (sliceWaveformDisplay_) {
+            sliceWaveformDisplay_->setVisible(type == model::InstrumentType::Slicer);
+            if (type == model::InstrumentType::Slicer) {
+                updateSlicerDisplay();
+            }
+        }
+    }
+    repaint();
 }
 
 } // namespace ui
