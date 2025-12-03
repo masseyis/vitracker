@@ -7,8 +7,21 @@ on:
     branches: [main]
 
 jobs:
-  build-macos:
-    runs-on: macos-latest
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
+        include:
+          - os: macos-latest
+            name: macOS
+          - os: windows-latest
+            name: Windows
+          - os: ubuntu-latest
+            name: Linux
+
+    runs-on: ${{ matrix.os }}
+    name: Build (${{ matrix.name }})
 
     steps:
       - name: Checkout code
@@ -16,17 +29,43 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install dependencies
-        run: |
-          brew install cmake ninja
+      - name: Install dependencies (macOS)
+        if: matrix.os == 'macos-latest'
+        run: brew install cmake ninja
 
-      - name: Configure CMake
+      - name: Install dependencies (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            ninja-build \
+            libasound2-dev \
+            libjack-jackd2-dev \
+            libcurl4-openssl-dev \
+            libfreetype6-dev \
+            libx11-dev \
+            libxcomposite-dev \
+            libxcursor-dev \
+            libxext-dev \
+            libxinerama-dev \
+            libxrandr-dev \
+            libxrender-dev \
+            libwebkit2gtk-4.0-dev \
+            libglu1-mesa-dev \
+            mesa-common-dev
+
+      - name: Configure CMake (Unix)
+        if: matrix.os != 'windows-latest'
         run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Configure CMake (Windows)
+        if: matrix.os == 'windows-latest'
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
 
       - name: Build
         run: cmake --build build --config Release
 
       - name: Run tests
-        run: |
-          cd build
-          ctest --output-on-failure
+        run: ctest --test-dir build --output-on-failure

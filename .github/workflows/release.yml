@@ -16,8 +16,7 @@ jobs:
           submodules: recursive
 
       - name: Install dependencies
-        run: |
-          brew install cmake ninja
+        run: brew install cmake ninja
 
       - name: Configure CMake
         run: |
@@ -30,11 +29,8 @@ jobs:
 
       - name: Create DMG
         run: |
-          # Create a temporary directory for DMG contents
           mkdir -p dmg_contents
           cp -R build/Vitracker_artefacts/Release/Vitracker.app dmg_contents/
-
-          # Create DMG
           hdiutil create -volname "Vitracker" \
             -srcfolder dmg_contents \
             -ov -format UDZO \
@@ -46,8 +42,84 @@ jobs:
           name: Vitracker-macOS
           path: Vitracker-*.dmg
 
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Configure CMake
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release
+
+      - name: Package
+        run: |
+          mkdir package
+          copy build\Vitracker_artefacts\Release\Vitracker.exe package\
+          Compress-Archive -Path package\* -DestinationPath Vitracker-${{ github.ref_name }}-Windows.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Vitracker-Windows
+          path: Vitracker-*.zip
+
+  build-linux:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            ninja-build \
+            libasound2-dev \
+            libjack-jackd2-dev \
+            libcurl4-openssl-dev \
+            libfreetype6-dev \
+            libx11-dev \
+            libxcomposite-dev \
+            libxcursor-dev \
+            libxext-dev \
+            libxinerama-dev \
+            libxrandr-dev \
+            libxrender-dev \
+            libwebkit2gtk-4.0-dev \
+            libglu1-mesa-dev \
+            mesa-common-dev
+
+      - name: Configure CMake
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release
+
+      - name: Package
+        run: |
+          mkdir -p package
+          cp build/Vitracker_artefacts/Release/Vitracker package/
+          tar -czvf Vitracker-${{ github.ref_name }}-Linux.tar.gz -C package .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Vitracker-Linux
+          path: Vitracker-*.tar.gz
+
   create-release:
-    needs: [build-macos]
+    needs: [build-macos, build-windows, build-linux]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -58,11 +130,23 @@ jobs:
         with:
           name: Vitracker-macOS
 
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: Vitracker-Windows
+
+      - name: Download Linux artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: Vitracker-Linux
+
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
           files: |
             Vitracker-*.dmg
+            Vitracker-*.zip
+            Vitracker-*.tar.gz
           generate_release_notes: true
           draft: false
           prerelease: ${{ contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') }}
