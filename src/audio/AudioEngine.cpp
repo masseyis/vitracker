@@ -13,6 +13,7 @@ AudioEngine::AudioEngine()
     {
         instrumentProcessors_[i] = std::make_unique<PlaitsInstrument>();
         samplerProcessors_[i] = std::make_unique<SamplerInstrument>();
+        slicerProcessors_[i] = std::make_unique<SlicerInstrument>();
     }
 }
 
@@ -92,6 +93,25 @@ void AudioEngine::triggerNote(int track, int note, int instrumentIndex, float ve
         return;
     }
 
+    if (instrument->getType() == model::InstrumentType::Slicer)
+    {
+        // Handle Slicer instrument
+        if (auto* slicer = getSlicerProcessor(instrumentIndex))
+        {
+            slicer->setInstrument(instrument);
+            slicer->noteOn(note, velocity);
+        }
+
+        trackInstruments_[track] = instrumentIndex;
+
+        // Trigger sidechain if this instrument has high sidechainDuck
+        if (instrument->getSends().sidechainDuck > 0.5f)
+        {
+            effects_.sidechain.trigger();
+        }
+        return;
+    }
+
     // Handle Plaits instrument (existing code)
     // Release previous note on this track if different instrument
     if (trackInstruments_[track] >= 0 && trackInstruments_[track] != instrumentIndex)
@@ -141,6 +161,18 @@ void AudioEngine::releaseNote(int track)
                 if (auto* sampler = getSamplerProcessor(instrumentIndex))
                 {
                     sampler->allNotesOff();
+                }
+                trackInstruments_[track] = -1;
+                trackVoices_[track] = nullptr;
+                return;
+            }
+
+            if (instrument && instrument->getType() == model::InstrumentType::Slicer)
+            {
+                // Handle Slicer instrument
+                if (auto* slicer = getSlicerProcessor(instrumentIndex))
+                {
+                    slicer->allNotesOff();
                 }
                 trackInstruments_[track] = -1;
                 trackVoices_[track] = nullptr;
@@ -212,6 +244,15 @@ void AudioEngine::prepareToPlay(int samplesPerBlockExpected, double sampleRate)
         if (sampler)
         {
             sampler->init(sampleRate);
+        }
+    }
+
+    // Initialize all slicer processors
+    for (auto& slicer : slicerProcessors_)
+    {
+        if (slicer)
+        {
+            slicer->init(sampleRate);
         }
     }
 
@@ -530,6 +571,70 @@ void AudioEngine::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferTo
 
         // Render sampler to temp buffers
         sampler->process(tempL.data(), tempR.data(), numSamples);
+
+        // Apply volume and pan, mix into output
+        float leftGain = volume * std::sqrt((1.0f - pan) / 2.0f);
+        float rightGain = volume * std::sqrt((1.0f + pan) / 2.0f);
+
+        for (int i = 0; i < numSamples; ++i)
+        {
+            float monoSample = (tempL[i] + tempR[i]) * 0.5f;
+            outL[i] += monoSample * leftGain * 2.0f;
+            outR[i] += monoSample * rightGain * 2.0f;
+        }
+
+        // Accumulate send levels
+        const auto& sends = instrument->getSends();
+        avgReverb += sends.reverb * volume;
+        avgDelay += sends.delay * volume;
+        avgChorus += sends.chorus * volume;
+        avgDrive += sends.drive * volume;
+        avgSidechain += sends.sidechainDuck * volume;
+        activeCount++;
+    }
+
+    // Process slicer instruments
+    for (int instIdx = 0; instIdx < NUM_INSTRUMENTS; ++instIdx)
+    {
+        auto& slicer = slicerProcessors_[instIdx];
+        if (!slicer) continue;
+
+        // Get instrument model for mixer settings
+        model::Instrument* instrument = project_ ? project_->getInstrument(instIdx) : nullptr;
+
+        // Only process if this is a Slicer type instrument
+        if (!instrument || instrument->getType() != model::InstrumentType::Slicer)
+            continue;
+
+        // Determine if this instrument should play
+        bool shouldPlay = true;
+        float volume = 1.0f;
+        float pan = 0.0f;
+
+        // Check mute/solo
+        if (anySoloed)
+        {
+            shouldPlay = instrument->isSoloed();
+        }
+        else
+        {
+            shouldPlay = !instrument->isMuted();
+        }
+
+        if (!shouldPlay || !slicer->hasSample())
+        {
+            continue;
+        }
+
+        volume = instrument->getVolume();
+        pan = instrument->getPan();
+
+        // Clear temp buffers
+        std::fill(tempL.begin(), tempL.begin() + numSamples, 0.0f);
+        std::fill(tempR.begin(), tempR.begin() + numSamples, 0.0f);
+
+        // Render slicer to temp buffers
+        slicer->process(tempL.data(), tempR.data(), numSamples);
 
         // Apply volume and pan, mix into output
         float leftGain = volume * std::sqrt((1.0f - pan) / 2.0f);
@@ -970,6 +1075,13 @@ SamplerInstrument* AudioEngine::getSamplerProcessor(int index)
 {
     if (index >= 0 && index < NUM_INSTRUMENTS)
         return samplerProcessors_[index].get();
+    return nullptr;
+}
+
+SlicerInstrument* AudioEngine::getSlicerProcessor(int index)
+{
+    if (index >= 0 && index < NUM_INSTRUMENTS)
+        return slicerProcessors_[index].get();
     return nullptr;
 }
 

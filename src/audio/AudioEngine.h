@@ -5,6 +5,7 @@
 #include "InstrumentProcessor.h"
 #include "PlaitsInstrument.h"
 #include "SamplerInstrument.h"
+#include "SlicerInstrument.h"
 #include "../model/Project.h"
 #include "../model/Groove.h"
 #include <JuceHeader.h>
@@ -57,6 +58,7 @@ public:
     PlaitsInstrument* getInstrumentProcessor(int index);
     const PlaitsInstrument* getInstrumentProcessor(int index) const;
     SamplerInstrument* getSamplerProcessor(int index);
+    SlicerInstrument* getSlicerProcessor(int index);
 
 private:
     Voice* allocateVoice(int note);
@@ -80,6 +82,7 @@ private:
     // New instrument processors (one per instrument slot)
     std::array<std::unique_ptr<PlaitsInstrument>, NUM_INSTRUMENTS> instrumentProcessors_;
     std::array<std::unique_ptr<SamplerInstrument>, NUM_INSTRUMENTS> samplerProcessors_;
+    std::array<std::unique_ptr<SlicerInstrument>, NUM_INSTRUMENTS> slicerProcessors_;
 
     double sampleRate_ = 48000.0;
     int samplesPerBlock_ = 512;
