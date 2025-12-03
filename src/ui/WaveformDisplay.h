@@ -21,7 +21,7 @@ public:
     void scrollLeft();
     void scrollRight();
 
-private:
+protected:
     const juce::AudioBuffer<float>* audioBuffer_ = nullptr;
     int sampleRate_ = 44100;
     float zoom_ = 1.0f;           // 1.0 = fit whole sample
@@ -31,6 +31,7 @@ private:
     juce::Colour backgroundColour_ = juce::Colour(0xFF1E1E1E);
     juce::Colour centreLineColour_ = juce::Colour(0xFF3C3C3C);
 
+private:
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(WaveformDisplay)
 };
 
