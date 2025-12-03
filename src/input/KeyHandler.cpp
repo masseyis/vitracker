@@ -378,6 +378,10 @@ void KeyHandler::executeCommand(const std::string& command)
     {
         if (onDeletePreset) onDeletePreset(command.substr(14));
     }
+    else if (command == "sampler")
+    {
+        if (onCreateSampler) onCreateSampler();
+    }
 
     if (onCommand) onCommand(command);
 }

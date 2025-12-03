@@ -38,6 +38,7 @@ public:
     std::function<void()> onConfirm;  // Enter key in normal mode
     std::function<void(const std::string&)> onSavePreset;  // :save-preset name
     std::function<void(const std::string&)> onDeletePreset;  // :delete-preset name
+    std::function<void()> onCreateSampler;  // :sampler
 
 private:
     bool handleNormalMode(const juce::KeyPress& key);
