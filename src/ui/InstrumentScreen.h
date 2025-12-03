@@ -2,6 +2,7 @@
 
 #include "Screen.h"
 #include "../audio/PlaitsInstrument.h"
+#include "../audio/SamplerInstrument.h"
 #include "../model/PresetManager.h"
 
 namespace ui {
@@ -65,6 +66,9 @@ private:
     void drawModRow(juce::Graphics& g, juce::Rectangle<int> area, int row, bool selected);
     void drawSliderRow(juce::Graphics& g, juce::Rectangle<int> area, const char* label,
                        float value, float modValue, bool selected);
+
+    // Sampler-specific key handling
+    bool handleSamplerKey(const juce::KeyPress& key, bool isEditMode);
 
     bool editingName_ = false;
     std::string nameBuffer_;

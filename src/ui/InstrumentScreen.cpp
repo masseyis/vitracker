@@ -102,6 +102,67 @@ void InstrumentScreen::paint(juce::Graphics& g)
     g.fillRect(headerArea);
 
     auto* instrument = project_.getInstrument(currentInstrument_);
+
+    // Check if this is a sampler instrument and render sampler UI
+    if (instrument && instrument->getType() == model::InstrumentType::Sampler) {
+        // Paint sampler-specific UI
+        g.setColour(fgColor);
+        g.setFont(18.0f);
+        juce::String title = "SAMPLER: ";
+        if (editingName_)
+            title += juce::String(nameBuffer_) + "_";
+        else
+            title += juce::String(instrument->getName());
+        g.drawText(title, headerArea.reduced(10, 0), juce::Justification::centredLeft, true);
+
+        area = area.reduced(16);
+        area.removeFromTop(8);
+
+        // Show sample info
+        const auto& samplerParams = instrument->getSamplerParams();
+        g.setFont(14.0f);
+        g.setColour(fgColor);
+
+        int yPos = area.getY() + 20;
+
+        if (samplerParams.sample.path.empty()) {
+            g.setFont(16.0f);
+            g.setColour(fgColor.darker(0.3f));
+            g.drawText("No sample loaded", area.getX(), yPos, area.getWidth(), 30, juce::Justification::centredLeft);
+            yPos += 40;
+
+            g.setFont(14.0f);
+            g.setColour(cursorColor);
+            g.drawText("Press 'o' to load a sample", area.getX(), yPos, area.getWidth(), 30, juce::Justification::centredLeft);
+        } else {
+            // Show sample filename
+            juce::File sampleFile(samplerParams.sample.path);
+            g.setColour(cursorColor);
+            g.drawText("Sample: " + sampleFile.getFileName(), area.getX(), yPos, area.getWidth(), 30, juce::Justification::centredLeft);
+            yPos += 30;
+
+            // Show sample info
+            g.setColour(fgColor);
+            juce::String info = juce::String::formatted("Channels: %d  Sample Rate: %d Hz  Samples: %d",
+                samplerParams.sample.numChannels,
+                samplerParams.sample.sampleRate,
+                static_cast<int>(samplerParams.sample.numSamples));
+            g.drawText(info, area.getX(), yPos, area.getWidth(), 30, juce::Justification::centredLeft);
+            yPos += 30;
+
+            // Show root note
+            static const char* noteNames[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
+            int note = samplerParams.rootNote;
+            juce::String rootNoteStr = juce::String(noteNames[note % 12]) + juce::String(note / 12 - 1);
+            g.drawText("Root Note: " + rootNoteStr, area.getX(), yPos, area.getWidth(), 30, juce::Justification::centredLeft);
+            yPos += 50;
+
+            // Instructions
+            g.setColour(fgColor.darker(0.3f));
+            g.drawText("Press 'o' to load a different sample", area.getX(), yPos, area.getWidth(), 30, juce::Justification::centredLeft);
+        }
+        return;
+    }
     if (!instrument)
     {
         g.setColour(fgColor.darker(0.5f));
@@ -538,6 +599,12 @@ bool InstrumentScreen::handleEdit(const juce::KeyPress& key)
 
 bool InstrumentScreen::handleEditKey(const juce::KeyPress& key)
 {
+    // Check if this is a sampler instrument and handle sampler keys
+    auto* instrument = project_.getInstrument(currentInstrument_);
+    if (instrument && instrument->getType() == model::InstrumentType::Sampler) {
+        return handleSamplerKey(key, true);
+    }
+
     auto keyCode = key.getKeyCode();
     auto textChar = key.getTextCharacter();
     bool shiftHeld = key.getModifiers().isShiftDown();
@@ -1069,6 +1136,110 @@ void InstrumentScreen::loadPreset(int presetIndex)
         onNotePreview(60, currentInstrument_);
 
     repaint();
+}
+
+bool InstrumentScreen::handleSamplerKey(const juce::KeyPress& key, bool /*isEditMode*/)
+{
+    auto keyCode = key.getKeyCode();
+    auto textChar = key.getTextCharacter();
+
+    // Handle name editing mode
+    if (editingName_)
+    {
+        auto* instrument = project_.getInstrument(currentInstrument_);
+        if (!instrument)
+        {
+            editingName_ = false;
+            repaint();
+            return true;
+        }
+
+        if (keyCode == juce::KeyPress::returnKey || keyCode == juce::KeyPress::escapeKey)
+        {
+            if (keyCode == juce::KeyPress::returnKey)
+                instrument->setName(nameBuffer_);
+            editingName_ = false;
+            repaint();
+            return true;
+        }
+        if (keyCode == juce::KeyPress::backspaceKey && !nameBuffer_.empty())
+        {
+            nameBuffer_.pop_back();
+            repaint();
+            return true;
+        }
+        if (textChar >= ' ' && textChar <= '~' && nameBuffer_.length() < 16)
+        {
+            nameBuffer_ += static_cast<char>(textChar);
+            repaint();
+            return true;
+        }
+        return true;
+    }
+
+    // 'r' starts renaming current instrument
+    if (textChar == 'r' || textChar == 'R')
+    {
+        auto* instrument = project_.getInstrument(currentInstrument_);
+        if (instrument)
+        {
+            editingName_ = true;
+            nameBuffer_ = instrument->getName();
+            repaint();
+            return true;
+        }
+        return false;
+    }
+
+    // '[' and ']' switch instruments quickly
+    if (textChar == '[')
+    {
+        int numInstruments = project_.getInstrumentCount();
+        if (numInstruments > 0)
+            currentInstrument_ = (currentInstrument_ - 1 + numInstruments) % numInstruments;
+        repaint();
+        return true;
+    }
+    if (textChar == ']')
+    {
+        int numInstruments = project_.getInstrumentCount();
+        if (numInstruments > 0)
+            currentInstrument_ = (currentInstrument_ + 1) % numInstruments;
+        repaint();
+        return true;
+    }
+
+    // 'o' to open file chooser and load sample
+    if (textChar == 'o' || textChar == 'O')
+    {
+        auto chooser = std::make_shared<juce::FileChooser>(
+            "Load Sample",
+            juce::File::getSpecialLocation(juce::File::userHomeDirectory),
+            "*.wav;*.aiff;*.aif"
+        );
+
+        chooser->launchAsync(
+            juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+            [this, chooser](const juce::FileChooser& fc) {
+                auto file = fc.getResult();
+                if (file.existsAsFile() && audioEngine_)
+                {
+                    if (auto* sampler = audioEngine_->getSamplerProcessor(currentInstrument_))
+                    {
+                        auto* inst = project_.getInstrument(currentInstrument_);
+                        sampler->setInstrument(inst);
+                        if (sampler->loadSample(file))
+                        {
+                            repaint();
+                        }
+                    }
+                }
+            }
+        );
+        return true;
+    }
+
+    return false;
 }
 
 } // namespace ui
