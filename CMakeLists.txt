@@ -61,6 +61,7 @@ target_sources(Vitracker PRIVATE
     src/audio/AudioEngine.cpp
     src/audio/Effects.cpp
     src/audio/PlaitsInstrument.cpp
+    src/audio/SamplerVoice.cpp
     ${DSP_SOURCES})
 
 target_include_directories(Vitracker PRIVATE
