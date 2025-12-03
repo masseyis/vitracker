@@ -66,6 +66,7 @@ target_sources(Vitracker PRIVATE
     src/audio/SamplerVoice.cpp
     src/audio/SamplerInstrument.cpp
     src/audio/SlicerVoice.cpp
+    src/audio/SlicerInstrument.cpp
     ${DSP_SOURCES})
 
 target_include_directories(Vitracker PRIVATE
