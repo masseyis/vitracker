@@ -12,6 +12,7 @@ AudioEngine::AudioEngine()
     for (int i = 0; i < NUM_INSTRUMENTS; ++i)
     {
         instrumentProcessors_[i] = std::make_unique<PlaitsInstrument>();
+        samplerProcessors_[i] = std::make_unique<SamplerInstrument>();
     }
 }
 
@@ -71,6 +72,27 @@ void AudioEngine::triggerNote(int track, int note, int instrumentIndex, float ve
     auto* instrument = project_->getInstrument(instrumentIndex);
     if (!instrument) return;
 
+    // Check instrument type and route to appropriate processor
+    if (instrument->getType() == model::InstrumentType::Sampler)
+    {
+        // Handle Sampler instrument
+        if (auto* sampler = getSamplerProcessor(instrumentIndex))
+        {
+            sampler->setInstrument(instrument);
+            sampler->noteOn(note, velocity);
+        }
+
+        trackInstruments_[track] = instrumentIndex;
+
+        // Trigger sidechain if this instrument has high sidechainDuck
+        if (instrument->getSends().sidechainDuck > 0.5f)
+        {
+            effects_.sidechain.trigger();
+        }
+        return;
+    }
+
+    // Handle Plaits instrument (existing code)
     // Release previous note on this track if different instrument
     if (trackInstruments_[track] >= 0 && trackInstruments_[track] != instrumentIndex)
     {
@@ -109,6 +131,24 @@ void AudioEngine::releaseNote(int track)
     int instrumentIndex = trackInstruments_[track];
     if (instrumentIndex >= 0 && instrumentIndex < NUM_INSTRUMENTS)
     {
+        // Check instrument type
+        if (project_)
+        {
+            auto* instrument = project_->getInstrument(instrumentIndex);
+            if (instrument && instrument->getType() == model::InstrumentType::Sampler)
+            {
+                // Handle Sampler instrument
+                if (auto* sampler = getSamplerProcessor(instrumentIndex))
+                {
+                    sampler->allNotesOff();
+                }
+                trackInstruments_[track] = -1;
+                trackVoices_[track] = nullptr;
+                return;
+            }
+        }
+
+        // Handle Plaits instrument (existing code)
         if (auto* processor = instrumentProcessors_[instrumentIndex].get())
         {
             // Note: we don't have the specific note, so we rely on the instrument's
@@ -163,6 +203,15 @@ void AudioEngine::prepareToPlay(int samplesPerBlockExpected, double sampleRate)
         {
             processor->init(sampleRate);
             processor->setTempo(tempo);
+        }
+    }
+
+    // Initialize all sampler processors
+    for (auto& sampler : samplerProcessors_)
+    {
+        if (sampler)
+        {
+            sampler->init(sampleRate);
         }
     }
 
@@ -437,6 +486,70 @@ void AudioEngine::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferTo
             avgSidechain += sends.sidechainDuck * volume;
             activeCount++;
         }
+    }
+
+    // Process sampler instruments
+    for (int instIdx = 0; instIdx < NUM_INSTRUMENTS; ++instIdx)
+    {
+        auto& sampler = samplerProcessors_[instIdx];
+        if (!sampler) continue;
+
+        // Get instrument model for mixer settings
+        model::Instrument* instrument = project_ ? project_->getInstrument(instIdx) : nullptr;
+
+        // Only process if this is a Sampler type instrument
+        if (!instrument || instrument->getType() != model::InstrumentType::Sampler)
+            continue;
+
+        // Determine if this instrument should play
+        bool shouldPlay = true;
+        float volume = 1.0f;
+        float pan = 0.0f;
+
+        // Check mute/solo
+        if (anySoloed)
+        {
+            shouldPlay = instrument->isSoloed();
+        }
+        else
+        {
+            shouldPlay = !instrument->isMuted();
+        }
+
+        if (!shouldPlay || !sampler->hasSample())
+        {
+            continue;
+        }
+
+        volume = instrument->getVolume();
+        pan = instrument->getPan();
+
+        // Clear temp buffers
+        std::fill(tempL.begin(), tempL.begin() + numSamples, 0.0f);
+        std::fill(tempR.begin(), tempR.begin() + numSamples, 0.0f);
+
+        // Render sampler to temp buffers
+        sampler->process(tempL.data(), tempR.data(), numSamples);
+
+        // Apply volume and pan, mix into output
+        float leftGain = volume * std::sqrt((1.0f - pan) / 2.0f);
+        float rightGain = volume * std::sqrt((1.0f + pan) / 2.0f);
+
+        for (int i = 0; i < numSamples; ++i)
+        {
+            float monoSample = (tempL[i] + tempR[i]) * 0.5f;
+            outL[i] += monoSample * leftGain * 2.0f;
+            outR[i] += monoSample * rightGain * 2.0f;
+        }
+
+        // Accumulate send levels
+        const auto& sends = instrument->getSends();
+        avgReverb += sends.reverb * volume;
+        avgDelay += sends.delay * volume;
+        avgChorus += sends.chorus * volume;
+        avgDrive += sends.drive * volume;
+        avgSidechain += sends.sidechainDuck * volume;
+        activeCount++;
     }
 
     if (activeCount > 0)
@@ -850,6 +963,13 @@ const PlaitsInstrument* AudioEngine::getInstrumentProcessor(int index) const
 {
     if (index >= 0 && index < NUM_INSTRUMENTS)
         return instrumentProcessors_[index].get();
+    return nullptr;
+}
+
+SamplerInstrument* AudioEngine::getSamplerProcessor(int index)
+{
+    if (index >= 0 && index < NUM_INSTRUMENTS)
+        return samplerProcessors_[index].get();
     return nullptr;
 }
 

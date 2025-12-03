@@ -4,6 +4,7 @@
 #include "Effects.h"
 #include "InstrumentProcessor.h"
 #include "PlaitsInstrument.h"
+#include "SamplerInstrument.h"
 #include "../model/Project.h"
 #include "../model/Groove.h"
 #include <JuceHeader.h>
@@ -55,6 +56,7 @@ public:
     // Access instrument processor for UI
     PlaitsInstrument* getInstrumentProcessor(int index);
     const PlaitsInstrument* getInstrumentProcessor(int index) const;
+    SamplerInstrument* getSamplerProcessor(int index);
 
 private:
     Voice* allocateVoice(int note);
@@ -77,6 +79,7 @@ private:
 
     // New instrument processors (one per instrument slot)
     std::array<std::unique_ptr<PlaitsInstrument>, NUM_INSTRUMENTS> instrumentProcessors_;
+    std::array<std::unique_ptr<SamplerInstrument>, NUM_INSTRUMENTS> samplerProcessors_;
 
     double sampleRate_ = 48000.0;
     int samplesPerBlock_ = 512;
