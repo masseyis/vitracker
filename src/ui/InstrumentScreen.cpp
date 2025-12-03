@@ -192,6 +192,39 @@ void InstrumentScreen::drawRow(juce::Graphics& g, juce::Rectangle<int> area, int
 
     switch (type)
     {
+        case InstrumentRowType::Preset:
+        {
+            label = "PRESET";
+            value = 0.0f;  // No slider for preset
+            if (presetManager_)
+            {
+                int presetCount = presetManager_->getPresetCount(engine);
+                if (presetCount > 0 && currentPresetIndex_ >= 0 && currentPresetIndex_ < presetCount)
+                {
+                    auto* preset = presetManager_->getPreset(engine, currentPresetIndex_);
+                    if (preset)
+                    {
+                        valueText = "[" + juce::String(engineNames_[engine]) + "] " + juce::String(preset->name);
+                        if (presetModified_)
+                            valueText += "*";
+                    }
+                }
+                else
+                {
+                    valueText = "[" + juce::String(engineNames_[engine]) + "] --";
+                }
+            }
+            else
+            {
+                valueText = "[" + juce::String(engineNames_[engine]) + "] --";
+            }
+
+            // Draw preset row without slider bar
+            g.drawText(label, area.getX(), area.getY(), kLabelWidth, kRowHeight, juce::Justification::centredLeft);
+            g.drawText(valueText, area.getX() + kLabelWidth, area.getY(), area.getWidth() - kLabelWidth, kRowHeight, juce::Justification::centredLeft);
+            return;  // Early return - no slider bar for preset row
+        }
+
         case InstrumentRowType::Engine:
             label = "ENGINE";
             value = static_cast<float>(engine) / 15.0f;
@@ -599,6 +632,7 @@ bool InstrumentScreen::handleEditKey(const juce::KeyPress& key)
         {
             int delta = (keyCode == juce::KeyPress::rightKey) ? 1 : -1;
             adjustModField(cursorRow_, cursorField_, delta);
+            presetModified_ = true;
             if (onNotePreview) onNotePreview(60, currentInstrument_);
             repaint();
             return true;  // Consumed
@@ -607,6 +641,7 @@ bool InstrumentScreen::handleEditKey(const juce::KeyPress& key)
         if (altHeld && keyCode == juce::KeyPress::upKey)
         {
             adjustModField(cursorRow_, cursorField_, 1, shiftHeld);
+            presetModified_ = true;
             if (onNotePreview) onNotePreview(60, currentInstrument_);
             repaint();
             return true;  // Consumed
@@ -614,6 +649,7 @@ bool InstrumentScreen::handleEditKey(const juce::KeyPress& key)
         if (altHeld && keyCode == juce::KeyPress::downKey)
         {
             adjustModField(cursorRow_, cursorField_, -1, shiftHeld);
+            presetModified_ = true;
             if (onNotePreview) onNotePreview(60, currentInstrument_);
             repaint();
             return true;  // Consumed
@@ -623,6 +659,7 @@ bool InstrumentScreen::handleEditKey(const juce::KeyPress& key)
         if (textChar == '+' || textChar == '=')
         {
             adjustModField(cursorRow_, cursorField_, modDelta, shiftHeld);
+            presetModified_ = true;
             if (onNotePreview) onNotePreview(60, currentInstrument_);
             repaint();
             return true;  // Consumed
@@ -630,12 +667,38 @@ bool InstrumentScreen::handleEditKey(const juce::KeyPress& key)
         if (textChar == '-')
         {
             adjustModField(cursorRow_, cursorField_, -modDelta, shiftHeld);
+            presetModified_ = true;
             if (onNotePreview) onNotePreview(60, currentInstrument_);
             repaint();
             return true;  // Consumed
         }
         // Plain arrows not consumed - let navigation handle field movement
         return false;
+    }
+
+    // Handle Preset row specially - Left/Right cycles presets
+    if (static_cast<InstrumentRowType>(cursorRow_) == InstrumentRowType::Preset)
+    {
+        if (presetManager_ && (keyCode == juce::KeyPress::leftKey || keyCode == juce::KeyPress::rightKey))
+        {
+            auto* instrument = project_.getInstrument(currentInstrument_);
+            if (instrument)
+            {
+                int engine = instrument->getParams().engine;
+                int presetCount = presetManager_->getPresetCount(engine);
+                if (presetCount > 0)
+                {
+                    int newIndex = currentPresetIndex_;
+                    if (keyCode == juce::KeyPress::rightKey)
+                        newIndex = (currentPresetIndex_ + 1) % presetCount;
+                    else
+                        newIndex = (currentPresetIndex_ - 1 + presetCount) % presetCount;
+                    loadPreset(newIndex);
+                }
+            }
+            return true;  // Consumed
+        }
+        return false;  // Let other keys pass through
     }
 
     // Standard (non-grid) value adjustment
@@ -651,6 +714,7 @@ bool InstrumentScreen::handleEditKey(const juce::KeyPress& key)
     if (delta != 0.0f)
     {
         setRowValue(cursorRow_, delta);
+        presetModified_ = true;  // Mark preset as modified
         if (onNotePreview) onNotePreview(60, currentInstrument_);
         repaint();
         return true;  // Consumed
@@ -673,8 +737,20 @@ void InstrumentScreen::setRowValue(int row, float delta)
 
     switch (type)
     {
+        case InstrumentRowType::Preset:
+            // Preset changes are handled by handleEditKey directly
+            return;
         case InstrumentRowType::Engine:
-            params.engine = std::clamp(params.engine + (delta > 0 ? 1 : -1), 0, 15);
+            {
+                int newEngine = std::clamp(params.engine + (delta > 0 ? 1 : -1), 0, 15);
+                if (newEngine != params.engine)
+                {
+                    params.engine = newEngine;
+                    // Reset to Init preset for new engine
+                    currentPresetIndex_ = 0;
+                    presetModified_ = false;
+                }
+            }
             break;
         case InstrumentRowType::Harmonics:
             clamp01(params.harmonics, delta);
@@ -908,6 +984,91 @@ void InstrumentScreen::adjustModField(int row, int field, int delta, bool fineAd
             }
         }
     }
+}
+
+void InstrumentScreen::loadPreset(int presetIndex)
+{
+    if (!presetManager_)
+        return;
+
+    auto* instrument = project_.getInstrument(currentInstrument_);
+    if (!instrument)
+        return;
+
+    int engine = instrument->getParams().engine;
+    auto* preset = presetManager_->getPreset(engine, presetIndex);
+    if (!preset)
+        return;
+
+    // Apply preset parameters to instrument
+    auto& params = instrument->getParams();
+    params.harmonics = preset->params.harmonics;
+    params.timbre = preset->params.timbre;
+    params.morph = preset->params.morph;
+    params.attack = preset->params.attack;
+    params.decay = preset->params.decay;
+    params.polyphony = preset->params.polyphony;
+    params.filter = preset->params.filter;
+    params.lfo1 = preset->params.lfo1;
+    params.lfo2 = preset->params.lfo2;
+    params.env1 = preset->params.env1;
+    params.env2 = preset->params.env2;
+
+    // If the preset has a different engine, change engine too
+    if (preset->params.engine != engine)
+    {
+        params.engine = preset->params.engine;
+    }
+
+    currentPresetIndex_ = presetIndex;
+    presetModified_ = false;
+
+    // Sync all parameters to audio processor
+    if (audioEngine_)
+    {
+        if (auto* processor = audioEngine_->getInstrumentProcessor(currentInstrument_))
+        {
+            processor->setParameter(audio::kParamEngine, params.engine / 15.0f);
+            processor->setParameter(audio::kParamHarmonics, params.harmonics);
+            processor->setParameter(audio::kParamTimbre, params.timbre);
+            processor->setParameter(audio::kParamMorph, params.morph);
+            processor->setParameter(audio::kParamAttack, params.attack);
+            processor->setParameter(audio::kParamDecay, params.decay);
+            processor->setParameter(audio::kParamPolyphony, (params.polyphony - 1) / 15.0f);
+            processor->setParameter(audio::kParamCutoff, params.filter.cutoff);
+            processor->setParameter(audio::kParamResonance, params.filter.resonance);
+
+            // LFO1
+            processor->setParameter(audio::kParamLfo1Rate, params.lfo1.rate / 15.0f);
+            processor->setParameter(audio::kParamLfo1Shape, params.lfo1.shape / 4.0f);
+            processor->setParameter(audio::kParamLfo1Dest, params.lfo1.dest / 8.0f);
+            processor->setParameter(audio::kParamLfo1Amount, (params.lfo1.amount + 64) / 127.0f);
+
+            // LFO2
+            processor->setParameter(audio::kParamLfo2Rate, params.lfo2.rate / 15.0f);
+            processor->setParameter(audio::kParamLfo2Shape, params.lfo2.shape / 4.0f);
+            processor->setParameter(audio::kParamLfo2Dest, params.lfo2.dest / 8.0f);
+            processor->setParameter(audio::kParamLfo2Amount, (params.lfo2.amount + 64) / 127.0f);
+
+            // ENV1
+            processor->setParameter(audio::kParamEnv1Attack, params.env1.attack);
+            processor->setParameter(audio::kParamEnv1Decay, params.env1.decay);
+            processor->setParameter(audio::kParamEnv1Dest, params.env1.dest / 8.0f);
+            processor->setParameter(audio::kParamEnv1Amount, (params.env1.amount + 64) / 127.0f);
+
+            // ENV2
+            processor->setParameter(audio::kParamEnv2Attack, params.env2.attack);
+            processor->setParameter(audio::kParamEnv2Decay, params.env2.decay);
+            processor->setParameter(audio::kParamEnv2Dest, params.env2.dest / 8.0f);
+            processor->setParameter(audio::kParamEnv2Amount, (params.env2.amount + 64) / 127.0f);
+        }
+    }
+
+    // Preview the sound
+    if (onNotePreview)
+        onNotePreview(60, currentInstrument_);
+
+    repaint();
 }
 
 } // namespace ui

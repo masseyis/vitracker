@@ -2,11 +2,13 @@
 
 #include "Screen.h"
 #include "../audio/PlaitsInstrument.h"
+#include "../model/PresetManager.h"
 
 namespace ui {
 
 // Row types for InstrumentScreen
 enum class InstrumentRowType {
+    Preset,     // Preset selection row (new!)
     Engine,
     Harmonics,
     Timbre,
@@ -50,6 +52,12 @@ public:
     void setCurrentInstrument(int index) { currentInstrument_ = index; }
 
     void setAudioEngine(audio::AudioEngine* engine) override;
+    void setPresetManager(model::PresetManager* manager) { presetManager_ = manager; }
+
+    // Preset management
+    void loadPreset(int presetIndex);
+    int getCurrentPresetIndex() const { return currentPresetIndex_; }
+    bool isPresetModified() const { return presetModified_; }
 
 private:
     void drawInstrumentTabs(juce::Graphics& g, juce::Rectangle<int> area);
@@ -80,6 +88,11 @@ private:
     int cursorField_ = 0;  // For multi-field rows (LFO/ENV)
 
     audio::AudioEngine* audioEngine_ = nullptr;
+    model::PresetManager* presetManager_ = nullptr;
+
+    // Per-engine preset tracking
+    int currentPresetIndex_ = 0;
+    bool presetModified_ = false;
 
     static constexpr int kNumRows = static_cast<int>(InstrumentRowType::NumRows);
     static constexpr int kRowHeight = 24;

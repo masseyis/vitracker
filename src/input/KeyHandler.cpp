@@ -370,6 +370,14 @@ void KeyHandler::executeCommand(const std::string& command)
     {
         if (onHalve) onHalve();
     }
+    else if (command.length() > 12 && command.substr(0, 12) == "save-preset ")
+    {
+        if (onSavePreset) onSavePreset(command.substr(12));
+    }
+    else if (command.length() > 14 && command.substr(0, 14) == "delete-preset ")
+    {
+        if (onDeletePreset) onDeletePreset(command.substr(14));
+    }
 
     if (onCommand) onCommand(command);
 }

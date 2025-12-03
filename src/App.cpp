@@ -14,6 +14,9 @@ App::App()
     setWantsKeyboardFocus(true);
     addKeyListener(this);
 
+    // Initialize preset manager
+    presetManager_.initialize();
+
     // Set up audio
     audioEngine_.setProject(&project_);
 
@@ -108,13 +111,14 @@ App::App()
         };
     }
 
-    // Wire up note preview for InstrumentScreen
+    // Wire up note preview and preset manager for InstrumentScreen
     if (auto* instrumentScreen = dynamic_cast<ui::InstrumentScreen*>(screens_[4].get()))
     {
         instrumentScreen->onNotePreview = [this](int note, int instrument) {
             audioEngine_.triggerNote(0, note, instrument, 1.0f);
             previewNoteCounter_ = PREVIEW_NOTE_FRAMES;  // Start countdown to release
         };
+        instrumentScreen->setPresetManager(&presetManager_);
     }
 
     // Wire up chain navigation from SongScreen
@@ -255,6 +259,55 @@ App::App()
     keyHandler_->onRedo = [this]() {
         model::UndoManager::instance().redo();
         repaint();
+    };
+
+    // Preset commands
+    keyHandler_->onSavePreset = [this](const std::string& name) {
+        if (auto* instrumentScreen = dynamic_cast<ui::InstrumentScreen*>(screens_[4].get()))
+        {
+            int instIdx = instrumentScreen->getCurrentInstrument();
+            auto* instrument = project_.getInstrument(instIdx);
+            if (instrument)
+            {
+                int engine = instrument->getParams().engine;
+                if (presetManager_.saveUserPreset(name, engine, instrument->getParams()))
+                {
+                    DBG("Preset saved: " << name);
+                    repaint();
+                }
+                else
+                {
+                    DBG("Failed to save preset (invalid name?)");
+                }
+            }
+        }
+    };
+
+    keyHandler_->onDeletePreset = [this](const std::string& name) {
+        if (auto* instrumentScreen = dynamic_cast<ui::InstrumentScreen*>(screens_[4].get()))
+        {
+            int instIdx = instrumentScreen->getCurrentInstrument();
+            auto* instrument = project_.getInstrument(instIdx);
+            if (instrument)
+            {
+                int engine = instrument->getParams().engine;
+                // Check if it's a factory preset
+                int presetIdx = presetManager_.findPresetIndex(engine, name);
+                if (presetIdx >= 0 && presetManager_.isFactoryPreset(engine, presetIdx))
+                {
+                    DBG("Cannot delete factory preset");
+                }
+                else if (presetManager_.deleteUserPreset(name, engine))
+                {
+                    DBG("Preset deleted: " << name);
+                    repaint();
+                }
+                else
+                {
+                    DBG("Preset not found: " << name);
+                }
+            }
+        }
     };
 
     // Start timer for UI updates (playhead position)

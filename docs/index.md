@@ -308,9 +308,32 @@ When playing in Song mode:
 
 The Instrument screen (`5`) configures Plaits synthesis parameters.
 
+### Presets
+
+The Instrument screen includes factory and user presets for quick sound selection.
+
+#### Preset Row
+
+At the top of the screen, a **Preset** row shows the current preset:
+- `[Engine] PresetName` - Current preset
+- `[Engine] PresetName*` - Preset modified (asterisk indicates you've tweaked parameters)
+- `[Engine] --` - No preset loaded
+
+#### Factory Presets
+
+Each engine includes 2-7 factory presets:
+- All engines have an **Init** preset (neutral starting point)
+- FM engine includes classic sounds: DX7 E-Piano, M1 Piano, M1 Organ, Lately Bass
+- Drum engines include variations like Punchy, 808, Tight, etc.
+
+#### User Presets
+
+Save your own presets with `:save-preset name`. User presets are stored in `~/.vitracker/presets/`.
+
 ### Parameters
 
 #### Main Parameters (Top)
+- **Preset** - Current preset (use Left/Right to browse)
 - **Engine** - Plaits synthesis engine (0-15)
 - **Harmonics** - Harmonic content
 - **Timbre** - Timbral character
@@ -408,6 +431,13 @@ Enter Command mode with `:`, type command, press `Enter`.
 | `:double` | Double pattern length |
 | `:halve` | Halve pattern length |
 
+### Preset Commands
+
+| Command | Action |
+|---------|--------|
+| `:save-preset name` | Save current instrument as user preset |
+| `:delete-preset name` | Delete a user preset (factory presets cannot be deleted) |
+
 ---
 
 ## Plaits Engines
@@ -483,6 +513,7 @@ Next/Prev:      [ ]       Drill Down:     Enter
 ```
 :w :e :new :q
 :transpose N :interpolate :randomize N :double :halve
+:save-preset name :delete-preset name
 ```
 
 ---

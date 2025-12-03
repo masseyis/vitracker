@@ -2,6 +2,7 @@
 
 #include <JuceHeader.h>
 #include "model/Project.h"
+#include "model/PresetManager.h"
 #include "input/ModeManager.h"
 #include "input/KeyHandler.h"
 #include "audio/AudioEngine.h"
@@ -36,6 +37,7 @@ private:
     juce::File getAutosavePath() const;
 
     model::Project project_;
+    model::PresetManager presetManager_;
     input::ModeManager modeManager_;
     std::unique_ptr<input::KeyHandler> keyHandler_;
 
