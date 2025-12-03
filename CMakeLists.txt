@@ -57,6 +57,7 @@ target_sources(Vitracker PRIVATE
     src/ui/MixerScreen.cpp
     src/ui/SongScreen.cpp
     src/ui/ChainScreen.cpp
+    src/ui/WaveformDisplay.cpp
     src/audio/Voice.cpp
     src/audio/AudioEngine.cpp
     src/audio/Effects.cpp
