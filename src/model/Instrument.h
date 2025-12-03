@@ -6,6 +6,12 @@
 
 namespace model {
 
+enum class InstrumentType {
+    Plaits,
+    Sampler,
+    Slicer
+};
+
 // LFO parameter structure
 struct LfoParams
 {
@@ -85,6 +91,9 @@ public:
     bool isSoloed() const { return soloed_; }
     void setSoloed(bool s) { soloed_ = s; }
 
+    InstrumentType getType() const { return type_; }
+    void setType(InstrumentType type) { type_ = type; }
+
 private:
     std::string name_;
     PlaitsParams params_;
@@ -95,6 +104,8 @@ private:
     float pan_ = 0.0f;       // -1.0 (left) to +1.0 (right)
     bool muted_ = false;
     bool soloed_ = false;
+
+    InstrumentType type_ = InstrumentType::Plaits;
 };
 
 } // namespace model
