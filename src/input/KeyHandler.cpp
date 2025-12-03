@@ -386,6 +386,19 @@ void KeyHandler::executeCommand(const std::string& command)
     {
         if (onCreateSlicer) onCreateSlicer();
     }
+    else if (command.substr(0, 4) == "chop")
+    {
+        // Parse :chop N
+        int divisions = 8;  // default
+        if (command.length() > 5) {
+            try {
+                divisions = std::stoi(command.substr(5));
+            } catch (...) {
+                divisions = 8;
+            }
+        }
+        if (onChop) onChop(divisions);
+    }
 
     if (onCommand) onCommand(command);
 }

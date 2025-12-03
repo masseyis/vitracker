@@ -40,6 +40,7 @@ public:
     std::function<void(const std::string&)> onDeletePreset;  // :delete-preset name
     std::function<void()> onCreateSampler;  // :sampler
     std::function<void()> onCreateSlicer;  // :slicer
+    std::function<void(int)> onChop;  // Takes number of divisions
 
 private:
     bool handleNormalMode(const juce::KeyPress& key);

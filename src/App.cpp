@@ -370,6 +370,20 @@ App::App()
         }
     };
 
+    keyHandler_->onChop = [this](int divisions) {
+        if (auto* instScreen = dynamic_cast<ui::InstrumentScreen*>(screens_[4].get())) {
+            int currentInst = instScreen->getCurrentInstrument();
+            auto* inst = project_.getInstrument(currentInst);
+
+            if (inst && inst->getType() == model::InstrumentType::Slicer) {
+                if (auto* slicer = audioEngine_.getSlicerProcessor(currentInst)) {
+                    slicer->chopIntoDivisions(divisions);
+                    instScreen->repaint();
+                }
+            }
+        }
+    };
+
     // Start timer for UI updates (playhead position)
     startTimerHz(30);
 }
