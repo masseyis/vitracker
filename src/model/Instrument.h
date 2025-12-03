@@ -3,6 +3,8 @@
 #include <string>
 #include <array>
 #include <algorithm>
+#include "FilterParams.h"
+#include "SamplerParams.h"
 
 namespace model {
 
@@ -28,13 +30,6 @@ struct EnvModParams
     float decay = 0.2f;     // 0.0-1.0
     int dest = 0;           // ModDestination index
     int amount = 0;         // -64 to +63
-};
-
-// Filter parameters
-struct FilterParams
-{
-    float cutoff = 1.0f;      // 0.0-1.0 (maps to 20Hz-20kHz)
-    float resonance = 0.0f;   // 0.0-1.0
 };
 
 struct PlaitsParams
@@ -78,6 +73,9 @@ public:
     SendLevels& getSends() { return sends_; }
     const SendLevels& getSends() const { return sends_; }
 
+    SamplerParams& getSamplerParams() { return samplerParams_; }
+    const SamplerParams& getSamplerParams() const { return samplerParams_; }
+
     // Mixer controls (per-instrument)
     float getVolume() const { return volume_; }
     void setVolume(float v) { volume_ = std::max(0.0f, std::min(1.0f, v)); }
@@ -98,6 +96,7 @@ private:
     std::string name_;
     PlaitsParams params_;
     SendLevels sends_;
+    SamplerParams samplerParams_;
 
     // Mixer state
     float volume_ = 1.0f;    // 0.0-1.0

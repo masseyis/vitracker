@@ -3,11 +3,7 @@
 #include <string>
 #include <vector>
 #include <cstdint>
-
-// Include Instrument.h to get FilterParams definition
-// Note: This creates a forward dependency. When Instrument.h includes this file
-// (in Task 4), the include guard will prevent circular inclusion.
-#include "Instrument.h"
+#include "FilterParams.h"
 
 namespace model {
 
