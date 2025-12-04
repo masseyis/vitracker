@@ -32,12 +32,15 @@ void SamplerVoice::trigger(int midiNote, float velocity, const model::SamplerPar
     active_ = true;
     playPosition_ = 0.0;
 
-    // Calculate playback rate for pitch shifting
-    double semitones = midiNote - rootNote_;
-    playbackRate_ = std::pow(2.0, semitones / 12.0);
+    // Base playback rate for sample rate conversion
+    playbackRate_ = static_cast<double>(originalSampleRate_) / sampleRate_;
 
-    // Adjust for sample rate difference
-    playbackRate_ *= static_cast<double>(originalSampleRate_) / sampleRate_;
+    // Apply auto-repitch ratio if enabled (transposes sample to nearest C)
+    playbackRate_ *= static_cast<double>(params.pitchRatio);
+
+    // Apply pitch shift based on MIDI note vs root note (for keyboard playback)
+    double semitones = midiNote - rootNote_;
+    playbackRate_ *= std::pow(2.0, semitones / 12.0);
 
     // Set up envelopes
     ampEnvelope_.setAttack(params.ampEnvelope.attack);

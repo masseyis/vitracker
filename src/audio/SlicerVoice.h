@@ -36,7 +36,7 @@ private:
     // Slice boundaries
     size_t sliceStart_ = 0;
     size_t sliceEnd_ = 0;
-    size_t playPosition_ = 0;
+    double playPosition_ = 0.0;  // Fractional position for interpolation
 
     // Playback rate for sample rate conversion only (no pitch shift)
     double playbackRate_ = 1.0;

@@ -52,6 +52,7 @@ private:
     std::string noteToString(int8_t note) const;
     std::string getScaleLockForPattern(int patternIndex) const;
     int moveNoteInScale(int currentNote, int direction, const std::string& scaleLock) const;
+    const model::Step* findLastNonEmptyRowAbove(int track, int startRow) const;
 
     int currentPattern_ = 0;
     int cursorTrack_ = 0;

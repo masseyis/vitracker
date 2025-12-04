@@ -4,10 +4,37 @@
 #include "../audio/PlaitsInstrument.h"
 #include "../audio/SamplerInstrument.h"
 #include "../model/PresetManager.h"
+#include "WaveformDisplay.h"
 #include "SliceWaveformDisplay.h"
 #include "../audio/SlicerInstrument.h"
 
 namespace ui {
+
+// Sampler-specific row types
+enum class SamplerRowType {
+    RootNote,       // Manual override for detected pitch
+    TargetNote,     // Target note for auto-repitch
+    AutoRepitch,    // Toggle auto-repitch on/off
+    Attack,
+    Decay,
+    Sustain,
+    Release,
+    Cutoff,
+    Resonance,
+    Volume,
+    Pan,
+    NumSamplerRows
+};
+
+// Slicer-specific row types
+enum class SlicerRowType {
+    OriginalBPM,    // Override detected BPM
+    Bars,           // Number of bars in the sample
+    RootNote,       // Root note override
+    Volume,
+    Pan,
+    NumSlicerRows
+};
 
 // Row types for InstrumentScreen
 enum class InstrumentRowType {
@@ -62,8 +89,13 @@ public:
     int getCurrentPresetIndex() const { return currentPresetIndex_; }
     bool isPresetModified() const { return presetModified_; }
 
+    // Slicer UI update (called after :chop command)
+    void updateSlicerDisplay();
+
 private:
     void drawInstrumentTabs(juce::Graphics& g, juce::Rectangle<int> area);
+    void drawTypeSelector(juce::Graphics& g, juce::Rectangle<int> area);
+    void cycleInstrumentType();
     void drawRow(juce::Graphics& g, juce::Rectangle<int> area, int row, bool selected);
     void drawModRow(juce::Graphics& g, juce::Rectangle<int> area, int row, bool selected);
     void drawSliderRow(juce::Graphics& g, juce::Rectangle<int> area, const char* label,
@@ -73,7 +105,6 @@ private:
     bool handleSamplerKey(const juce::KeyPress& key, bool isEditMode);
 
     // Slicer-specific methods
-    void updateSlicerDisplay();
     bool handleSlicerKey(const juce::KeyPress& key, bool isEditMode);
     void paintSlicerUI(juce::Graphics& g);
 
@@ -108,7 +139,18 @@ private:
     // Slicer UI component
     std::unique_ptr<SliceWaveformDisplay> sliceWaveformDisplay_;
 
+    // Sampler UI component
+    std::unique_ptr<WaveformDisplay> samplerWaveformDisplay_;
+    void updateSamplerDisplay();
+    void paintSamplerUI(juce::Graphics& g);
+
+    // Sampler/Slicer cursor tracking
+    int samplerCursorRow_ = 0;
+    int slicerCursorRow_ = 0;
+
     static constexpr int kNumRows = static_cast<int>(InstrumentRowType::NumRows);
+    static constexpr int kNumSamplerRows = static_cast<int>(SamplerRowType::NumSamplerRows);
+    static constexpr int kNumSlicerRows = static_cast<int>(SlicerRowType::NumSlicerRows);
     static constexpr int kRowHeight = 24;
     static constexpr int kLabelWidth = 80;
     static constexpr int kBarWidth = 180;

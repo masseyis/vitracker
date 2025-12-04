@@ -1,4 +1,6 @@
 #include "SamplerInstrument.h"
+#include "../dsp/AudioAnalysis.h"
+#include <cmath>
 
 namespace audio {
 
@@ -118,13 +120,54 @@ bool SamplerInstrument::loadSample(const juce::File& file) {
     sampleBuffer_.setSize(numChannels, static_cast<int>(numSamples));
     reader->read(&sampleBuffer_, 0, static_cast<int>(numSamples), 0, true, true);
 
-    // Update instrument's sample ref
+    // Update instrument's sample ref and detect pitch
     if (instrument_) {
-        auto& sampleRef = instrument_->getSamplerParams().sample;
+        auto& params = instrument_->getSamplerParams();
+        auto& sampleRef = params.sample;
         sampleRef.path = file.getFullPathName().toStdString();
         sampleRef.numChannels = numChannels;
         sampleRef.sampleRate = loadedSampleRate_;
         sampleRef.numSamples = static_cast<size_t>(numSamples);
+
+        // Detect pitch for auto-repitch
+        float detectedPitch = dsp::AudioAnalysis::detectPitch(
+            sampleBuffer_.getReadPointer(0),
+            static_cast<size_t>(numSamples),
+            loadedSampleRate_
+        );
+
+        if (detectedPitch > 0.0f) {
+            params.detectedPitchHz = detectedPitch;
+            params.detectedMidiNote = dsp::AudioAnalysis::frequencyToMidiNote(detectedPitch);
+
+            // Calculate cents deviation from the detected MIDI note
+            float exactNote = 69.0f + 12.0f * std::log2(detectedPitch / 440.0f);
+            params.detectedPitchCents = (exactNote - static_cast<float>(params.detectedMidiNote)) * 100.0f;
+
+            // Find nearest C note for auto-repitch target
+            params.targetRootNote = dsp::AudioAnalysis::getNearestC(params.detectedMidiNote);
+
+            // Calculate pitch ratio to transpose to target C
+            if (params.autoRepitchEnabled) {
+                params.pitchRatio = dsp::AudioAnalysis::getPitchRatio(
+                    params.detectedMidiNote, params.targetRootNote
+                );
+            } else {
+                params.pitchRatio = 1.0f;
+            }
+
+            DBG("Detected pitch: " << detectedPitch << " Hz (MIDI " << params.detectedMidiNote
+                << ", " << params.detectedPitchCents << " cents), target C: " << params.targetRootNote
+                << ", ratio: " << params.pitchRatio);
+        } else {
+            // No pitch detected - reset to defaults
+            params.detectedPitchHz = 0.0f;
+            params.detectedMidiNote = -1;
+            params.detectedPitchCents = 0.0f;
+            params.targetRootNote = 60;
+            params.pitchRatio = 1.0f;
+            DBG("No pitch detected in sample");
+        }
     }
 
     // Update all voices with new sample data

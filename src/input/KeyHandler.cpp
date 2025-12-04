@@ -101,6 +101,12 @@ bool KeyHandler::handleNormalMode(const juce::KeyPress& key)
         return true;
     }
 
+    // Forward Tab key to screen for type switching etc.
+    if (keyCode == juce::KeyPress::tabKey)
+    {
+        if (onEditKey && onEditKey(key)) return true;
+    }
+
     // Forward ALL printable keys to screen first (for name editing, note entry, etc.)
     // Screen returns true if it consumed the key (e.g., in name editing mode)
     // Only fall through to mode switches/actions if screen doesn't consume

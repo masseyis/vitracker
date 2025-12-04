@@ -246,16 +246,58 @@ bool PatternScreen::handleEditKey(const juce::KeyPress& key)
     {
         // NOTE COLUMN: Alt+Up/Down creates note or moves in scale, plain arrows navigate
 
+        // Shift+Up/Down: octave stepping (also works with Alt)
+        if (shiftHeld && (keyCode == juce::KeyPress::upKey || keyCode == juce::KeyPress::downKey))
+        {
+            int direction = (keyCode == juce::KeyPress::upKey) ? 12 : -12;
+
+            // Create note if empty, copying from last non-empty row
+            if (step.note <= 0 || step.note > 127)
+            {
+                const model::Step* prevStep = findLastNonEmptyRowAbove(cursorTrack_, cursorRow_);
+                if (prevStep && prevStep->note >= 0)
+                {
+                    // Copy all columns from previous step
+                    step = *prevStep;
+                }
+                else
+                {
+                    step.note = 60;  // C-4 default
+                    if (step.instrument < 0) step.instrument = 0;
+                }
+            }
+            else
+            {
+                // Move by octave
+                int newNote = step.note + direction;
+                if (newNote >= 0 && newNote <= 127)
+                    step.note = static_cast<int8_t>(newNote);
+            }
+
+            if (onNotePreview) onNotePreview(step.note, step.instrument >= 0 ? step.instrument : 0);
+            repaint();
+            return true;  // Consumed
+        }
+
         // Alt+Up/Down: create note if empty, then move in scale
         if (altHeld && (keyCode == juce::KeyPress::upKey || keyCode == juce::KeyPress::downKey))
         {
             int direction = (keyCode == juce::KeyPress::upKey) ? 1 : -1;
 
-            // Create note at C-4 (60) if empty
+            // Create note if empty, copying from last non-empty row
             if (step.note <= 0 || step.note > 127)
             {
-                step.note = 60;  // C-4
-                if (step.instrument < 0) step.instrument = 0;
+                const model::Step* prevStep = findLastNonEmptyRowAbove(cursorTrack_, cursorRow_);
+                if (prevStep && prevStep->note >= 0)
+                {
+                    // Copy all columns from previous step
+                    step = *prevStep;
+                }
+                else
+                {
+                    step.note = 60;  // C-4 default
+                    if (step.instrument < 0) step.instrument = 0;
+                }
             }
             else
             {
@@ -271,6 +313,26 @@ bool PatternScreen::handleEditKey(const juce::KeyPress& key)
 
         // Plain Left/Right not consumed - let navigation handle
         // (handleEditKey is called before navigation for Left/Right)
+
+        // 'n' adds note, copying from last non-empty row above
+        if (textChar == 'n')
+        {
+            const model::Step* prevStep = findLastNonEmptyRowAbove(cursorTrack_, cursorRow_);
+            if (prevStep && prevStep->note >= 0)
+            {
+                // Copy all columns from previous step
+                step = *prevStep;
+            }
+            else
+            {
+                step.note = 60;  // C-4 default
+                if (step.instrument < 0) step.instrument = 0;
+            }
+            if (onNotePreview) onNotePreview(step.note, step.instrument >= 0 ? step.instrument : 0);
+            cursorRow_ = std::min(cursorRow_ + 1, pattern->getLength() - 1);
+            repaint();
+            return true;
+        }
 
         // Period for note off
         if (textChar == '.')
@@ -620,6 +682,21 @@ std::string PatternScreen::noteToString(int8_t note) const
     int octave = note / 12;
     int noteName = note % 12;
     return std::string(noteNames[noteName]) + std::to_string(octave);
+}
+
+const model::Step* PatternScreen::findLastNonEmptyRowAbove(int track, int startRow) const
+{
+    auto* pattern = project_.getPattern(currentPattern_);
+    if (!pattern) return nullptr;
+
+    // Search upwards from startRow-1 to find last non-empty step in this track
+    for (int r = startRow - 1; r >= 0; --r)
+    {
+        const auto& step = pattern->getStep(track, r);
+        if (!step.isEmpty())
+            return &step;
+    }
+    return nullptr;
 }
 
 void PatternScreen::startSelection()

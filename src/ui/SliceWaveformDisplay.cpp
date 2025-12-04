@@ -124,12 +124,12 @@ void SliceWaveformDisplay::paint(juce::Graphics& g) {
         // Draw slice markers on top
         paintSliceMarkers(g, bounds);
     } else {
-        g.setColour(juce::Colours::grey);
+        g.setColour(juce::Colour(0xffeaeaea).withAlpha(0.5f));  // fgColor dimmed
         g.drawText("No sample loaded", bounds, juce::Justification::centred);
     }
 
     // Draw info text
-    g.setColour(juce::Colours::white.withAlpha(0.7f));
+    g.setColour(juce::Colour(0xffeaeaea).withAlpha(0.7f));  // fgColor
     g.setFont(12.0f);
 
     juce::String infoText;
@@ -201,7 +201,7 @@ void SliceWaveformDisplay::paintSliceMarkers(juce::Graphics& g, juce::Rectangle<
             g.drawVerticalLine(x, 0.0f, static_cast<float>(bounds.getHeight()));
 
             // Draw slice number
-            g.setColour(juce::Colours::white);
+            g.setColour(juce::Colour(0xffeaeaea));  // fgColor
             g.drawText(juce::String(i), x + 2, 2, 20, 14, juce::Justification::centredLeft);
         }
     }

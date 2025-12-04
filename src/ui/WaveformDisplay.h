@@ -27,9 +27,10 @@ protected:
     float zoom_ = 1.0f;           // 1.0 = fit whole sample
     float scrollPosition_ = 0.0f; // 0.0-1.0 position in sample
 
-    juce::Colour waveformColour_ = juce::Colour(0xFF4EC9B0);
-    juce::Colour backgroundColour_ = juce::Colour(0xFF1E1E1E);
-    juce::Colour centreLineColour_ = juce::Colour(0xFF3C3C3C);
+    // Colors matched to project color scheme (from Screen.h)
+    juce::Colour waveformColour_ = juce::Colour(0xFF7c7cff);    // cursorColor - bright purple
+    juce::Colour backgroundColour_ = juce::Colour(0xff1a1a2e);  // bgColor - dark blue
+    juce::Colour centreLineColour_ = juce::Colour(0xff2a2a4e);  // headerColor - darker blue
 
 private:
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(WaveformDisplay)

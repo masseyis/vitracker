@@ -11,7 +11,7 @@ namespace audio {
 class SlicerInstrument : public InstrumentProcessor {
 public:
     static constexpr int NUM_VOICES = 8;
-    static constexpr int BASE_NOTE = 36;  // C1 = slice 0
+    static constexpr int BASE_NOTE = 12;  // C-1 (tracker notation) = slice 0
 
     SlicerInstrument();
     ~SlicerInstrument() override = default;

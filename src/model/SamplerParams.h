@@ -29,6 +29,9 @@ struct SamplerParams {
     float detectedPitchHz = 0.0f;       // Auto-detected pitch, 0 = unknown
     float detectedPitchCents = 0.0f;    // Cents deviation from nearest note
     int detectedMidiNote = -1;          // -1 = unknown
+    int targetRootNote = 60;            // Note to repitch to (nearest C)
+    float pitchRatio = 1.0f;            // Playback ratio for auto-repitch
+    bool autoRepitchEnabled = true;     // Enable auto-repitch to C
 
     FilterParams filter;
     AdsrParams ampEnvelope;

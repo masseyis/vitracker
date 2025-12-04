@@ -311,25 +311,24 @@ App::App()
     };
 
     keyHandler_->onCreateSampler = [this]() {
-        // Find first unused instrument slot or use slot 0
-        int slot = -1;
-        for (int i = 0; i < project_.getInstrumentCount(); ++i)
+        // Use the current instrument from InstrumentScreen (or 0 if not available)
+        int slot = 0;
+        if (auto* instScreen = dynamic_cast<ui::InstrumentScreen*>(screens_[4].get()))
         {
-            auto* instrument = project_.getInstrument(i);
-            if (instrument && instrument->getName() == "Instrument " + std::to_string(i))
-            {
-                slot = i;
-                break;
-            }
+            slot = instScreen->getCurrentInstrument();
         }
-        if (slot == -1) slot = 0;
 
-        // Set instrument type and name
+        // Set instrument type (keep existing name unless it's a default)
         auto* instrument = project_.getInstrument(slot);
         if (instrument)
         {
             instrument->setType(model::InstrumentType::Sampler);
-            instrument->setName("Sampler " + std::to_string(slot));
+            // Only rename if it has a default name
+            std::string name = instrument->getName();
+            if (name.find("Instrument") == 0 || name.find("Slicer") == 0 || name.find("Plaits") == 0)
+            {
+                instrument->setName("Sampler " + std::to_string(slot));
+            }
 
             // Switch to instrument screen showing this instrument
             if (auto* instScreen = dynamic_cast<ui::InstrumentScreen*>(screens_[4].get()))
@@ -341,30 +340,30 @@ App::App()
     };
 
     keyHandler_->onCreateSlicer = [this]() {
-        // Find first unused instrument slot or use slot 0
-        int slot = -1;
-        for (int i = 0; i < project_.getInstrumentCount(); ++i)
+        // Use the current instrument from InstrumentScreen (or 0 if not available)
+        int slot = 0;
+        if (auto* instScreen = dynamic_cast<ui::InstrumentScreen*>(screens_[4].get()))
         {
-            auto* instrument = project_.getInstrument(i);
-            if (instrument && instrument->getName() == "Instrument " + std::to_string(i))
-            {
-                slot = i;
-                break;
-            }
+            slot = instScreen->getCurrentInstrument();
         }
-        if (slot == -1) slot = 0;
 
-        // Set instrument type and name
+        // Set instrument type (keep existing name unless it's a default)
         auto* instrument = project_.getInstrument(slot);
         if (instrument)
         {
             instrument->setType(model::InstrumentType::Slicer);
-            instrument->setName("Slicer " + std::to_string(slot));
+            // Only rename if it has a default name
+            std::string name = instrument->getName();
+            if (name.find("Instrument") == 0 || name.find("Sampler") == 0 || name.find("Plaits") == 0)
+            {
+                instrument->setName("Slicer " + std::to_string(slot));
+            }
 
             // Switch to instrument screen showing this instrument
             if (auto* instScreen = dynamic_cast<ui::InstrumentScreen*>(screens_[4].get()))
             {
                 instScreen->setCurrentInstrument(slot);
+                instScreen->updateSlicerDisplay();
             }
             switchScreen(4);
         }
@@ -378,7 +377,7 @@ App::App()
             if (inst && inst->getType() == model::InstrumentType::Slicer) {
                 if (auto* slicer = audioEngine_.getSlicerProcessor(currentInst)) {
                     slicer->chopIntoDivisions(divisions);
-                    instScreen->repaint();
+                    instScreen->updateSlicerDisplay();  // Sync waveform display with new slices
                 }
             }
         }

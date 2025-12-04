@@ -1,4 +1,5 @@
 #include "SlicerInstrument.h"
+#include "../dsp/AudioAnalysis.h"
 #include <algorithm>
 #include <cmath>
 
@@ -132,13 +133,56 @@ bool SlicerInstrument::loadSample(const juce::File& file) {
     sampleBuffer_.setSize(numChannels, static_cast<int>(numSamples));
     reader->read(&sampleBuffer_, 0, static_cast<int>(numSamples), 0, true, true);
 
-    // Update instrument's sample ref
+    // Update instrument's sample ref and detect BPM
     if (instrument_) {
-        auto& sampleRef = instrument_->getSlicerParams().sample;
+        auto& params = instrument_->getSlicerParams();
+        auto& sampleRef = params.sample;
         sampleRef.path = file.getFullPathName().toStdString();
         sampleRef.numChannels = numChannels;
         sampleRef.sampleRate = loadedSampleRate_;
         sampleRef.numSamples = static_cast<size_t>(numSamples);
+
+        // Detect BPM
+        float detectedBPM = dsp::AudioAnalysis::detectBPM(
+            sampleBuffer_.getReadPointer(0),
+            static_cast<size_t>(numSamples),
+            loadedSampleRate_
+        );
+
+        if (detectedBPM > 0.0f) {
+            params.detectedBPM = detectedBPM;
+            // Stretched BPM is same as detected when no time-stretching applied
+            params.stretchedBPM = detectedBPM;
+
+            // Calculate number of bars: (samples / sampleRate) / (60 / BPM * 4)
+            // = sample_duration_seconds / seconds_per_bar
+            float durationSec = static_cast<float>(numSamples) / loadedSampleRate_;
+            float secondsPerBar = (60.0f / detectedBPM) * 4.0f;  // 4 beats per bar
+            params.detectedBars = std::max(1, static_cast<int>(std::round(durationSec / secondsPerBar)));
+
+            DBG("Detected BPM: " << detectedBPM << ", Bars: " << params.detectedBars);
+        } else {
+            params.detectedBPM = 0.0f;
+            params.stretchedBPM = 0.0f;
+            params.detectedBars = 0;
+            DBG("No BPM detected in sample");
+        }
+
+        // Also detect pitch (optional, for display)
+        float detectedPitch = dsp::AudioAnalysis::detectPitch(
+            sampleBuffer_.getReadPointer(0),
+            static_cast<size_t>(numSamples),
+            loadedSampleRate_
+        );
+
+        if (detectedPitch > 0.0f) {
+            params.pitchHz = detectedPitch;
+            params.detectedRootNote = dsp::AudioAnalysis::frequencyToMidiNote(detectedPitch);
+            DBG("Detected pitch: " << detectedPitch << " Hz (MIDI " << params.detectedRootNote << ")");
+        } else {
+            params.pitchHz = 0.0f;
+            params.detectedRootNote = 60;
+        }
 
         // Default chop into 8 divisions
         chopIntoDivisions(8);

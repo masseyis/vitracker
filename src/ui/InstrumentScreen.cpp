@@ -37,6 +37,7 @@ static const char* kModDestNames[] = {"HARM", "TIMB", "MRPH", "CUTF", "RESO", "L
 InstrumentScreen::InstrumentScreen(model::Project& project, input::ModeManager& modeManager)
     : Screen(project, modeManager)
 {
+    // Slicer waveform display
     sliceWaveformDisplay_ = std::make_unique<SliceWaveformDisplay>();
     addChildComponent(sliceWaveformDisplay_.get());
 
@@ -57,6 +58,10 @@ InstrumentScreen::InstrumentScreen(model::Project& project, input::ModeManager& 
             }
         }
     };
+
+    // Sampler waveform display
+    samplerWaveformDisplay_ = std::make_unique<WaveformDisplay>();
+    addChildComponent(samplerWaveformDisplay_.get());
 }
 
 void InstrumentScreen::setAudioEngine(audio::AudioEngine* engine)
@@ -107,6 +112,44 @@ void InstrumentScreen::drawInstrumentTabs(juce::Graphics& g, juce::Rectangle<int
     g.drawText("]", area.removeFromLeft(20), juce::Justification::centred);
 }
 
+void InstrumentScreen::drawTypeSelector(juce::Graphics& g, juce::Rectangle<int> area)
+{
+    auto* instrument = project_.getInstrument(currentInstrument_);
+    if (!instrument) return;
+
+    auto currentType = instrument->getType();
+
+    g.setFont(12.0f);
+    g.setColour(fgColor.darker(0.5f));
+    g.drawText("TYPE:", area.removeFromLeft(50), juce::Justification::centredLeft);
+
+    const char* typeNames[] = {"Plaits", "Sampler", "Slicer"};
+    const model::InstrumentType types[] = {
+        model::InstrumentType::Plaits,
+        model::InstrumentType::Sampler,
+        model::InstrumentType::Slicer
+    };
+
+    for (int i = 0; i < 3; ++i) {
+        auto buttonArea = area.removeFromLeft(70);
+        bool isSelected = (types[i] == currentType);
+
+        if (isSelected) {
+            g.setColour(cursorColor.withAlpha(0.3f));
+            g.fillRoundedRectangle(buttonArea.reduced(2).toFloat(), 4.0f);
+        }
+
+        g.setColour(isSelected ? cursorColor : fgColor.darker(0.3f));
+        g.drawText(typeNames[i], buttonArea, juce::Justification::centred);
+
+        area.removeFromLeft(4);  // Gap between buttons
+    }
+
+    // Hint for switching
+    g.setColour(fgColor.darker(0.6f));
+    g.drawText("[Tab to switch]", area, juce::Justification::centredLeft);
+}
+
 void InstrumentScreen::paint(juce::Graphics& g)
 {
     g.fillAll(bgColor);
@@ -115,6 +158,12 @@ void InstrumentScreen::paint(juce::Graphics& g)
 
     // Instrument selector tabs at top
     drawInstrumentTabs(g, area.removeFromTop(30));
+
+    // Type selector row
+    auto typeSelectorArea = area.removeFromTop(26);
+    g.setColour(headerColor.darker(0.3f));
+    g.fillRect(typeSelectorArea);
+    drawTypeSelector(g, typeSelectorArea.reduced(10, 2));
 
     // Header bar (matches Pattern screen style)
     auto headerArea = area.removeFromTop(30);
@@ -125,7 +174,7 @@ void InstrumentScreen::paint(juce::Graphics& g)
 
     // Check if this is a sampler instrument and render sampler UI
     if (instrument && instrument->getType() == model::InstrumentType::Sampler) {
-        // Paint sampler-specific UI
+        // Paint header
         g.setColour(fgColor);
         g.setFont(18.0f);
         juce::String title = "SAMPLER: ";
@@ -135,52 +184,7 @@ void InstrumentScreen::paint(juce::Graphics& g)
             title += juce::String(instrument->getName());
         g.drawText(title, headerArea.reduced(10, 0), juce::Justification::centredLeft, true);
 
-        area = area.reduced(16);
-        area.removeFromTop(8);
-
-        // Show sample info
-        const auto& samplerParams = instrument->getSamplerParams();
-        g.setFont(14.0f);
-        g.setColour(fgColor);
-
-        int yPos = area.getY() + 20;
-
-        if (samplerParams.sample.path.empty()) {
-            g.setFont(16.0f);
-            g.setColour(fgColor.darker(0.3f));
-            g.drawText("No sample loaded", area.getX(), yPos, area.getWidth(), 30, juce::Justification::centredLeft);
-            yPos += 40;
-
-            g.setFont(14.0f);
-            g.setColour(cursorColor);
-            g.drawText("Press 'o' to load a sample", area.getX(), yPos, area.getWidth(), 30, juce::Justification::centredLeft);
-        } else {
-            // Show sample filename
-            juce::File sampleFile(samplerParams.sample.path);
-            g.setColour(cursorColor);
-            g.drawText("Sample: " + sampleFile.getFileName(), area.getX(), yPos, area.getWidth(), 30, juce::Justification::centredLeft);
-            yPos += 30;
-
-            // Show sample info
-            g.setColour(fgColor);
-            juce::String info = juce::String::formatted("Channels: %d  Sample Rate: %d Hz  Samples: %d",
-                samplerParams.sample.numChannels,
-                samplerParams.sample.sampleRate,
-                static_cast<int>(samplerParams.sample.numSamples));
-            g.drawText(info, area.getX(), yPos, area.getWidth(), 30, juce::Justification::centredLeft);
-            yPos += 30;
-
-            // Show root note
-            static const char* noteNames[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
-            int note = samplerParams.rootNote;
-            juce::String rootNoteStr = juce::String(noteNames[note % 12]) + juce::String(note / 12 - 1);
-            g.drawText("Root Note: " + rootNoteStr, area.getX(), yPos, area.getWidth(), 30, juce::Justification::centredLeft);
-            yPos += 50;
-
-            // Instructions
-            g.setColour(fgColor.darker(0.3f));
-            g.drawText("Press 'o' to load a different sample", area.getX(), yPos, area.getWidth(), 30, juce::Justification::centredLeft);
-        }
+        paintSamplerUI(g);
         return;
     }
 
@@ -592,10 +596,18 @@ const char* InstrumentScreen::getModDestName(int dest)
 
 void InstrumentScreen::resized()
 {
+    auto bounds = getLocalBounds();
+    bounds.removeFromTop(30);  // Instrument tabs
+    bounds.removeFromTop(26);  // Type selector
+    bounds.removeFromTop(30);  // Header
+
+    auto waveformArea = bounds.removeFromTop(100).reduced(16, 0);
+
     if (sliceWaveformDisplay_) {
-        auto bounds = getLocalBounds();
-        bounds.removeFromTop(28);  // Title
-        sliceWaveformDisplay_->setBounds(bounds.removeFromTop(100));
+        sliceWaveformDisplay_->setBounds(waveformArea);
+    }
+    if (samplerWaveformDisplay_) {
+        samplerWaveformDisplay_->setBounds(waveformArea);
     }
 }
 
@@ -631,6 +643,14 @@ bool InstrumentScreen::handleEdit(const juce::KeyPress& key)
 
 bool InstrumentScreen::handleEditKey(const juce::KeyPress& key)
 {
+    auto keyCode = key.getKeyCode();
+
+    // Tab key cycles through instrument types (works for all instrument types)
+    if (keyCode == juce::KeyPress::tabKey) {
+        cycleInstrumentType();
+        return true;
+    }
+
     // Check if this is a sampler instrument and handle sampler keys
     auto* instrument = project_.getInstrument(currentInstrument_);
     if (instrument && instrument->getType() == model::InstrumentType::Sampler) {
@@ -641,8 +661,6 @@ bool InstrumentScreen::handleEditKey(const juce::KeyPress& key)
     if (instrument && instrument->getType() == model::InstrumentType::Slicer) {
         return handleSlicerKey(key, true);
     }
-
-    auto keyCode = key.getKeyCode();
     auto textChar = key.getTextCharacter();
     bool shiftHeld = key.getModifiers().isShiftDown();
 
@@ -1179,18 +1197,16 @@ bool InstrumentScreen::handleSamplerKey(const juce::KeyPress& key, bool /*isEdit
 {
     auto keyCode = key.getKeyCode();
     auto textChar = key.getTextCharacter();
+    bool shiftHeld = key.getModifiers().isShiftDown();
+
+    auto* instrument = project_.getInstrument(currentInstrument_);
+    if (!instrument) return false;
+
+    auto& params = instrument->getSamplerParams();
 
     // Handle name editing mode
     if (editingName_)
     {
-        auto* instrument = project_.getInstrument(currentInstrument_);
-        if (!instrument)
-        {
-            editingName_ = false;
-            repaint();
-            return true;
-        }
-
         if (keyCode == juce::KeyPress::returnKey || keyCode == juce::KeyPress::escapeKey)
         {
             if (keyCode == juce::KeyPress::returnKey)
@@ -1214,21 +1230,16 @@ bool InstrumentScreen::handleSamplerKey(const juce::KeyPress& key, bool /*isEdit
         return true;
     }
 
-    // 'r' starts renaming current instrument
+    // 'r' starts renaming
     if (textChar == 'r' || textChar == 'R')
     {
-        auto* instrument = project_.getInstrument(currentInstrument_);
-        if (instrument)
-        {
-            editingName_ = true;
-            nameBuffer_ = instrument->getName();
-            repaint();
-            return true;
-        }
-        return false;
+        editingName_ = true;
+        nameBuffer_ = instrument->getName();
+        repaint();
+        return true;
     }
 
-    // '[' and ']' switch instruments quickly
+    // '[' and ']' switch instruments
     if (textChar == '[')
     {
         int numInstruments = project_.getInstrumentCount();
@@ -1242,6 +1253,90 @@ bool InstrumentScreen::handleSamplerKey(const juce::KeyPress& key, bool /*isEdit
         int numInstruments = project_.getInstrumentCount();
         if (numInstruments > 0)
             currentInstrument_ = (currentInstrument_ + 1) % numInstruments;
+        repaint();
+        return true;
+    }
+
+    // Enter: audition sample
+    if (keyCode == juce::KeyPress::returnKey)
+    {
+        if (onNotePreview) onNotePreview(60, currentInstrument_);  // Play C4
+        return true;
+    }
+
+    // Up/Down: navigate rows
+    if (keyCode == juce::KeyPress::upKey)
+    {
+        samplerCursorRow_ = std::max(0, samplerCursorRow_ - 1);
+        repaint();
+        return true;
+    }
+    if (keyCode == juce::KeyPress::downKey)
+    {
+        samplerCursorRow_ = std::min(kNumSamplerRows - 1, samplerCursorRow_ + 1);
+        repaint();
+        return true;
+    }
+
+    // Left/Right or +/-: adjust values
+    int delta = 0;
+    if (keyCode == juce::KeyPress::rightKey || textChar == '+' || textChar == '=') delta = 1;
+    else if (keyCode == juce::KeyPress::leftKey || textChar == '-') delta = -1;
+
+    if (delta != 0)
+    {
+        auto recalculatePitchRatio = [&]() {
+            if (params.autoRepitchEnabled && params.rootNote > 0) {
+                params.pitchRatio = static_cast<float>(std::pow(2.0, (params.targetRootNote - params.rootNote) / 12.0));
+            } else {
+                params.pitchRatio = 1.0f;
+            }
+        };
+
+        float step = shiftHeld ? 0.01f : 0.05f;
+        int noteStep = shiftHeld ? 1 : 12;  // semitone vs octave
+
+        switch (static_cast<SamplerRowType>(samplerCursorRow_))
+        {
+            case SamplerRowType::RootNote:
+                params.rootNote = std::clamp(params.rootNote + delta * noteStep, 0, 127);
+                recalculatePitchRatio();
+                break;
+            case SamplerRowType::TargetNote:
+                params.targetRootNote = std::clamp(params.targetRootNote + delta * noteStep, 0, 127);
+                recalculatePitchRatio();
+                break;
+            case SamplerRowType::AutoRepitch:
+                params.autoRepitchEnabled = !params.autoRepitchEnabled;
+                recalculatePitchRatio();
+                break;
+            case SamplerRowType::Attack:
+                params.ampEnvelope.attack = std::clamp(params.ampEnvelope.attack + delta * step, 0.001f, 10.0f);
+                break;
+            case SamplerRowType::Decay:
+                params.ampEnvelope.decay = std::clamp(params.ampEnvelope.decay + delta * step, 0.001f, 10.0f);
+                break;
+            case SamplerRowType::Sustain:
+                params.ampEnvelope.sustain = std::clamp(params.ampEnvelope.sustain + delta * step, 0.0f, 1.0f);
+                break;
+            case SamplerRowType::Release:
+                params.ampEnvelope.release = std::clamp(params.ampEnvelope.release + delta * step, 0.001f, 10.0f);
+                break;
+            case SamplerRowType::Cutoff:
+                params.filter.cutoff = std::clamp(params.filter.cutoff + delta * step, 0.0f, 1.0f);
+                break;
+            case SamplerRowType::Resonance:
+                params.filter.resonance = std::clamp(params.filter.resonance + delta * step, 0.0f, 1.0f);
+                break;
+            case SamplerRowType::Volume:
+                instrument->setVolume(std::clamp(instrument->getVolume() + delta * step, 0.0f, 1.0f));
+                break;
+            case SamplerRowType::Pan:
+                instrument->setPan(std::clamp(instrument->getPan() + delta * step, -1.0f, 1.0f));
+                break;
+            default:
+                break;
+        }
         repaint();
         return true;
     }
@@ -1267,6 +1362,7 @@ bool InstrumentScreen::handleSamplerKey(const juce::KeyPress& key, bool /*isEdit
                         sampler->setInstrument(inst);
                         if (sampler->loadSample(file))
                         {
+                            updateSamplerDisplay();
                             repaint();
                         }
                     }
@@ -1277,6 +1373,143 @@ bool InstrumentScreen::handleSamplerKey(const juce::KeyPress& key, bool /*isEdit
     }
 
     return false;
+}
+
+void InstrumentScreen::updateSamplerDisplay() {
+    if (!audioEngine_) return;
+
+    auto* inst = project_.getInstrument(currentInstrument_);
+    if (!inst || inst->getType() != model::InstrumentType::Sampler) return;
+
+    auto* sampler = audioEngine_->getSamplerProcessor(currentInstrument_);
+    if (!sampler) return;
+
+    samplerWaveformDisplay_->setAudioData(&sampler->getSampleBuffer(), sampler->getSampleRate());
+}
+
+void InstrumentScreen::paintSamplerUI(juce::Graphics& g) {
+    static const char* noteNames[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
+
+    auto bounds = getLocalBounds();
+    bounds.removeFromTop(30);  // Instrument tabs
+    bounds.removeFromTop(26);  // Type selector
+    bounds.removeFromTop(30);  // Header
+
+    auto contentArea = bounds.reduced(16, 0);
+    contentArea.removeFromTop(8);
+
+    auto* inst = project_.getInstrument(currentInstrument_);
+    if (!inst) return;
+
+    const auto& params = inst->getSamplerParams();
+
+    // Waveform takes top portion - handled by child component
+    contentArea.removeFromTop(100);
+    contentArea.removeFromTop(8);  // Gap
+
+    // Sample info line
+    g.setFont(14.0f);
+    juce::String sampleName = params.sample.path.empty() ? "(no sample - press 'o' to load)"
+        : juce::File(params.sample.path).getFileName();
+    g.setColour(cursorColor);
+    g.drawText("Sample: " + sampleName, contentArea.removeFromTop(24), juce::Justification::centredLeft);
+
+    if (params.sample.path.empty()) {
+        return;  // No more to show
+    }
+
+    // Draw parameter rows
+    auto drawSamplerRow = [&](int rowIndex, const char* label, const juce::String& value, bool isToggle = false) {
+        bool selected = (samplerCursorRow_ == rowIndex);
+        auto rowArea = contentArea.removeFromTop(kRowHeight);
+
+        if (selected) {
+            g.setColour(highlightColor.withAlpha(0.3f));
+            g.fillRect(rowArea);
+        }
+
+        g.setColour(selected ? cursorColor : fgColor);
+        g.drawText(label, rowArea.getX(), rowArea.getY(), kLabelWidth, kRowHeight, juce::Justification::centredLeft);
+
+        if (isToggle) {
+            // Draw toggle button style
+            auto toggleArea = juce::Rectangle<int>(rowArea.getX() + kLabelWidth, rowArea.getY() + 4, 50, kRowHeight - 8);
+            g.setColour(selected ? cursorColor : highlightColor);
+            g.fillRoundedRectangle(toggleArea.toFloat(), 4.0f);
+            g.setColour(selected ? juce::Colours::black : fgColor);
+            g.drawText(value, toggleArea, juce::Justification::centred);
+        } else {
+            g.drawText(value, rowArea.getX() + kLabelWidth, rowArea.getY(), 200, kRowHeight, juce::Justification::centredLeft);
+        }
+    };
+
+    // Helper for note name
+    auto noteName = [&](int note) -> juce::String {
+        if (note < 0) return "---";
+        return juce::String(noteNames[note % 12]) + juce::String(note / 12 - 1);
+    };
+
+    // Row 0: Root Note (detected/override)
+    juce::String rootNoteStr = noteName(params.rootNote);
+    if (params.detectedMidiNote >= 0 && params.detectedMidiNote != params.rootNote) {
+        rootNoteStr += " (detected: " + noteName(params.detectedMidiNote) + ")";
+    }
+    drawSamplerRow(0, "ROOT NOTE", rootNoteStr);
+
+    // Row 1: Target Note (for repitch)
+    drawSamplerRow(1, "TARGET", noteName(params.targetRootNote));
+
+    // Row 2: Auto-Repitch toggle
+    drawSamplerRow(2, "AUTO-REPITCH", params.autoRepitchEnabled ? "ON" : "OFF", true);
+
+    // Row 3: Attack
+    juce::String attackStr = juce::String(static_cast<int>(params.ampEnvelope.attack * 1000.0f)) + "ms";
+    drawSamplerRow(3, "ATTACK", attackStr);
+
+    // Row 4: Decay
+    juce::String decayStr = juce::String(static_cast<int>(params.ampEnvelope.decay * 1000.0f)) + "ms";
+    drawSamplerRow(4, "DECAY", decayStr);
+
+    // Row 5: Sustain
+    juce::String sustainStr = juce::String(static_cast<int>(params.ampEnvelope.sustain * 100.0f)) + "%";
+    drawSamplerRow(5, "SUSTAIN", sustainStr);
+
+    // Row 6: Release
+    juce::String releaseStr = juce::String(static_cast<int>(params.ampEnvelope.release * 1000.0f)) + "ms";
+    drawSamplerRow(6, "RELEASE", releaseStr);
+
+    // Row 7: Cutoff
+    float cutoffHz = 20.0f * std::pow(1000.0f, params.filter.cutoff);
+    juce::String cutoffStr = juce::String(static_cast<int>(cutoffHz)) + "Hz";
+    drawSamplerRow(7, "CUTOFF", cutoffStr);
+
+    // Row 8: Resonance
+    juce::String resoStr = juce::String(static_cast<int>(params.filter.resonance * 100.0f)) + "%";
+    drawSamplerRow(8, "RESONANCE", resoStr);
+
+    // Row 9: Volume
+    float vol = inst->getVolume();
+    juce::String volStr = juce::String(static_cast<int>(vol * 100.0f)) + "%";
+    drawSamplerRow(9, "VOLUME", volStr);
+
+    // Row 10: Pan
+    float pan = inst->getPan();
+    juce::String panStr;
+    if (pan < -0.01f) panStr = "L" + juce::String(static_cast<int>(-pan * 100));
+    else if (pan > 0.01f) panStr = "R" + juce::String(static_cast<int>(pan * 100));
+    else panStr = "C";
+    drawSamplerRow(10, "PAN", panStr);
+
+    // Pitch ratio display
+    contentArea.removeFromTop(8);
+    g.setColour(fgColor.darker(0.3f));
+    g.setFont(12.0f);
+    g.drawText("Pitch ratio: " + juce::String(params.pitchRatio, 4), contentArea.removeFromTop(20), juce::Justification::centredLeft);
+
+    // Instructions
+    contentArea.removeFromTop(8);
+    g.setColour(fgColor.darker(0.5f));
+    g.drawText("o: load   Enter: audition   +/-: zoom   Tab: change type", contentArea.removeFromTop(20), juce::Justification::centredLeft);
 }
 
 void InstrumentScreen::updateSlicerDisplay() {
@@ -1294,41 +1527,177 @@ void InstrumentScreen::updateSlicerDisplay() {
 }
 
 void InstrumentScreen::paintSlicerUI(juce::Graphics& g) {
-    auto bounds = getLocalBounds();
-    g.fillAll(juce::Colour(0xFF1E1E1E));
+    static const char* noteNames[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
 
-    g.setColour(juce::Colours::white);
-    g.setFont(16.0f);
+    auto bounds = getLocalBounds();
+    bounds.removeFromTop(30);  // Instrument tabs
+    bounds.removeFromTop(26);  // Type selector
+    bounds.removeFromTop(30);  // Header
+
+    auto contentArea = bounds.reduced(16, 0);
+    contentArea.removeFromTop(8);
 
     auto* inst = project_.getInstrument(currentInstrument_);
     if (!inst) return;
 
-    g.drawText("SLICER - " + juce::String(inst->getName()),
-               bounds.removeFromTop(28), juce::Justification::centredLeft);
+    const auto& params = inst->getSlicerParams();
 
     // Waveform takes top portion - handled by child component
-    bounds.removeFromTop(100);
+    contentArea.removeFromTop(100);
+    contentArea.removeFromTop(8);
 
+    // Sample info line
     g.setFont(14.0f);
-    g.setColour(juce::Colours::grey);
-
-    const auto& params = inst->getSlicerParams();
-    juce::String sampleName = params.sample.path.empty() ? "(no sample)"
+    juce::String sampleName = params.sample.path.empty() ? "(no sample - press 'o' to load)"
         : juce::File(params.sample.path).getFileName();
+    g.setColour(cursorColor);
+    g.drawText("Sample: " + sampleName, contentArea.removeFromTop(24), juce::Justification::centredLeft);
 
-    g.drawText("Sample: " + sampleName, bounds.removeFromTop(24), juce::Justification::centredLeft);
-    g.drawText("Slices: " + juce::String(static_cast<int>(params.slicePoints.size())),
-               bounds.removeFromTop(24), juce::Justification::centredLeft);
-    g.drawText("Current: " + juce::String(params.currentSlice + 1),
-               bounds.removeFromTop(24), juce::Justification::centredLeft);
+    // Slices info
+    g.setColour(fgColor);
+    juce::String sliceInfo = "Slices: " + juce::String(static_cast<int>(params.slicePoints.size()));
+    sliceInfo += "  Current: " + juce::String(params.currentSlice + 1);
+    g.drawText(sliceInfo, contentArea.removeFromTop(24), juce::Justification::centredLeft);
 
-    g.setColour(juce::Colours::white.withAlpha(0.5f));
-    g.drawText("Press 'o' to load sample, h/l to navigate slices, s to add, d to delete",
-               bounds.removeFromTop(24), juce::Justification::centredLeft);
+    if (params.sample.path.empty()) {
+        return;
+    }
+
+    // Draw editable parameter rows
+    auto drawSlicerRow = [&](int rowIndex, const char* label, const juce::String& value, const juce::String& detected = "") {
+        bool selected = (slicerCursorRow_ == rowIndex);
+        auto rowArea = contentArea.removeFromTop(kRowHeight);
+
+        if (selected) {
+            g.setColour(highlightColor.withAlpha(0.3f));
+            g.fillRect(rowArea);
+        }
+
+        g.setColour(selected ? cursorColor : fgColor);
+        g.drawText(label, rowArea.getX(), rowArea.getY(), kLabelWidth, kRowHeight, juce::Justification::centredLeft);
+        g.drawText(value, rowArea.getX() + kLabelWidth, rowArea.getY(), 100, kRowHeight, juce::Justification::centredLeft);
+
+        if (!detected.isEmpty()) {
+            g.setColour(fgColor.darker(0.4f));
+            g.drawText("(detected: " + detected + ")", rowArea.getX() + kLabelWidth + 100, rowArea.getY(), 200, kRowHeight, juce::Justification::centredLeft);
+        }
+    };
+
+    // Row 0: Original BPM (override)
+    float displayBPM = params.originalBPM > 0 ? params.originalBPM : params.detectedBPM;
+    juce::String bpmStr = displayBPM > 0 ? juce::String(displayBPM, 1) : "---";
+    juce::String detectedBPM = params.detectedBPM > 0 ? juce::String(params.detectedBPM, 1) : "";
+    drawSlicerRow(0, "ORIG BPM", bpmStr, params.originalBPM > 0 ? detectedBPM : "");
+
+    // Row 1: Bars
+    int displayBars = params.bars > 0 ? params.bars : params.detectedBars;
+    juce::String barsStr = displayBars > 0 ? juce::String(displayBars) : "---";
+    juce::String detectedBars = params.detectedBars > 0 ? juce::String(params.detectedBars) : "";
+    drawSlicerRow(1, "BARS", barsStr, params.bars > 0 ? detectedBars : "");
+
+    // Row 2: Root Note
+    int note = params.detectedRootNote;
+    juce::String rootNoteStr = juce::String(noteNames[note % 12]) + juce::String(note / 12 - 1);
+    drawSlicerRow(2, "ROOT NOTE", rootNoteStr);
+
+    // Row 3: Volume
+    float vol = inst->getVolume();
+    juce::String volStr = juce::String(static_cast<int>(vol * 100.0f)) + "%";
+    drawSlicerRow(3, "VOLUME", volStr);
+
+    // Row 4: Pan
+    float pan = inst->getPan();
+    juce::String panStr;
+    if (pan < -0.01f) panStr = "L" + juce::String(static_cast<int>(-pan * 100));
+    else if (pan > 0.01f) panStr = "R" + juce::String(static_cast<int>(pan * 100));
+    else panStr = "C";
+    drawSlicerRow(4, "PAN", panStr);
+
+    // Warped BPM display
+    contentArea.removeFromTop(8);
+    if (params.stretchedBPM > 0.0f && std::abs(params.stretchedBPM - displayBPM) > 0.1f) {
+        g.setColour(fgColor.darker(0.3f));
+        g.setFont(12.0f);
+        g.drawText("Warped BPM: " + juce::String(params.stretchedBPM, 1), contentArea.removeFromTop(20), juce::Justification::centredLeft);
+    }
+
+    // Instructions
+    contentArea.removeFromTop(8);
+    g.setColour(fgColor.darker(0.5f));
+    g.setFont(12.0f);
+    g.drawText("o: load   Enter: play slice   h/l: slices   s: add   d: delete",
+               contentArea.removeFromTop(20), juce::Justification::centredLeft);
+    g.drawText("+/-: adjust   Shift+h/l: scroll   Tab: change type",
+               contentArea.removeFromTop(20), juce::Justification::centredLeft);
 }
 
 bool InstrumentScreen::handleSlicerKey(const juce::KeyPress& key, bool /*isEditMode*/) {
+    auto keyCode = key.getKeyCode();
     auto textChar = key.getTextCharacter();
+    bool shiftHeld = key.getModifiers().isShiftDown();
+
+    auto* inst = project_.getInstrument(currentInstrument_);
+    if (!inst) return false;
+
+    auto& params = inst->getSlicerParams();
+
+    // Enter: audition current slice
+    if (keyCode == juce::KeyPress::returnKey) {
+        // Play the current slice note (mapped to MIDI note)
+        if (onNotePreview) {
+            // Slices are mapped starting at C-1 (note 0)
+            int sliceNote = params.currentSlice;
+            onNotePreview(sliceNote, currentInstrument_);
+        }
+        return true;
+    }
+
+    // Up/Down: navigate rows
+    if (keyCode == juce::KeyPress::upKey) {
+        slicerCursorRow_ = std::max(0, slicerCursorRow_ - 1);
+        repaint();
+        return true;
+    }
+    if (keyCode == juce::KeyPress::downKey) {
+        slicerCursorRow_ = std::min(kNumSlicerRows - 1, slicerCursorRow_ + 1);
+        repaint();
+        return true;
+    }
+
+    // Left/Right: adjust values for current row
+    int delta = 0;
+    if (keyCode == juce::KeyPress::rightKey) delta = 1;
+    else if (keyCode == juce::KeyPress::leftKey) delta = -1;
+
+    if (delta != 0) {
+        float step = shiftHeld ? 0.01f : 0.05f;
+        int noteStep = shiftHeld ? 1 : 12;
+        float bpmStep = shiftHeld ? 0.5f : 5.0f;
+
+        switch (static_cast<SlicerRowType>(slicerCursorRow_)) {
+            case SlicerRowType::OriginalBPM:
+                if (params.originalBPM <= 0) params.originalBPM = params.detectedBPM;
+                params.originalBPM = std::clamp(params.originalBPM + delta * bpmStep, 40.0f, 250.0f);
+                break;
+            case SlicerRowType::Bars:
+                if (params.bars <= 0) params.bars = params.detectedBars;
+                params.bars = std::max(1, params.bars + delta);
+                break;
+            case SlicerRowType::RootNote:
+                params.detectedRootNote = std::clamp(params.detectedRootNote + delta * noteStep, 0, 127);
+                break;
+            case SlicerRowType::Volume:
+                inst->setVolume(std::clamp(inst->getVolume() + delta * step, 0.0f, 1.0f));
+                break;
+            case SlicerRowType::Pan:
+                inst->setPan(std::clamp(inst->getPan() + delta * step, -1.0f, 1.0f));
+                break;
+            default:
+                break;
+        }
+        repaint();
+        return true;
+    }
 
     // Load sample
     if (textChar == 'o' || textChar == 'O') {
@@ -1355,26 +1724,20 @@ bool InstrumentScreen::handleSlicerKey(const juce::KeyPress& key, bool /*isEditM
         return true;
     }
 
-    // Navigate slices: h = previous, l = next
-    if (textChar == 'h' || textChar == 'H') {
+    // Navigate slices: h = previous, l = next (without Shift)
+    if ((textChar == 'h' || textChar == 'H') && !shiftHeld) {
         if (sliceWaveformDisplay_) {
             sliceWaveformDisplay_->previousSlice();
-            auto* inst = project_.getInstrument(currentInstrument_);
-            if (inst) {
-                inst->getSlicerParams().currentSlice = sliceWaveformDisplay_->getCurrentSlice();
-            }
+            params.currentSlice = sliceWaveformDisplay_->getCurrentSlice();
             repaint();
         }
         return true;
     }
 
-    if (textChar == 'l' || textChar == 'L') {
+    if ((textChar == 'l' || textChar == 'L') && !shiftHeld) {
         if (sliceWaveformDisplay_) {
             sliceWaveformDisplay_->nextSlice();
-            auto* inst = project_.getInstrument(currentInstrument_);
-            if (inst) {
-                inst->getSlicerParams().currentSlice = sliceWaveformDisplay_->getCurrentSlice();
-            }
+            params.currentSlice = sliceWaveformDisplay_->getCurrentSlice();
             repaint();
         }
         return true;
@@ -1409,7 +1772,7 @@ bool InstrumentScreen::handleSlicerKey(const juce::KeyPress& key, bool /*isEditM
     }
 
     // Scroll: Shift+h/l
-    if (key.getModifiers().isShiftDown()) {
+    if (shiftHeld) {
         if (textChar == 'H' || textChar == 'h') {
             if (sliceWaveformDisplay_) sliceWaveformDisplay_->scrollLeft();
             return true;
@@ -1423,16 +1786,67 @@ bool InstrumentScreen::handleSlicerKey(const juce::KeyPress& key, bool /*isEditM
     return false;
 }
 
+void InstrumentScreen::cycleInstrumentType() {
+    auto* instrument = project_.getInstrument(currentInstrument_);
+    if (!instrument) return;
+
+    auto currentType = instrument->getType();
+    model::InstrumentType newType;
+
+    switch (currentType) {
+        case model::InstrumentType::Plaits:
+            newType = model::InstrumentType::Sampler;
+            break;
+        case model::InstrumentType::Sampler:
+            newType = model::InstrumentType::Slicer;
+            break;
+        case model::InstrumentType::Slicer:
+            newType = model::InstrumentType::Plaits;
+            break;
+        default:
+            newType = model::InstrumentType::Plaits;
+            break;
+    }
+
+    instrument->setType(newType);
+
+    // Update visibility of waveform displays
+    if (sliceWaveformDisplay_) {
+        sliceWaveformDisplay_->setVisible(newType == model::InstrumentType::Slicer);
+        if (newType == model::InstrumentType::Slicer) {
+            updateSlicerDisplay();
+        }
+    }
+    if (samplerWaveformDisplay_) {
+        samplerWaveformDisplay_->setVisible(newType == model::InstrumentType::Sampler);
+        if (newType == model::InstrumentType::Sampler) {
+            updateSamplerDisplay();
+        }
+    }
+
+    repaint();
+}
+
 void InstrumentScreen::setCurrentInstrument(int index) {
     currentInstrument_ = index;
 
     auto* inst = project_.getInstrument(index);
     if (inst) {
         auto type = inst->getType();
+
+        // Update slicer waveform visibility
         if (sliceWaveformDisplay_) {
             sliceWaveformDisplay_->setVisible(type == model::InstrumentType::Slicer);
             if (type == model::InstrumentType::Slicer) {
                 updateSlicerDisplay();
+            }
+        }
+
+        // Update sampler waveform visibility
+        if (samplerWaveformDisplay_) {
+            samplerWaveformDisplay_->setVisible(type == model::InstrumentType::Sampler);
+            if (type == model::InstrumentType::Sampler) {
+                updateSamplerDisplay();
             }
         }
     }

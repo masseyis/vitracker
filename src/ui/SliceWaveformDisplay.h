@@ -37,11 +37,11 @@ private:
     std::vector<size_t> slicePoints_;
     int currentSlice_ = 0;
 
-    // Alternating colors for slice regions
-    juce::Colour sliceColourA_ = juce::Colour(0xFF2D5A27);  // Green tint
-    juce::Colour sliceColourB_ = juce::Colour(0xFF27455A);  // Blue tint
-    juce::Colour currentSliceColour_ = juce::Colour(0xFF5A4827);  // Highlighted
-    juce::Colour markerColour_ = juce::Colour(0xFFFFFFFF);
+    // Alternating colors for slice regions (matched to project scheme)
+    juce::Colour sliceColourA_ = juce::Colour(0xFF2a2a4e);  // headerColor variant
+    juce::Colour sliceColourB_ = juce::Colour(0xFF3a3a5e);  // lighter variant
+    juce::Colour currentSliceColour_ = juce::Colour(0xFF4a4a6e);  // highlightColor
+    juce::Colour markerColour_ = juce::Colour(0xffeaeaea);  // fgColor
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SliceWaveformDisplay)
 };

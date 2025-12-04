@@ -22,7 +22,7 @@ void SlicerVoice::setSampleData(const float* data, int numChannels, size_t numSa
     sampleChannels_ = numChannels;
     sampleLength_ = numSamples;
     originalSampleRate_ = originalSampleRate;
-    // Calculate playback rate for sample rate conversion only
+    // Sample rate conversion: play at correct speed regardless of output sample rate
     playbackRate_ = static_cast<double>(originalSampleRate) / sampleRate_;
 }
 
@@ -50,7 +50,7 @@ void SlicerVoice::trigger(int sliceIndex, float velocity, const model::SlicerPar
     currentSlice_ = sliceIndex;
     velocity_ = velocity;
     active_ = true;
-    playPosition_ = sliceStart_;
+    playPosition_ = static_cast<double>(sliceStart_);
 
     // Set up envelopes
     ampEnvelope_.setAttack(params.ampEnvelope.attack);
@@ -89,7 +89,7 @@ void SlicerVoice::render(float* leftOut, float* rightOut, int numSamples) {
 
     for (int i = 0; i < numSamples; ++i) {
         // Check if we've reached end of slice
-        if (playPosition_ >= sliceEnd_) {
+        if (playPosition_ >= static_cast<double>(sliceEnd_)) {
             active_ = false;
             leftOut[i] = 0.0f;
             rightOut[i] = 0.0f;
@@ -97,9 +97,9 @@ void SlicerVoice::render(float* leftOut, float* rightOut, int numSamples) {
         }
 
         // Linear interpolation for sample playback
-        size_t pos0 = playPosition_;
+        size_t pos0 = static_cast<size_t>(playPosition_);
         size_t pos1 = std::min(pos0 + 1, sampleLength_ - 1);
-        double frac = static_cast<double>(playPosition_) - static_cast<double>(pos0);
+        double frac = playPosition_ - static_cast<double>(pos0);
 
         float sampleL, sampleR;
         if (sampleChannels_ == 1) {
@@ -130,7 +130,7 @@ void SlicerVoice::render(float* leftOut, float* rightOut, int numSamples) {
         rightOut[i] = sampleR * ampEnv * velocity_;
 
         // Advance position (sample rate conversion only, no pitch shift)
-        playPosition_ += static_cast<size_t>(playbackRate_);
+        playPosition_ += playbackRate_;
 
         // Check if envelope finished
         if (!ampEnvelope_.isActive()) {
