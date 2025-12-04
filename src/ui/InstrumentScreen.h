@@ -28,9 +28,14 @@ enum class SamplerRowType {
 
 // Slicer-specific row types
 enum class SlicerRowType {
-    OriginalBPM,    // Override detected BPM
-    Bars,           // Number of bars in the sample
-    RootNote,       // Root note override
+    ChopMode,       // Lazy / Divisions / Transients (with sub-controls)
+    OriginalBars,   // Number of bars (editable, recalculates BPM)
+    OriginalBPM,    // Override detected BPM (editable, recalculates bars)
+    TargetBPM,      // Desired output BPM (editable)
+    Speed,          // Playback speed multiplier (x0.5, x1, x2, etc.)
+    Pitch,          // Pitch shift in semitones (editable when repitch=true)
+    Repitch,        // Toggle: ON = pitch changes with speed, OFF = RubberBand
+    Polyphony,      // Voice count (1 = choke/mono)
     Volume,
     Pan,
     NumSlicerRows

@@ -11,7 +11,7 @@ public:
     SlicerVoice();
 
     void setSampleRate(double sampleRate);
-    void setSampleData(const float* data, int numChannels, size_t numSamples, int originalSampleRate);
+    void setSampleData(const float* leftData, const float* rightData, size_t numSamples, int originalSampleRate);
 
     // Trigger a specific slice (sliceIndex maps from MIDI note)
     void trigger(int sliceIndex, float velocity, const model::SlicerParams& params);
@@ -24,8 +24,8 @@ public:
 
 private:
     double sampleRate_ = 48000.0;
-    const float* sampleData_ = nullptr;
-    int sampleChannels_ = 0;
+    const float* sampleDataL_ = nullptr;
+    const float* sampleDataR_ = nullptr;  // nullptr for mono
     size_t sampleLength_ = 0;
     int originalSampleRate_ = 44100;
 

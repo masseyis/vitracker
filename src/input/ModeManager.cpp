@@ -25,7 +25,7 @@ std::string ModeManager::getModeString() const
     switch (currentMode_)
     {
         case Mode::Normal: return "NORMAL";
-        case Mode::Edit: return "EDIT";
+        case Mode::Edit: return "NORMAL";  // Edit mode removed - show as Normal
         case Mode::Visual: return "VISUAL";
         case Mode::Command: return ":" + commandBuffer_;
     }

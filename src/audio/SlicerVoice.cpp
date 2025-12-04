@@ -17,9 +17,9 @@ void SlicerVoice::setSampleRate(double sampleRate) {
     filterR_.Init(static_cast<float>(sampleRate));
 }
 
-void SlicerVoice::setSampleData(const float* data, int numChannels, size_t numSamples, int originalSampleRate) {
-    sampleData_ = data;
-    sampleChannels_ = numChannels;
+void SlicerVoice::setSampleData(const float* leftData, const float* rightData, size_t numSamples, int originalSampleRate) {
+    sampleDataL_ = leftData;
+    sampleDataR_ = rightData;  // nullptr for mono samples
     sampleLength_ = numSamples;
     originalSampleRate_ = originalSampleRate;
     // Sample rate conversion: play at correct speed regardless of output sample rate
@@ -27,7 +27,7 @@ void SlicerVoice::setSampleData(const float* data, int numChannels, size_t numSa
 }
 
 void SlicerVoice::trigger(int sliceIndex, float velocity, const model::SlicerParams& params) {
-    if (!sampleData_ || sampleLength_ == 0) return;
+    if (!sampleDataL_ || sampleLength_ == 0) return;
 
     const auto& slices = params.slicePoints;
     if (slices.empty()) {
@@ -79,7 +79,7 @@ void SlicerVoice::release() {
 }
 
 void SlicerVoice::render(float* leftOut, float* rightOut, int numSamples) {
-    if (!active_ || !sampleData_) {
+    if (!active_ || !sampleDataL_) {
         for (int i = 0; i < numSamples; ++i) {
             leftOut[i] = 0.0f;
             rightOut[i] = 0.0f;
@@ -101,13 +101,13 @@ void SlicerVoice::render(float* leftOut, float* rightOut, int numSamples) {
         size_t pos1 = std::min(pos0 + 1, sampleLength_ - 1);
         double frac = playPosition_ - static_cast<double>(pos0);
 
-        float sampleL, sampleR;
-        if (sampleChannels_ == 1) {
-            sampleL = static_cast<float>(sampleData_[pos0] * (1.0 - frac) + sampleData_[pos1] * frac);
-            sampleR = sampleL;
+        // Read from planar format (JUCE stores channels separately)
+        float sampleL = static_cast<float>(sampleDataL_[pos0] * (1.0 - frac) + sampleDataL_[pos1] * frac);
+        float sampleR;
+        if (sampleDataR_) {
+            sampleR = static_cast<float>(sampleDataR_[pos0] * (1.0 - frac) + sampleDataR_[pos1] * frac);
         } else {
-            sampleL = static_cast<float>(sampleData_[pos0 * 2] * (1.0 - frac) + sampleData_[pos1 * 2] * frac);
-            sampleR = static_cast<float>(sampleData_[pos0 * 2 + 1] * (1.0 - frac) + sampleData_[pos1 * 2 + 1] * frac);
+            sampleR = sampleL;  // Mono: duplicate left to right
         }
 
         // Process envelopes

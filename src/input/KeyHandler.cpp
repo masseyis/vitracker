@@ -153,11 +153,7 @@ bool KeyHandler::handleNormalMode(const juce::KeyPress& key)
     }
 
     // Mode switches (only reached if screen didn't consume the key)
-    if (textChar == 'i' || keyCode == juce::KeyPress::escapeKey)
-    {
-        modeManager_.setMode(Mode::Edit);
-        return true;
-    }
+    // Note: 'i' no longer switches to Edit mode - use Alt+arrows for value editing
     if (textChar == 'v')
     {
         if (onStartSelection) onStartSelection();
@@ -214,21 +210,10 @@ bool KeyHandler::handleNormalMode(const juce::KeyPress& key)
 
 bool KeyHandler::handleEditMode(const juce::KeyPress& key)
 {
-    if (key.getKeyCode() == juce::KeyPress::escapeKey)
-    {
-        modeManager_.setMode(Mode::Normal);
-        return true;
-    }
-
-    // In edit mode, ALL keys (including arrows) go to the screen's edit handler
-    // Arrow keys adjust values, not navigate
-    if (onEditKey)
-    {
-        onEditKey(key);
-        return true;
-    }
-
-    return false;
+    // Edit mode has been removed - redirect to Normal mode behavior
+    // Value editing is now done via Alt+arrows in Normal mode
+    modeManager_.setMode(Mode::Normal);
+    return handleNormalMode(key);
 }
 
 bool KeyHandler::handleVisualMode(const juce::KeyPress& key)

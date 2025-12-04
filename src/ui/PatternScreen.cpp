@@ -180,6 +180,24 @@ bool PatternScreen::handleEditKey(const juce::KeyPress& key)
         return true;  // In name editing mode, consume all keys
     }
 
+    // Tab: move to next track (stay on same column type)
+    // Shift+Tab: move to previous track
+    if (keyCode == juce::KeyPress::tabKey) {
+        if (shiftHeld) {
+            // Move to previous track
+            if (cursorTrack_ > 0) {
+                cursorTrack_--;
+            }
+        } else {
+            // Move to next track
+            if (cursorTrack_ < 15) {
+                cursorTrack_++;
+            }
+        }
+        repaint();
+        return true;  // Consumed
+    }
+
     // '[' and ']' switch patterns quickly from anywhere
     if (textChar == '[')
     {
@@ -595,9 +613,14 @@ void PatternScreen::drawGrid(juce::Graphics& g, juce::Rectangle<int> area)
             const auto& step = pattern->getStep(t, row);
             bool isCurrentCell = isCurrentRow && (t == cursorTrack_);
 
+            // Check if this cell is in the visual selection
+            bool isSelected = hasSelection_ &&
+                              t >= selection_.minTrack() && t <= selection_.maxTrack() &&
+                              row >= selection_.minRow() && row <= selection_.maxRow();
+
             juce::Rectangle<int> cellArea(x, y, trackWidth, ROW_HEIGHT);
             int columnToHighlight = isCurrentCell ? cursorColumn_ : -1;
-            drawStep(g, cellArea, step, isCurrentRow, isCurrentCell, columnToHighlight);
+            drawStep(g, cellArea, step, isCurrentRow, isCurrentCell, columnToHighlight, isSelected);
 
             x += trackWidth;
         }
@@ -607,7 +630,8 @@ void PatternScreen::drawGrid(juce::Graphics& g, juce::Rectangle<int> area)
 }
 
 void PatternScreen::drawStep(juce::Graphics& g, juce::Rectangle<int> area,
-                              const model::Step& step, bool isCurrentRow, bool isCurrentCell, int highlightColumn)
+                              const model::Step& step, bool isCurrentRow, bool isCurrentCell,
+                              int highlightColumn, bool isSelected)
 {
     // Background
     if (isCurrentCell)
@@ -615,10 +639,23 @@ void PatternScreen::drawStep(juce::Graphics& g, juce::Rectangle<int> area,
         g.setColour(highlightColor);
         g.fillRect(area);
     }
+    else if (isSelected)
+    {
+        // Visual mode selection highlight
+        g.setColour(juce::Colours::cyan.withAlpha(0.25f));
+        g.fillRect(area);
+    }
     else if (isCurrentRow)
     {
         g.setColour(bgColor.brighter(0.1f));
         g.fillRect(area);
+    }
+
+    // Draw selection border if selected (on top of other backgrounds)
+    if (isSelected && !isCurrentCell)
+    {
+        g.setColour(juce::Colours::cyan.withAlpha(0.6f));
+        g.drawRect(area, 1);
     }
 
     int x = area.getX() + 2;
@@ -689,11 +726,13 @@ const model::Step* PatternScreen::findLastNonEmptyRowAbove(int track, int startR
     auto* pattern = project_.getPattern(currentPattern_);
     if (!pattern) return nullptr;
 
-    // Search upwards from startRow-1 to find last non-empty step in this track
+    // Search upwards from startRow-1 to find last playable note in this track
+    // Skip over OFF notes to find a genuinely useful note to copy
     for (int r = startRow - 1; r >= 0; --r)
     {
         const auto& step = pattern->getStep(track, r);
-        if (!step.isEmpty())
+        // Only return steps with actual playable notes (>= 0), skip OFF and empty
+        if (step.note >= 0)
             return &step;
     }
     return nullptr;

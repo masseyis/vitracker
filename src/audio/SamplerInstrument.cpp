@@ -59,9 +59,14 @@ void SamplerInstrument::noteOn(int midiNote, float velocity) {
 
     if (voice) {
         const auto& params = instrument_->getSamplerParams();
+        // Pass both channel pointers (JUCE uses planar format)
+        const float* leftData = sampleBuffer_.getReadPointer(0);
+        const float* rightData = sampleBuffer_.getNumChannels() > 1
+            ? sampleBuffer_.getReadPointer(1)
+            : nullptr;
         voice->setSampleData(
-            sampleBuffer_.getReadPointer(0),
-            sampleBuffer_.getNumChannels(),
+            leftData,
+            rightData,
             static_cast<size_t>(sampleBuffer_.getNumSamples()),
             loadedSampleRate_
         );

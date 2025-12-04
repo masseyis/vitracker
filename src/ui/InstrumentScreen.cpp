@@ -1,5 +1,6 @@
 #include "InstrumentScreen.h"
 #include "../audio/AudioEngine.h"
+#include "../audio/SlicerInstrument.h"
 
 namespace ui {
 
@@ -1230,6 +1231,19 @@ bool InstrumentScreen::handleSamplerKey(const juce::KeyPress& key, bool /*isEdit
         return true;
     }
 
+    // Shift-N creates new instrument
+    if (shiftHeld && (textChar == 'N' || textChar == 'n'))
+    {
+        currentInstrument_ = project_.addInstrument("Inst " + std::to_string(project_.getInstrumentCount() + 1));
+        auto* newInst = project_.getInstrument(currentInstrument_);
+        if (newInst) {
+            editingName_ = true;
+            nameBuffer_ = newInst->getName();
+        }
+        repaint();
+        return true;
+    }
+
     // 'r' starts renaming
     if (textChar == 'r' || textChar == 'R')
     {
@@ -1243,17 +1257,19 @@ bool InstrumentScreen::handleSamplerKey(const juce::KeyPress& key, bool /*isEdit
     if (textChar == '[')
     {
         int numInstruments = project_.getInstrumentCount();
-        if (numInstruments > 0)
+        if (numInstruments > 0) {
             currentInstrument_ = (currentInstrument_ - 1 + numInstruments) % numInstruments;
-        repaint();
+            setCurrentInstrument(currentInstrument_);
+        }
         return true;
     }
     if (textChar == ']')
     {
         int numInstruments = project_.getInstrumentCount();
-        if (numInstruments > 0)
+        if (numInstruments > 0) {
             currentInstrument_ = (currentInstrument_ + 1) % numInstruments;
-        repaint();
+            setCurrentInstrument(currentInstrument_);
+        }
         return true;
     }
 
@@ -1564,7 +1580,8 @@ void InstrumentScreen::paintSlicerUI(juce::Graphics& g) {
     }
 
     // Draw editable parameter rows
-    auto drawSlicerRow = [&](int rowIndex, const char* label, const juce::String& value, const juce::String& detected = "") {
+    auto drawSlicerRow = [&](int rowIndex, const char* label, const juce::String& value,
+                             const juce::String& extra = "", bool greyed = false) {
         bool selected = (slicerCursorRow_ == rowIndex);
         auto rowArea = contentArea.removeFromTop(kRowHeight);
 
@@ -1573,53 +1590,83 @@ void InstrumentScreen::paintSlicerUI(juce::Graphics& g) {
             g.fillRect(rowArea);
         }
 
-        g.setColour(selected ? cursorColor : fgColor);
+        g.setColour(greyed ? fgColor.darker(0.6f) : (selected ? cursorColor : fgColor));
         g.drawText(label, rowArea.getX(), rowArea.getY(), kLabelWidth, kRowHeight, juce::Justification::centredLeft);
-        g.drawText(value, rowArea.getX() + kLabelWidth, rowArea.getY(), 100, kRowHeight, juce::Justification::centredLeft);
+        g.drawText(value, rowArea.getX() + kLabelWidth, rowArea.getY(), 120, kRowHeight, juce::Justification::centredLeft);
 
-        if (!detected.isEmpty()) {
+        if (!extra.isEmpty()) {
             g.setColour(fgColor.darker(0.4f));
-            g.drawText("(detected: " + detected + ")", rowArea.getX() + kLabelWidth + 100, rowArea.getY(), 200, kRowHeight, juce::Justification::centredLeft);
+            g.drawText(extra, rowArea.getX() + kLabelWidth + 120, rowArea.getY(), 200, kRowHeight, juce::Justification::centredLeft);
         }
     };
 
-    // Row 0: Original BPM (override)
-    float displayBPM = params.originalBPM > 0 ? params.originalBPM : params.detectedBPM;
-    juce::String bpmStr = displayBPM > 0 ? juce::String(displayBPM, 1) : "---";
-    juce::String detectedBPM = params.detectedBPM > 0 ? juce::String(params.detectedBPM, 1) : "";
-    drawSlicerRow(0, "ORIG BPM", bpmStr, params.originalBPM > 0 ? detectedBPM : "");
+    // Chop mode names
+    auto getChopModeName = [](model::ChopMode mode) -> const char* {
+        switch (mode) {
+            case model::ChopMode::Lazy: return "Lazy";
+            case model::ChopMode::Divisions: return "Divisions";
+            case model::ChopMode::Transients: return "Transients";
+        }
+        return "Unknown";
+    };
 
-    // Row 1: Bars
-    int displayBars = params.bars > 0 ? params.bars : params.detectedBars;
+    // Row 0: Chop Mode with sub-control
+    juce::String chopModeStr = getChopModeName(params.chopMode);
+    if (params.chopMode == model::ChopMode::Divisions) {
+        chopModeStr += " [" + juce::String(params.numDivisions) + "]";
+    } else if (params.chopMode == model::ChopMode::Transients) {
+        chopModeStr += " [" + juce::String(static_cast<int>(params.transientSensitivity * 100)) + "%]";
+    }
+    drawSlicerRow(static_cast<int>(SlicerRowType::ChopMode), "CHOP", chopModeStr);
+
+    // Row 1: Original Bars
+    int displayBars = params.getBars();
     juce::String barsStr = displayBars > 0 ? juce::String(displayBars) : "---";
-    juce::String detectedBars = params.detectedBars > 0 ? juce::String(params.detectedBars) : "";
-    drawSlicerRow(1, "BARS", barsStr, params.bars > 0 ? detectedBars : "");
+    juce::String barsExtra = (params.bars > 0 && params.detectedBars > 0) ?
+                             "(detected: " + juce::String(params.detectedBars) + ")" : "";
+    drawSlicerRow(static_cast<int>(SlicerRowType::OriginalBars), "ORIG BARS", barsStr, barsExtra);
 
-    // Row 2: Root Note
-    int note = params.detectedRootNote;
-    juce::String rootNoteStr = juce::String(noteNames[note % 12]) + juce::String(note / 12 - 1);
-    drawSlicerRow(2, "ROOT NOTE", rootNoteStr);
+    // Row 2: Original BPM
+    float displayBPM = params.getOriginalBPM();
+    juce::String bpmStr = displayBPM > 0 ? juce::String(displayBPM, 1) : "---";
+    juce::String bpmExtra = (params.originalBPM > 0 && params.detectedBPM > 0) ?
+                            "(detected: " + juce::String(params.detectedBPM, 1) + ")" : "";
+    drawSlicerRow(static_cast<int>(SlicerRowType::OriginalBPM), "ORIG BPM", bpmStr, bpmExtra);
 
-    // Row 3: Volume
+    // Row 3: Target BPM
+    drawSlicerRow(static_cast<int>(SlicerRowType::TargetBPM), "TARGET BPM",
+                  juce::String(params.targetBPM, 1));
+
+    // Row 4: Speed
+    drawSlicerRow(static_cast<int>(SlicerRowType::Speed), "SPEED",
+                  "x" + juce::String(params.speed, 3));
+
+    // Row 5: Pitch (greyed when repitch=false)
+    juce::String pitchStr = (params.pitchSemitones >= 0 ? "+" : "") +
+                            juce::String(params.pitchSemitones) + " st";
+    drawSlicerRow(static_cast<int>(SlicerRowType::Pitch), "PITCH", pitchStr,
+                  params.repitch ? "" : "(repitch off)", !params.repitch);
+
+    // Row 6: Repitch toggle
+    drawSlicerRow(static_cast<int>(SlicerRowType::Repitch), "REPITCH",
+                  params.repitch ? "ON" : "OFF");
+
+    // Row 7: Polyphony
+    juce::String polyStr = params.polyphony == 1 ? "1 (choke)" : juce::String(params.polyphony);
+    drawSlicerRow(static_cast<int>(SlicerRowType::Polyphony), "POLYPHONY", polyStr);
+
+    // Row 8: Volume
     float vol = inst->getVolume();
     juce::String volStr = juce::String(static_cast<int>(vol * 100.0f)) + "%";
-    drawSlicerRow(3, "VOLUME", volStr);
+    drawSlicerRow(static_cast<int>(SlicerRowType::Volume), "VOLUME", volStr);
 
-    // Row 4: Pan
+    // Row 9: Pan
     float pan = inst->getPan();
     juce::String panStr;
     if (pan < -0.01f) panStr = "L" + juce::String(static_cast<int>(-pan * 100));
     else if (pan > 0.01f) panStr = "R" + juce::String(static_cast<int>(pan * 100));
     else panStr = "C";
-    drawSlicerRow(4, "PAN", panStr);
-
-    // Warped BPM display
-    contentArea.removeFromTop(8);
-    if (params.stretchedBPM > 0.0f && std::abs(params.stretchedBPM - displayBPM) > 0.1f) {
-        g.setColour(fgColor.darker(0.3f));
-        g.setFont(12.0f);
-        g.drawText("Warped BPM: " + juce::String(params.stretchedBPM, 1), contentArea.removeFromTop(20), juce::Justification::centredLeft);
-    }
+    drawSlicerRow(static_cast<int>(SlicerRowType::Pan), "PAN", panStr);
 
     // Instructions
     contentArea.removeFromTop(8);
@@ -1641,12 +1688,42 @@ bool InstrumentScreen::handleSlicerKey(const juce::KeyPress& key, bool /*isEditM
 
     auto& params = inst->getSlicerParams();
 
+    // Shift-N creates new instrument
+    if (shiftHeld && (textChar == 'N' || textChar == 'n')) {
+        currentInstrument_ = project_.addInstrument("Inst " + std::to_string(project_.getInstrumentCount() + 1));
+        auto* newInst = project_.getInstrument(currentInstrument_);
+        if (newInst) {
+            editingName_ = true;
+            nameBuffer_ = newInst->getName();
+        }
+        repaint();
+        return true;
+    }
+
+    // '[' and ']' switch instruments
+    if (textChar == '[') {
+        int numInstruments = project_.getInstrumentCount();
+        if (numInstruments > 0) {
+            currentInstrument_ = (currentInstrument_ - 1 + numInstruments) % numInstruments;
+            setCurrentInstrument(currentInstrument_);
+        }
+        return true;
+    }
+    if (textChar == ']') {
+        int numInstruments = project_.getInstrumentCount();
+        if (numInstruments > 0) {
+            currentInstrument_ = (currentInstrument_ + 1) % numInstruments;
+            setCurrentInstrument(currentInstrument_);
+        }
+        return true;
+    }
+
     // Enter: audition current slice
     if (keyCode == juce::KeyPress::returnKey) {
         // Play the current slice note (mapped to MIDI note)
+        // Slices are mapped starting at C-1 (MIDI note 12)
         if (onNotePreview) {
-            // Slices are mapped starting at C-1 (note 0)
-            int sliceNote = params.currentSlice;
+            int sliceNote = params.currentSlice + 12;  // BASE_NOTE = 12
             onNotePreview(sliceNote, currentInstrument_);
         }
         return true;
@@ -1671,20 +1748,76 @@ bool InstrumentScreen::handleSlicerKey(const juce::KeyPress& key, bool /*isEditM
 
     if (delta != 0) {
         float step = shiftHeld ? 0.01f : 0.05f;
-        int noteStep = shiftHeld ? 1 : 12;
         float bpmStep = shiftHeld ? 0.5f : 5.0f;
+        float speedStep = shiftHeld ? 0.01f : 0.05f;
+        int pitchStep = shiftHeld ? 1 : 12;
+
+        // Get slicer processor for dependency calculations
+        audio::SlicerInstrument* slicer = nullptr;
+        if (audioEngine_) {
+            slicer = audioEngine_->getSlicerProcessor(currentInstrument_);
+        }
 
         switch (static_cast<SlicerRowType>(slicerCursorRow_)) {
+            case SlicerRowType::ChopMode: {
+                // Cycle through chop modes
+                int modeVal = static_cast<int>(params.chopMode);
+                modeVal = (modeVal + delta + 3) % 3;  // 3 modes
+                params.chopMode = static_cast<model::ChopMode>(modeVal);
+                break;
+            }
+            case SlicerRowType::OriginalBars:
+                if (slicer) {
+                    int newBars = params.getBars() + delta;
+                    slicer->editOriginalBars(std::max(1, newBars));
+                } else {
+                    if (params.bars <= 0) params.bars = params.detectedBars;
+                    params.bars = std::max(1, params.bars + delta);
+                }
+                break;
             case SlicerRowType::OriginalBPM:
-                if (params.originalBPM <= 0) params.originalBPM = params.detectedBPM;
-                params.originalBPM = std::clamp(params.originalBPM + delta * bpmStep, 40.0f, 250.0f);
+                if (slicer) {
+                    float newBPM = params.getOriginalBPM() + delta * bpmStep;
+                    slicer->editOriginalBPM(std::clamp(newBPM, 40.0f, 250.0f));
+                } else {
+                    if (params.originalBPM <= 0) params.originalBPM = params.detectedBPM;
+                    params.originalBPM = std::clamp(params.originalBPM + delta * bpmStep, 40.0f, 250.0f);
+                }
                 break;
-            case SlicerRowType::Bars:
-                if (params.bars <= 0) params.bars = params.detectedBars;
-                params.bars = std::max(1, params.bars + delta);
+            case SlicerRowType::TargetBPM:
+                if (slicer) {
+                    float newBPM = params.targetBPM + delta * bpmStep;
+                    slicer->editTargetBPM(std::clamp(newBPM, 40.0f, 250.0f));
+                } else {
+                    params.targetBPM = std::clamp(params.targetBPM + delta * bpmStep, 40.0f, 250.0f);
+                }
                 break;
-            case SlicerRowType::RootNote:
-                params.detectedRootNote = std::clamp(params.detectedRootNote + delta * noteStep, 0, 127);
+            case SlicerRowType::Speed:
+                if (slicer) {
+                    float newSpeed = params.speed + delta * speedStep;
+                    slicer->editSpeed(std::clamp(newSpeed, 0.1f, 4.0f));
+                } else {
+                    params.speed = std::clamp(params.speed + delta * speedStep, 0.1f, 4.0f);
+                }
+                break;
+            case SlicerRowType::Pitch:
+                if (params.repitch) {
+                    if (slicer) {
+                        slicer->editPitch(params.pitchSemitones + delta * pitchStep);
+                    } else {
+                        params.pitchSemitones += delta * pitchStep;
+                    }
+                }
+                break;
+            case SlicerRowType::Repitch:
+                if (slicer) {
+                    slicer->setRepitch(!params.repitch);
+                } else {
+                    params.repitch = !params.repitch;
+                }
+                break;
+            case SlicerRowType::Polyphony:
+                params.polyphony = std::clamp(params.polyphony + delta, 1, 8);
                 break;
             case SlicerRowType::Volume:
                 inst->setVolume(std::clamp(inst->getVolume() + delta * step, 0.0f, 1.0f));

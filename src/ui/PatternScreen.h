@@ -47,7 +47,8 @@ private:
     void drawTrackHeaders(juce::Graphics& g, juce::Rectangle<int> area);
     void drawGrid(juce::Graphics& g, juce::Rectangle<int> area);
     void drawStep(juce::Graphics& g, juce::Rectangle<int> area,
-                  const model::Step& step, bool isCurrentRow, bool isCurrentCell, int highlightColumn = -1);
+                  const model::Step& step, bool isCurrentRow, bool isCurrentCell,
+                  int highlightColumn = -1, bool isSelected = false);
 
     std::string noteToString(int8_t note) const;
     std::string getScaleLockForPattern(int patternIndex) const;

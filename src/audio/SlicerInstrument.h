@@ -54,8 +54,22 @@ public:
     const juce::AudioBuffer<float>& getSampleBuffer() const { return sampleBuffer_; }
     int getSampleRate() const { return loadedSampleRate_; }
 
+    // Three-way dependency editing (Original BPM/Bars, Target BPM, Speed/Pitch)
+    // Call these when user edits a value - they handle dependency recalculation
+    void editOriginalBars(int newBars);
+    void editOriginalBPM(float newBPM);
+    void editTargetBPM(float newBPM);
+    void editSpeed(float newSpeed);
+    void editPitch(int newSemitones);  // Only works when repitch=true
+    void setRepitch(bool enabled);
+
 private:
-    SlicerVoice* findFreeVoice();
+    // Three-way dependency helpers
+    void markEdited(model::SlicerLastEdited which);
+    void recalculateDependencies();
+    float calculateBPMFromBars(int bars) const;
+    int calculateBarsFromBPM(float bpm) const;
+    SlicerVoice* findFreeVoice(int maxVoices = NUM_VOICES);
     SlicerVoice* findVoiceToSteal();
     int midiNoteToSliceIndex(int midiNote) const;
 
