@@ -206,8 +206,103 @@ void ChordPopup::paint(juce::Graphics& g)
 
 bool ChordPopup::keyPressed(const juce::KeyPress& key)
 {
-    // TODO: Implement in Task 8
-    (void)key;
+    int keyCode = key.getKeyCode();
+
+    const auto& degrees = isMinorScale_ ? kMinorScaleDegrees : kMajorScaleDegrees;
+    int maxInversions = static_cast<int>(kChordTypes[selection_.typeIndex].intervals.size());
+
+    if (keyCode == juce::KeyPress::escapeKey)
+    {
+        hide();
+        return true;
+    }
+
+    if (keyCode == juce::KeyPress::returnKey)
+    {
+        // Check if we have enough tracks
+        int numNotesNeeded = static_cast<int>(selection_.notes.size());
+        int tracksAvailable = 16 - cursorTrack_;
+
+        if (numNotesNeeded > tracksAvailable)
+        {
+            // Could show warning, for now just don't confirm
+            return true;
+        }
+
+        if (onChordConfirmed && !selection_.notes.empty())
+        {
+            onChordConfirmed(selection_.notes);
+        }
+        hide();
+        return true;
+    }
+
+    if (keyCode == juce::KeyPress::spaceKey)
+    {
+        triggerPreview();
+        return true;
+    }
+
+    if (keyCode == juce::KeyPress::leftKey)
+    {
+        currentColumn_ = std::max(0, currentColumn_ - 1);
+        repaint();
+        return true;
+    }
+
+    if (keyCode == juce::KeyPress::rightKey)
+    {
+        currentColumn_ = std::min(2, currentColumn_ + 1);
+        repaint();
+        return true;
+    }
+
+    if (keyCode == juce::KeyPress::upKey)
+    {
+        if (currentColumn_ == 0)
+        {
+            selection_.degree = std::max(0, selection_.degree - 1);
+        }
+        else if (currentColumn_ == 1)
+        {
+            selection_.typeIndex = std::max(0, selection_.typeIndex - 1);
+            // Reset inversion if it exceeds new chord's note count
+            int newMax = static_cast<int>(kChordTypes[selection_.typeIndex].intervals.size());
+            selection_.inversion = std::min(selection_.inversion, newMax - 1);
+        }
+        else
+        {
+            selection_.inversion = std::max(0, selection_.inversion - 1);
+        }
+        updateChordNotes();
+        repaint();
+        return true;
+    }
+
+    if (keyCode == juce::KeyPress::downKey)
+    {
+        if (currentColumn_ == 0)
+        {
+            selection_.degree = std::min(static_cast<int>(degrees.size()) - 1,
+                                          selection_.degree + 1);
+        }
+        else if (currentColumn_ == 1)
+        {
+            selection_.typeIndex = std::min(static_cast<int>(kChordTypes.size()) - 1,
+                                             selection_.typeIndex + 1);
+            // Reset inversion if it exceeds new chord's note count
+            int newMax = static_cast<int>(kChordTypes[selection_.typeIndex].intervals.size());
+            selection_.inversion = std::min(selection_.inversion, newMax - 1);
+        }
+        else
+        {
+            selection_.inversion = std::min(maxInversions - 1, selection_.inversion + 1);
+        }
+        updateChordNotes();
+        repaint();
+        return true;
+    }
+
     return false;
 }
 
