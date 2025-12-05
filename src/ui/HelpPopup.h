@@ -40,12 +40,18 @@ private:
     std::vector<HelpSection> sections_;
 
     // Layout constants
-    static constexpr int kPanelWidth = 600;
-    static constexpr int kPanelMaxHeight = 600;
+    static constexpr int kSingleColumnWidth = 400;
+    static constexpr int kTwoColumnWidth = 750;
+    static constexpr int kPanelMaxHeight = 500;
     static constexpr int kPadding = 20;
-    static constexpr int kLineHeight = 22;
-    static constexpr int kSectionGap = 16;
-    static constexpr int kKeyWidth = 120;
+    static constexpr int kLineHeight = 20;
+    static constexpr int kSectionGap = 12;
+    static constexpr int kKeyWidth = 110;
+    static constexpr int kColumnGap = 30;
+
+    // Calculate total content height for all sections
+    int calculateContentHeight() const;
+    bool needsTwoColumns() const;
 
     // Colors (matching app theme)
     static inline const juce::Colour bgColor{0xff1a1a2e};
