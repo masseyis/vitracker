@@ -96,9 +96,10 @@ App::App()
     // Initialize help popup (hidden by default, always on top)
     addChildComponent(helpPopup_);
 
-    // Initialize Tip Me button
+    // Initialize Tip Me button (mouse-only, no keyboard focus)
     tipMeButton_.setColour(juce::TextButton::buttonColourId, juce::Colour(0xffff5e5b));
     tipMeButton_.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
+    tipMeButton_.setWantsKeyboardFocus(false);
     tipMeButton_.onClick = []() {
         juce::URL("https://ko-fi.com/masseyis").launchInDefaultBrowser();
     };
