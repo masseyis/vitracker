@@ -21,9 +21,9 @@ bool KeyHandler::handleNormalMode(const juce::KeyPress& key)
     auto keyCode = key.getKeyCode();
     auto textChar = key.getTextCharacter();
 
-    // Screen switching: 1-6
+    // Screen switching: 1-5 (Project screen removed)
     // But first, let the screen handle it (e.g., for name editing mode)
-    if (textChar >= '1' && textChar <= '6')
+    if (textChar >= '1' && textChar <= '5')
     {
         // Give screen a chance to consume the key first (e.g., text input)
         if (onEditKey && onEditKey(key)) return true;

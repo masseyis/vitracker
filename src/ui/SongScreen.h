@@ -15,11 +15,17 @@ public:
     bool handleEdit(const juce::KeyPress& key) override;
     bool handleEditKey(const juce::KeyPress& key);
 
-    std::string getTitle() const override { return "SONG"; }
+    std::string getTitle() const override { return "SONG - " + project_.getName(); }
     std::vector<HelpSection> getHelpContent() const override;
 
     // Callback when Enter is pressed on a chain cell
     std::function<void(int chainIndex)> onJumpToChain;
+
+    // Callback for new project (with confirmation)
+    std::function<void()> onNewProject;
+
+    // Callback for project rename
+    std::function<void(const std::string& newName)> onProjectRenamed;
 
     // Get chain at current cursor position
     int getChainAtCursor() const { return getChainAt(cursorTrack_, cursorRow_); }
@@ -34,6 +40,10 @@ private:
     int cursorRow_ = 0;
     int scrollOffset_ = 0;
     static constexpr int VISIBLE_ROWS = 16;
+
+    // Name editing
+    bool editingName_ = false;
+    std::string nameBuffer_;
 };
 
 } // namespace ui

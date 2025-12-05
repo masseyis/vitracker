@@ -30,25 +30,41 @@ Download the latest release for your platform from the [Releases page](https://g
 ### Basic Concepts
 
 Vitracker uses a hierarchical structure:
-- **Song** (Screen 2) - Arrangement of chains across 16 columns
-- **Chain** (Screen 3) - Sequence of patterns with scale lock and transpose
-- **Pattern** (Screen 4) - 16 tracks x 16-64 rows of notes, instruments, and effects
-- **Instrument** (Screen 5) - Synth/sampler settings with modulation
-- **Mixer** (Screen 6) - Per-instrument volume/pan/mute/solo and master effects
+- **Song** (Screen 1) - Project name + arrangement of chains across 16 columns
+- **Chain** (Screen 2) - Sequence of patterns with scale lock and transpose
+- **Pattern** (Screen 3) - 16 tracks x 16-64 rows of notes, instruments, and effects
+- **Instrument** (Screen 4) - Synth/sampler settings with modulation
+- **Mixer** (Screen 5) - Per-instrument volume/pan/mute/solo and master effects
 
 ### Global Keys
 
 | Key | Action |
 |-----|--------|
-| `1-6` | Switch screens (Project, Song, Chain, Pattern, Instrument, Mixer) |
+| `1-5` | Switch screens (Song, Chain, Pattern, Instrument, Mixer) |
 | `Arrow keys` | Navigate |
 | `Space` | Play/Stop |
+| `t` | Tempo adjust mode (arrows ±1, Shift ±10) |
+| `g / G` | Cycle groove forward/backward |
 | `v` | Enter Visual mode (selection) |
 | `:` | Enter Command mode |
 | `?` | Show help popup for current screen |
 | `Esc` | Close help / Cancel |
 
-### Pattern Screen (4)
+### Song Screen (1)
+
+| Key | Action |
+|-----|--------|
+| `r` | Rename project |
+| `n` | New project (with confirmation) |
+| `Up/Down` | Cycle through chains |
+| `Tab` | Cycle to next chain |
+| `0-9` | Quick chain selection |
+| `Shift+N` | Create new chain |
+| `Enter` | Jump to chain at cursor |
+| `+/-` | Add/remove song row |
+| `d / Delete` | Clear cell |
+
+### Pattern Screen (3)
 
 | Key | Action |
 |-----|--------|
@@ -75,7 +91,7 @@ Vitracker uses a hierarchical structure:
 | `f` | Fill following pattern |
 | `s` | Randomize populated values |
 
-### Instrument Screen (5)
+### Instrument Screen (4)
 
 | Key | Action |
 |-----|--------|
@@ -86,7 +102,7 @@ Vitracker uses a hierarchical structure:
 | `r` | Rename instrument |
 | Drag & Drop | Load audio file (Sampler/Slicer) |
 
-### Mixer Screen (6)
+### Mixer Screen (5)
 
 | Key | Action |
 |-----|--------|

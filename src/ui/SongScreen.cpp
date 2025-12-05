@@ -15,10 +15,15 @@ void SongScreen::paint(juce::Graphics& g)
 
     auto area = getLocalBounds();
 
-    // Header
+    // Header with project name
     g.setFont(20.0f);
     g.setColour(fgColor);
-    g.drawText("SONG", area.removeFromTop(40).reduced(20, 0), juce::Justification::centredLeft);
+    juce::String headerText = "SONG - ";
+    if (editingName_)
+        headerText += juce::String(nameBuffer_) + "_";
+    else
+        headerText += juce::String(project_.getName());
+    g.drawText(headerText, area.removeFromTop(40).reduced(20, 0), juce::Justification::centredLeft);
 
     area.removeFromTop(10);
     drawGrid(g, area.reduced(10));
@@ -163,6 +168,65 @@ bool SongScreen::handleEditKey(const juce::KeyPress& key)
     auto keyCode = key.getKeyCode();
     auto textChar = key.getTextCharacter();
 
+    // Handle name editing mode
+    if (editingName_)
+    {
+        if (keyCode == juce::KeyPress::returnKey)
+        {
+            project_.setName(nameBuffer_);
+            editingName_ = false;
+            if (onProjectRenamed)
+                onProjectRenamed(nameBuffer_);
+            repaint();
+            return true;
+        }
+        else if (keyCode == juce::KeyPress::escapeKey)
+        {
+            editingName_ = false;
+            repaint();
+            return true;
+        }
+        else if (keyCode == juce::KeyPress::backspaceKey && !nameBuffer_.empty())
+        {
+            nameBuffer_.pop_back();
+            repaint();
+            return true;
+        }
+        else if (textChar >= ' ' && textChar <= '~' && nameBuffer_.length() < 32)
+        {
+            nameBuffer_ += static_cast<char>(textChar);
+            repaint();
+            return true;
+        }
+        return true;  // Consume all keys in name editing mode
+    }
+
+    // 'r' starts rename mode
+    if (textChar == 'r' || textChar == 'R')
+    {
+        editingName_ = true;
+        nameBuffer_ = project_.getName();
+        repaint();
+        return true;
+    }
+
+    // 'n' creates new project (with confirmation via callback)
+    if (textChar == 'n' && !key.getModifiers().isShiftDown())
+    {
+        if (onNewProject)
+            onNewProject();
+        return true;
+    }
+
+    // Shift+N creates a new chain and assigns it (existing behavior)
+    if (textChar == 'N' && key.getModifiers().isShiftDown())
+    {
+        int newChain = project_.addChain("Chain " + std::to_string(project_.getChainCount() + 1));
+        setChainAt(cursorTrack_, cursorRow_, newChain);
+        repaint();
+        return true;
+    }
+
     // +/= : Add row to song (extend length)
     if (textChar == '+' || textChar == '=')
     {
@@ -238,15 +302,6 @@ bool SongScreen::handleEditKey(const juce::KeyPress& key)
 
     // Left/Right do nothing in edit mode (no navigation)
 
-    // 'n' creates a new chain and assigns it
-    if (textChar == 'n')
-    {
-        int newChain = project_.addChain("Chain " + std::to_string(project_.getChainCount() + 1));
-        setChainAt(cursorTrack_, cursorRow_, newChain);
-        repaint();
-        return false;
-    }
-
     // Tab cycles through chains (same as down)
     if (keyCode == juce::KeyPress::tabKey)
     {
@@ -294,6 +349,10 @@ bool SongScreen::handleEditKey(const juce::KeyPress& key)
 std::vector<HelpSection> SongScreen::getHelpContent() const
 {
     return {
+        {"Project", {
+            {"r", "Rename project"},
+            {"n", "New project"},
+        }},
         {"Navigation", {
             {"Left/Right", "Move between tracks"},
             {"Enter", "Jump to chain at cursor"},
@@ -302,7 +361,7 @@ std::vector<HelpSection> SongScreen::getHelpContent() const
             {"Up/Down", "Cycle through chains"},
             {"Tab", "Cycle to next chain"},
             {"0-9", "Quick chain selection (0-9)"},
-            {"n", "Create new chain"},
+            {"Shift+N", "Create new chain"},
         }},
         {"Song Length", {
             {"+", "Add row to song"},
@@ -310,6 +369,10 @@ std::vector<HelpSection> SongScreen::getHelpContent() const
         }},
         {"Clearing", {
             {"Delete/d", "Clear cell"},
+        }},
+        {"Global", {
+            {"t", "Adjust tempo (arrows ±1, Shift ±10)"},
+            {"g / G", "Cycle groove forward/backward"},
         }},
     };
 }

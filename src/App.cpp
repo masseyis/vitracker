@@ -1,12 +1,14 @@
 #include "App.h"
 #include "ui/PatternScreen.h"
-#include "ui/ProjectScreen.h"
 #include "ui/InstrumentScreen.h"
 #include "ui/MixerScreen.h"
 #include "ui/SongScreen.h"
 #include "ui/ChainScreen.h"
 #include "model/ProjectSerializer.h"
 #include "model/UndoManager.h"
+
+// Groove names for cycling
+const char* App::grooveNames_[5] = {"Straight", "Swing 50%", "Swing 66%", "MPC 60%", "Humanize"};
 
 App::App()
 {
@@ -31,18 +33,19 @@ App::App()
     keyHandler_->onScreenSwitch = [this](int screen) {
         if (screen == -1)  // Previous screen (Shift+[)
         {
-            int prev = (currentScreen_ - 1 + 6) % 6;
+            int prev = (currentScreen_ - 1 + 5) % 5;
             switchScreen(prev);
         }
         else if (screen == -2)  // Next screen (Shift+])
         {
-            int next = (currentScreen_ + 1) % 6;
+            int next = (currentScreen_ + 1) % 5;
             switchScreen(next);
         }
-        else
+        else if (screen >= 1 && screen <= 5)
         {
-            switchScreen(screen - 1);  // Number keys 1-6
+            switchScreen(screen - 1);  // Number keys 1-5
         }
+        // Key 6 does nothing
     };
     keyHandler_->onPlayStop = [this]() {
         if (audioEngine_.isPlaying())
@@ -52,13 +55,13 @@ App::App()
         else
         {
             // Set play mode based on current screen
-            if (currentScreen_ == 1)  // Song screen
+            if (currentScreen_ == 0)  // Song screen (now index 0)
                 audioEngine_.setPlayMode(audio::AudioEngine::PlayMode::Song);
             else
                 audioEngine_.setPlayMode(audio::AudioEngine::PlayMode::Pattern);
 
-            // Sync current pattern from PatternScreen
-            if (auto* patternScreen = dynamic_cast<ui::PatternScreen*>(screens_[3].get()))
+            // Sync current pattern from PatternScreen (now index 2)
+            if (auto* patternScreen = dynamic_cast<ui::PatternScreen*>(screens_[2].get()))
             {
                 audioEngine_.setCurrentPattern(patternScreen->getCurrentPatternIndex());
             }
@@ -72,13 +75,12 @@ App::App()
             screens_[currentScreen_]->navigate(dx, dy);
     };
 
-    // Create screens
-    screens_[0] = std::make_unique<ui::ProjectScreen>(project_, modeManager_);
-    screens_[1] = std::make_unique<ui::SongScreen>(project_, modeManager_);
-    screens_[2] = std::make_unique<ui::ChainScreen>(project_, modeManager_);
-    screens_[3] = std::make_unique<ui::PatternScreen>(project_, modeManager_);
-    screens_[4] = std::make_unique<ui::InstrumentScreen>(project_, modeManager_);
-    screens_[5] = std::make_unique<ui::MixerScreen>(project_, modeManager_);
+    // Create screens (1=Song, 2=Chain, 3=Pattern, 4=Instrument, 5=Mixer)
+    screens_[0] = std::make_unique<ui::SongScreen>(project_, modeManager_);
+    screens_[1] = std::make_unique<ui::ChainScreen>(project_, modeManager_);
+    screens_[2] = std::make_unique<ui::PatternScreen>(project_, modeManager_);
+    screens_[3] = std::make_unique<ui::InstrumentScreen>(project_, modeManager_);
+    screens_[4] = std::make_unique<ui::MixerScreen>(project_, modeManager_);
 
     // Give screens access to audio engine for playhead display
     for (auto& screen : screens_)
@@ -114,8 +116,8 @@ App::App()
         return false;
     };
 
-    // Wire up note preview for PatternScreen
-    if (auto* patternScreen = dynamic_cast<ui::PatternScreen*>(screens_[3].get()))
+    // Wire up note preview for PatternScreen (now index 2)
+    if (auto* patternScreen = dynamic_cast<ui::PatternScreen*>(screens_[2].get()))
     {
         patternScreen->onNotePreview = [this](int note, int instrument) {
             // Don't preview while track is playing - it conflicts with playback
@@ -125,8 +127,8 @@ App::App()
         };
     }
 
-    // Wire up note preview and preset manager for InstrumentScreen
-    if (auto* instrumentScreen = dynamic_cast<ui::InstrumentScreen*>(screens_[4].get()))
+    // Wire up note preview and preset manager for InstrumentScreen (now index 3)
+    if (auto* instrumentScreen = dynamic_cast<ui::InstrumentScreen*>(screens_[3].get()))
     {
         instrumentScreen->onNotePreview = [this](int note, int instrument) {
             // Don't preview while track is playing - it conflicts with playback
@@ -137,39 +139,51 @@ App::App()
         instrumentScreen->setPresetManager(&presetManager_);
     }
 
-    // Wire up chain navigation from SongScreen
-    if (auto* songScreen = dynamic_cast<ui::SongScreen*>(screens_[1].get()))
+    // Wire up chain navigation from SongScreen (now index 0)
+    if (auto* songScreen = dynamic_cast<ui::SongScreen*>(screens_[0].get()))
     {
         songScreen->onJumpToChain = [this](int chainIndex) {
-            if (auto* chainScreen = dynamic_cast<ui::ChainScreen*>(screens_[2].get()))
+            if (auto* chainScreen = dynamic_cast<ui::ChainScreen*>(screens_[1].get()))
             {
                 chainScreen->setCurrentChain(chainIndex);
             }
-            switchScreen(2);  // Switch to Chain screen
+            switchScreen(1);  // Switch to Chain screen
+        };
+
+        // Wire up new project callback
+        songScreen->onNewProject = [this]() {
+            confirmNewProject();
+        };
+
+        // Wire up project rename callback
+        songScreen->onProjectRenamed = [this](const std::string& newName) {
+            juce::ignoreUnused(newName);
+            markDirty();
+            updateWindowTitle();
         };
     }
 
-    // Wire up pattern navigation from ChainScreen
-    if (auto* chainScreen = dynamic_cast<ui::ChainScreen*>(screens_[2].get()))
+    // Wire up pattern navigation from ChainScreen (now index 1)
+    if (auto* chainScreen = dynamic_cast<ui::ChainScreen*>(screens_[1].get()))
     {
         chainScreen->onJumpToPattern = [this](int patternIndex) {
-            if (auto* patternScreen = dynamic_cast<ui::PatternScreen*>(screens_[3].get()))
+            if (auto* patternScreen = dynamic_cast<ui::PatternScreen*>(screens_[2].get()))
             {
                 patternScreen->setCurrentPattern(patternIndex);
             }
-            switchScreen(3);  // Switch to Pattern screen
+            switchScreen(2);  // Switch to Pattern screen
         };
     }
 
-    // Wire up instrument navigation from PatternScreen
-    if (auto* patternScreen = dynamic_cast<ui::PatternScreen*>(screens_[3].get()))
+    // Wire up instrument navigation from PatternScreen (now index 2)
+    if (auto* patternScreen = dynamic_cast<ui::PatternScreen*>(screens_[2].get()))
     {
         patternScreen->onJumpToInstrument = [this](int instrumentIndex) {
-            if (auto* instrumentScreen = dynamic_cast<ui::InstrumentScreen*>(screens_[4].get()))
+            if (auto* instrumentScreen = dynamic_cast<ui::InstrumentScreen*>(screens_[3].get()))
             {
                 instrumentScreen->setCurrentInstrument(instrumentIndex);
             }
-            switchScreen(4);  // Switch to Instrument screen
+            switchScreen(3);  // Switch to Instrument screen
         };
     }
 
@@ -283,9 +297,9 @@ App::App()
         repaint();
     };
 
-    // Preset commands
+    // Preset commands (InstrumentScreen is now index 3)
     keyHandler_->onSavePreset = [this](const std::string& name) {
-        if (auto* instrumentScreen = dynamic_cast<ui::InstrumentScreen*>(screens_[4].get()))
+        if (auto* instrumentScreen = dynamic_cast<ui::InstrumentScreen*>(screens_[3].get()))
         {
             int instIdx = instrumentScreen->getCurrentInstrument();
             auto* instrument = project_.getInstrument(instIdx);
@@ -306,7 +320,7 @@ App::App()
     };
 
     keyHandler_->onDeletePreset = [this](const std::string& name) {
-        if (auto* instrumentScreen = dynamic_cast<ui::InstrumentScreen*>(screens_[4].get()))
+        if (auto* instrumentScreen = dynamic_cast<ui::InstrumentScreen*>(screens_[3].get()))
         {
             int instIdx = instrumentScreen->getCurrentInstrument();
             auto* instrument = project_.getInstrument(instIdx);
@@ -335,7 +349,7 @@ App::App()
     keyHandler_->onCreateSampler = [this]() {
         // Use the current instrument from InstrumentScreen (or 0 if not available)
         int slot = 0;
-        if (auto* instScreen = dynamic_cast<ui::InstrumentScreen*>(screens_[4].get()))
+        if (auto* instScreen = dynamic_cast<ui::InstrumentScreen*>(screens_[3].get()))
         {
             slot = instScreen->getCurrentInstrument();
         }
@@ -353,18 +367,18 @@ App::App()
             }
 
             // Switch to instrument screen showing this instrument
-            if (auto* instScreen = dynamic_cast<ui::InstrumentScreen*>(screens_[4].get()))
+            if (auto* instScreen = dynamic_cast<ui::InstrumentScreen*>(screens_[3].get()))
             {
                 instScreen->setCurrentInstrument(slot);
             }
-            switchScreen(4);
+            switchScreen(3);
         }
     };
 
     keyHandler_->onCreateSlicer = [this]() {
         // Use the current instrument from InstrumentScreen (or 0 if not available)
         int slot = 0;
-        if (auto* instScreen = dynamic_cast<ui::InstrumentScreen*>(screens_[4].get()))
+        if (auto* instScreen = dynamic_cast<ui::InstrumentScreen*>(screens_[3].get()))
         {
             slot = instScreen->getCurrentInstrument();
         }
@@ -382,17 +396,17 @@ App::App()
             }
 
             // Switch to instrument screen showing this instrument
-            if (auto* instScreen = dynamic_cast<ui::InstrumentScreen*>(screens_[4].get()))
+            if (auto* instScreen = dynamic_cast<ui::InstrumentScreen*>(screens_[3].get()))
             {
                 instScreen->setCurrentInstrument(slot);
                 instScreen->updateSlicerDisplay();
             }
-            switchScreen(4);
+            switchScreen(3);
         }
     };
 
     keyHandler_->onChop = [this](int divisions) {
-        if (auto* instScreen = dynamic_cast<ui::InstrumentScreen*>(screens_[4].get())) {
+        if (auto* instScreen = dynamic_cast<ui::InstrumentScreen*>(screens_[3].get())) {
             int currentInst = instScreen->getCurrentInstrument();
             auto* inst = project_.getInstrument(currentInst);
 
@@ -438,12 +452,29 @@ void App::timerCallback()
         }
     }
 
-    // Autosave every 60 seconds (1800 frames at 30fps)
+    // Debounced autosave - saves after edits settle
+    if (autosaveDebounce_ > 0)
+    {
+        autosaveDebounce_--;
+        if (autosaveDebounce_ == 0 && projectDirty_)
+        {
+            // Save to project file path
+            juce::File savePath = getProjectFilePath();
+            if (model::ProjectSerializer::save(project_, savePath))
+            {
+                DBG("Autosaved to: " << savePath.getFullPathName());
+                currentProjectFile_ = savePath;
+                projectDirty_ = false;
+            }
+        }
+    }
+
+    // Periodic backup autosave every 60 seconds (600 frames at 10fps)
     autosaveCounter_++;
-    if (autosaveCounter_ >= 1800)
+    if (autosaveCounter_ >= 600)
     {
         autosaveCounter_ = 0;
-        autosave();
+        autosave();  // Backup to ~/.vitracker/autosave/
     }
 }
 
@@ -477,7 +508,7 @@ void App::paint(juce::Graphics& g)
         g.setColour(juce::Colours::white);
         g.setFont(24.0f);
 
-        static const char* screenNames[] = {"PROJECT", "SONG", "CHAIN", "PATTERN", "INSTRUMENT", "MIXER"};
+        static const char* screenNames[] = {"SONG", "CHAIN", "PATTERN", "INSTRUMENT", "MIXER"};
         g.drawText(juce::String(screenNames[currentScreen_]) + " (Coming Soon)",
                    getLocalBounds().reduced(0, STATUS_BAR_HEIGHT),
                    juce::Justification::centred, true);
@@ -544,6 +575,35 @@ bool App::keyPressed(const juce::KeyPress& key, juce::Component* originatingComp
         return true;
     }
 
+    // Handle tempo adjust mode
+    if (tempoAdjustMode_)
+    {
+        if (handleTempoAdjustKey(key))
+            return true;
+    }
+
+    // Global tempo shortcut (t)
+    if (key.getTextCharacter() == 't' && modeManager_.getMode() == input::Mode::Normal)
+    {
+        enterTempoAdjustMode();
+        return true;
+    }
+
+    // Global groove cycling (g/G)
+    if (modeManager_.getMode() == input::Mode::Normal)
+    {
+        if (key.getTextCharacter() == 'g')
+        {
+            cycleGroove(false);
+            return true;
+        }
+        if (key.getTextCharacter() == 'G')
+        {
+            cycleGroove(true);
+            return true;
+        }
+    }
+
     bool handled = keyHandler_->handleKey(key);
     if (handled) repaint();
     return handled;
@@ -551,8 +611,12 @@ bool App::keyPressed(const juce::KeyPress& key, juce::Component* originatingComp
 
 void App::switchScreen(int screenIndex)
 {
-    if (screenIndex < 0 || screenIndex >= 6) return;
+    if (screenIndex < 0 || screenIndex >= 5) return;  // Now 5 screens
     if (screenIndex == currentScreen_) return;
+
+    // Exit tempo adjust mode when switching screens
+    if (tempoAdjustMode_)
+        exitTempoAdjustMode();
 
     // Hide old screen
     if (screens_[currentScreen_])
@@ -584,35 +648,38 @@ void App::drawStatusBar(juce::Graphics& g, juce::Rectangle<int> area)
 
     // Mode indicator (left)
     g.setColour(juce::Colours::white);
-    g.drawText("-- " + juce::String(modeManager_.getModeString()) + " --",
-               area.removeFromLeft(200), juce::Justification::centredLeft, true);
+    juce::String modeStr = tempoAdjustMode_ ? "TEMPO" : modeManager_.getModeString();
+    g.drawText("-- " + modeStr + " --",
+               area.removeFromLeft(120), juce::Justification::centredLeft, true);
 
-    // Transport (center-left)
+    // Screen indicator (after mode)
+    static const char* screenKeys[] = {"1:SNG", "2:CHN", "3:PAT", "4:INS", "5:MIX"};
+    for (int i = 0; i < 5; ++i)
+    {
+        g.setColour(i == currentScreen_ ? juce::Colours::yellow : juce::Colours::grey);
+        g.drawText(screenKeys[i], area.removeFromLeft(50), juce::Justification::centred, true);
+    }
+
+    // Transport (center)
     bool isPlaying = audioEngine_.isPlaying();
     g.setColour(isPlaying ? juce::Colours::lightgreen : juce::Colours::grey);
     juce::String transportText = isPlaying ?
         juce::String("PLAYING Row ") + juce::String(audioEngine_.getCurrentRow()) :
         "STOPPED";
-    g.drawText(transportText, area.removeFromLeft(150), juce::Justification::centred, true);
+    g.drawText(transportText, area.removeFromLeft(130), juce::Justification::centred, true);
 
     // Reserve space for Tip Me button (right side)
     area.removeFromRight(75);
 
-    // Tempo (right)
-    g.setColour(juce::Colours::white);
+    // Tempo (highlight if in tempo adjust mode)
+    g.setColour(tempoAdjustMode_ ? juce::Colours::yellow : juce::Colours::white);
     g.drawText(juce::String(project_.getTempo(), 1) + " BPM",
-               area.removeFromRight(100), juce::Justification::centredRight, true);
+               area.removeFromRight(80), juce::Justification::centredRight, true);
 
-    // Screen indicator
-    static const char* screenKeys[] = {"1:PRJ", "2:SNG", "3:CHN", "4:PAT", "5:INS", "6:MIX"};
-    int x = area.getX();
-    for (int i = 0; i < 6; ++i)
-    {
-        g.setColour(i == currentScreen_ ? juce::Colours::yellow : juce::Colours::grey);
-        g.drawText(screenKeys[i], x, area.getY(), 50, area.getHeight(),
-                   juce::Justification::centred, true);
-        x += 55;
-    }
+    // Groove
+    g.setColour(juce::Colours::white);
+    g.drawText(project_.getGrooveTemplate(),
+               area.removeFromRight(90), juce::Justification::centredRight, true);
 }
 
 void App::saveProject(const std::string& filename)
@@ -693,6 +760,9 @@ void App::newProject()
 {
     audioEngine_.stop();
     project_ = model::Project("Untitled");
+    currentProjectFile_ = juce::File();  // Clear current file path
+    projectDirty_ = false;
+    updateWindowTitle();
     repaint();
 }
 
@@ -718,4 +788,136 @@ void App::toggleHelp()
         hideHelp();
     else
         showHelp();
+}
+
+// Tempo adjust mode
+void App::enterTempoAdjustMode()
+{
+    tempoAdjustMode_ = true;
+    repaint();
+}
+
+void App::exitTempoAdjustMode()
+{
+    tempoAdjustMode_ = false;
+    repaint();
+}
+
+bool App::handleTempoAdjustKey(const juce::KeyPress& key)
+{
+    auto keyCode = key.getKeyCode();
+    bool shift = key.getModifiers().isShiftDown();
+
+    if (keyCode == juce::KeyPress::returnKey || keyCode == juce::KeyPress::escapeKey)
+    {
+        exitTempoAdjustMode();
+        return true;
+    }
+
+    float delta = 0.0f;
+    if (keyCode == juce::KeyPress::upKey || keyCode == juce::KeyPress::rightKey)
+        delta = shift ? 10.0f : 1.0f;
+    else if (keyCode == juce::KeyPress::downKey || keyCode == juce::KeyPress::leftKey)
+        delta = shift ? -10.0f : -1.0f;
+
+    if (delta != 0.0f)
+    {
+        float newTempo = std::clamp(project_.getTempo() + delta, 20.0f, 300.0f);
+        project_.setTempo(newTempo);
+        markDirty();
+        repaint();
+        return true;
+    }
+
+    return false;
+}
+
+// Groove cycling
+void App::cycleGroove(bool reverse)
+{
+    std::string current = project_.getGrooveTemplate();
+    int currentIdx = 0;
+    for (int i = 0; i < 5; ++i)
+    {
+        if (current == grooveNames_[i])
+        {
+            currentIdx = i;
+            break;
+        }
+    }
+
+    int newIdx = reverse ? (currentIdx + 4) % 5 : (currentIdx + 1) % 5;
+    project_.setGrooveTemplate(grooveNames_[newIdx]);
+    markDirty();
+    repaint();
+}
+
+// Project dirty tracking and autosave
+void App::markDirty()
+{
+    projectDirty_ = true;
+    autosaveDebounce_ = 30;  // ~3 seconds at 10fps before autosave
+}
+
+void App::updateWindowTitle()
+{
+    if (auto* window = findParentComponentOfClass<juce::DocumentWindow>())
+    {
+        window->setName("Vitracker - " + juce::String(project_.getName()));
+    }
+}
+
+juce::File App::getProjectFilePath() const
+{
+    std::string sanitized = sanitizeFilename(project_.getName());
+    if (sanitized.empty())
+        sanitized = "Untitled";
+
+    auto dir = currentProjectFile_.exists() ?
+        currentProjectFile_.getParentDirectory() :
+        juce::File::getSpecialLocation(juce::File::userDocumentsDirectory).getChildFile("Vitracker Projects");
+
+    if (!dir.exists())
+        dir.createDirectory();
+
+    return dir.getChildFile(juce::String(sanitized) + ".vit");
+}
+
+std::string App::sanitizeFilename(const std::string& name) const
+{
+    std::string result;
+    for (char c : name)
+    {
+        if (c == '/' || c == '\\' || c == ':' || c == '*' ||
+            c == '?' || c == '"' || c == '<' || c == '>' || c == '|')
+            result += '_';
+        else
+            result += c;
+    }
+    return result;
+}
+
+void App::confirmNewProject()
+{
+    if (projectDirty_)
+    {
+        // Show confirmation dialog
+        auto options = juce::MessageBoxOptions()
+            .withIconType(juce::MessageBoxIconType::QuestionIcon)
+            .withTitle("New Project")
+            .withMessage("Current project has unsaved changes. Create new project anyway?")
+            .withButton("Yes")
+            .withButton("No");
+
+        juce::AlertWindow::showAsync(options, [this](int result) {
+            if (result == 1)  // Yes
+            {
+                newProject();
+            }
+        });
+    }
+    else
+    {
+        newProject();
+    }
 }
