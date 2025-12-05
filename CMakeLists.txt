@@ -94,7 +94,8 @@ target_compile_definitions(Vitracker PUBLIC
     JUCE_USE_CURL=0
     JUCE_DISPLAY_SPLASH_SCREEN=0
     STMLIB_X86=1
-    $<$<CXX_COMPILER_ID:MSVC>:_USE_MATH_DEFINES>)
+    $<$<CXX_COMPILER_ID:MSVC>:_USE_MATH_DEFINES>
+    $<$<CXX_COMPILER_ID:MSVC>:NOMINMAX>)
 
 target_link_libraries(Vitracker PRIVATE
     juce::juce_audio_basics
