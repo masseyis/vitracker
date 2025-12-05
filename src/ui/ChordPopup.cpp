@@ -165,8 +165,43 @@ void ChordPopup::resized()
 
 void ChordPopup::paint(juce::Graphics& g)
 {
-    // TODO: Implement in Task 7
-    (void)g;
+    // Semi-transparent overlay
+    g.fillAll(juce::Colours::black.withAlpha(0.7f));
+
+    // Calculate centered panel position
+    int panelX = (getWidth() - kPopupWidth) / 2;
+    int panelY = (getHeight() - kPopupHeight) / 2;
+    auto panelBounds = juce::Rectangle<int>(panelX, panelY, kPopupWidth, kPopupHeight);
+
+    // Panel background
+    g.setColour(panelColor);
+    g.fillRoundedRectangle(panelBounds.toFloat(), 8.0f);
+    g.setColour(borderColor);
+    g.drawRoundedRectangle(panelBounds.toFloat(), 8.0f, 2.0f);
+
+    auto contentArea = panelBounds.reduced(20);
+
+    // Title
+    g.setColour(titleColor);
+    g.setFont(juce::Font(18.0f).boldened());
+    g.drawText("Chord: " + getChordDisplayName(),
+               contentArea.removeFromTop(30), juce::Justification::centred);
+
+    contentArea.removeFromTop(10);
+
+    // Piano keyboard
+    drawPianoKeyboard(g, contentArea.removeFromTop(kPianoHeight));
+
+    contentArea.removeFromTop(15);
+
+    // Column selector
+    drawColumnSelector(g, contentArea.removeFromTop(200));
+
+    // Footer with instructions
+    g.setColour(dimColor);
+    g.setFont(12.0f);
+    g.drawText("Left/Right: columns  Up/Down: select  Space: preview  Enter: confirm  Esc: cancel",
+               contentArea, juce::Justification::centred);
 }
 
 bool ChordPopup::keyPressed(const juce::KeyPress& key)
