@@ -2,7 +2,10 @@
 
 A vim-modal music tracker with multiple synthesis engines including Mutable Instruments Plaits, VA synthesis, sampling, and beat slicing.
 
-![Build Status](https://github.com/masseyis/vitracker/actions/workflows/ci.yml/badge.svg)
+[![Build Status](https://github.com/masseyis/vitracker/actions/workflows/ci.yml/badge.svg)](https://github.com/masseyis/vitracker/actions)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+[![GitHub release](https://img.shields.io/github/v/release/masseyis/vitracker)](https://github.com/masseyis/vitracker/releases)
+[![GitHub Discussions](https://img.shields.io/github/discussions/masseyis/vitracker)](https://github.com/masseyis/vitracker/discussions)
 
 ## What is Vitracker?
 
@@ -195,7 +198,17 @@ cmake --build build
 
 The built application will be in `build/Vitracker_artefacts/Release/`.
 
+## Contributing
+
+Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+- **Bug Reports** - Use the [bug report template](https://github.com/masseyis/vitracker/issues/new?template=bug_report.md)
+- **Feature Requests** - Use the [feature request template](https://github.com/masseyis/vitracker/issues/new?template=feature_request.md)
+- **Questions & Discussion** - Join [GitHub Discussions](https://github.com/masseyis/vitracker/discussions)
+
 ## License
+
+Vitracker is licensed under the [GNU General Public License v3.0](LICENSE).
 
 This project includes code from:
 - [JUCE](https://juce.com/) - GPL v3
@@ -204,8 +217,8 @@ This project includes code from:
 
 ## Support
 
-If you find Vitracker useful, consider supporting development via [Ko-fi](https://ko-fi.com/masseyis).
+If you find Vitracker useful, consider supporting development:
 
-## Contributing
-
-Contributions are welcome! Please open an issue or pull request on GitHub.
+- [Ko-fi](https://ko-fi.com/masseyis) - Buy me a coffee
+- Star this repo on GitHub
+- Share with fellow music makers
