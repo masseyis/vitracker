@@ -125,6 +125,12 @@ App::App()
             audioEngine_.triggerNote(0, note, instrument, 1.0f);
             previewNoteCounter_ = PREVIEW_NOTE_FRAMES;  // Start countdown to release
         };
+
+        patternScreen->onChordPreview = [this](const std::vector<int>& notes, int instrument) {
+            if (audioEngine_.isPlaying()) return;
+            audioEngine_.previewChord(notes, instrument);
+            previewNoteCounter_ = PREVIEW_NOTE_FRAMES;
+        };
     }
 
     // Wire up note preview and preset manager for InstrumentScreen (now index 3)
@@ -442,13 +448,18 @@ void App::timerCallback()
             screens_[currentScreen_]->repaint();
     }
 
-    // Release preview note after timeout
+    // Release preview notes after timeout (release all tracks used for chord preview)
     if (previewNoteCounter_ > 0)
     {
         previewNoteCounter_--;
         if (previewNoteCounter_ == 0)
         {
-            audioEngine_.releaseNote(0);  // Release on track 0 (preview track)
+            // Release all tracks that could have been used for chord preview
+            // Chords can use up to 7 notes (13th chord), so release tracks 0-6
+            for (int track = 0; track < 7; ++track)
+            {
+                audioEngine_.releaseNote(track);
+            }
         }
     }
 

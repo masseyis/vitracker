@@ -8,6 +8,8 @@ namespace ui {
 PatternScreen::PatternScreen(model::Project& project, input::ModeManager& modeManager)
     : Screen(project, modeManager)
 {
+    chordPopup_ = std::make_unique<ChordPopup>();
+    addChildComponent(chordPopup_.get());
 }
 
 void PatternScreen::paint(juce::Graphics& g)
@@ -537,6 +539,13 @@ bool PatternScreen::handleEditKey(const juce::KeyPress& key)
             currentPattern_ = (currentPattern_ + 1) % numPatterns;
         repaint();
         return true;  // Consumed
+    }
+
+    // Chord popup
+    if (textChar == 'c' && !shiftHeld)
+    {
+        showChordPopup();
+        return true;
     }
 
     // +/= : Add row to pattern (extend length)
@@ -1299,6 +1308,45 @@ void PatternScreen::halvePattern()
     repaint();
 }
 
+void PatternScreen::showChordPopup()
+{
+    auto* pattern = project_.getPattern(currentPattern_);
+    if (!pattern) return;
+
+    const auto& step = pattern->getStep(cursorTrack_, cursorRow_);
+    int existingNote = step.note >= 0 ? step.note : -1;
+    int instrument = step.instrument >= 0 ? step.instrument : 0;
+
+    // Get scale lock from chain (if pattern is in a chain)
+    std::string scaleLock = getScaleLockForPattern(currentPattern_);
+
+    chordPopup_->setBounds(getLocalBounds());
+    chordPopup_->showAtCell(cursorTrack_, cursorRow_, existingNote, instrument, scaleLock);
+
+    // Set up callbacks
+    chordPopup_->onChordConfirmed = [this](const std::vector<int>& notes) {
+        auto* pat = project_.getPattern(currentPattern_);
+        if (!pat) return;
+
+        const auto& currentStep = pat->getStep(cursorTrack_, cursorRow_);
+        int instrument = currentStep.instrument >= 0 ? currentStep.instrument : 0;
+
+        // Place notes across adjacent tracks
+        for (size_t i = 0; i < notes.size() && cursorTrack_ + i < 16; ++i)
+        {
+            auto& step = pat->getStep(cursorTrack_ + static_cast<int>(i), cursorRow_);
+            step.note = static_cast<int8_t>(notes[i]);
+            step.instrument = static_cast<int16_t>(instrument);
+        }
+        repaint();
+    };
+
+    chordPopup_->onChordPreview = [this](const std::vector<int>& notes, int instrument) {
+        if (onChordPreview)
+            onChordPreview(notes, instrument);
+    };
+}
+
 std::string PatternScreen::getScaleLockForPattern(int patternIndex) const
 {
     // Find any chain that contains this pattern and return its scale lock
@@ -1422,6 +1470,7 @@ std::vector<HelpSection> PatternScreen::getHelpContent() const
         }},
         {"Note Column", {
             {"n", "Add note (copy from row above)"},
+            {"c", "Open chord entry popup"},
             {"Alt+Up/Down", "Create note / move in scale"},
             {"Shift+Up/Down", "Move note by octave"},
             {".", "Note off"},
