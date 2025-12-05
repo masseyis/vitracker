@@ -1,6 +1,19 @@
 # Vitracker User Manual
 
-A vim-modal music tracker with the Mutable Instruments Plaits synthesis engine.
+A vim-modal music tracker with multiple synthesis engines including Mutable Instruments Plaits, VA synthesis, sampling, and beat slicing.
+
+<p align="center">
+  <a href="https://github.com/masseyis/vitracker"><img src="https://img.shields.io/badge/GitHub-View%20Source-181717?logo=github" alt="GitHub" /></a>
+  <a href="https://github.com/masseyis/vitracker/releases"><img src="https://img.shields.io/github/v/release/masseyis/vitracker" alt="Download" /></a>
+  <a href="https://ko-fi.com/masseyis"><img src="https://img.shields.io/badge/Ko--fi-Support%20Development-ff5e5b?logo=ko-fi&logoColor=white" alt="Ko-fi" /></a>
+</p>
+
+<p align="center">
+  <strong><a href="https://github.com/masseyis/vitracker">Source Code</a></strong> ·
+  <strong><a href="https://github.com/masseyis/vitracker/releases">Download</a></strong> ·
+  <strong><a href="https://github.com/masseyis/vitracker/discussions">Discussions</a></strong> ·
+  <strong><a href="https://github.com/masseyis/vitracker/issues">Report Bug</a></strong>
+</p>
 
 ---
 
@@ -518,4 +531,24 @@ Next/Prev:      [ ]       Drill Down:     Enter
 
 ---
 
-*Vitracker - Made with JUCE and Mutable Instruments Plaits*
+## Contributing
+
+Vitracker is open source under the GPL v3 license. Contributions are welcome!
+
+- **[View Source on GitHub](https://github.com/masseyis/vitracker)** - Browse the code, fork, and submit PRs
+- **[Report Bugs](https://github.com/masseyis/vitracker/issues/new?template=bug_report.md)** - Help us fix issues
+- **[Request Features](https://github.com/masseyis/vitracker/issues/new?template=feature_request.md)** - Suggest new features
+- **[Join Discussions](https://github.com/masseyis/vitracker/discussions)** - Ask questions and share ideas
+- **[Contributing Guide](https://github.com/masseyis/vitracker/blob/main/CONTRIBUTING.md)** - Read the contribution guidelines
+
+---
+
+## Support Development
+
+If you find Vitracker useful, please consider supporting its development!
+
+<a href="https://ko-fi.com/masseyis"><img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="Support on Ko-fi" /></a>
+
+---
+
+*Vitracker - Made with [JUCE](https://juce.com/) and [Mutable Instruments Plaits](https://github.com/pichenettes/eurorack)*

@@ -6,6 +6,9 @@ A vim-modal music tracker with multiple synthesis engines including Mutable Inst
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![GitHub release](https://img.shields.io/github/v/release/masseyis/vitracker)](https://github.com/masseyis/vitracker/releases)
 [![GitHub Discussions](https://img.shields.io/github/discussions/masseyis/vitracker)](https://github.com/masseyis/vitracker/discussions)
+[![Ko-fi](https://img.shields.io/badge/Ko--fi-Support%20Development-ff5e5b?logo=ko-fi&logoColor=white)](https://ko-fi.com/masseyis)
+
+> **[Read the Full Documentation](https://masseyis.github.io/vitracker/)** - Complete user manual with detailed keyboard shortcuts, synthesis engine reference, and workflow guides.
 
 ## What is Vitracker?
 
@@ -215,10 +218,13 @@ This project includes code from:
 - [Mutable Instruments Plaits](https://github.com/pichenettes/eurorack) - MIT License
 - [RubberBand](https://breakfastquay.com/rubberband/) - GPL v2
 
-## Support
+## Support the Project
 
-If you find Vitracker useful, consider supporting development:
+If you find Vitracker useful, please consider supporting its development!
 
-- [Ko-fi](https://ko-fi.com/masseyis) - Buy me a coffee
+<a href="https://ko-fi.com/masseyis"><img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="Support on Ko-fi" /></a>
+
+Other ways to help:
 - Star this repo on GitHub
 - Share with fellow music makers
+- [Report bugs](https://github.com/masseyis/vitracker/issues/new?template=bug_report.md) or [suggest features](https://github.com/masseyis/vitracker/issues/new?template=feature_request.md)
