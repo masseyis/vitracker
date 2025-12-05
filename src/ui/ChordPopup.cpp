@@ -176,6 +176,86 @@ bool ChordPopup::keyPressed(const juce::KeyPress& key)
     return false;
 }
 
+void ChordPopup::drawColumnSelector(juce::Graphics& g, juce::Rectangle<int> area)
+{
+    int columnWidth = area.getWidth() / 3;
+    int padding = 10;
+    int rowHeight = 20;
+
+    const auto& degrees = isMinorScale_ ? kMinorScaleDegrees : kMajorScaleDegrees;
+    int maxInversions = static_cast<int>(selection_.notes.size());
+
+    // Column headers
+    g.setColour(dimColor);
+    g.setFont(juce::Font(13.0f).boldened());
+
+    auto col1 = area.removeFromLeft(columnWidth);
+    auto col2 = area.removeFromLeft(columnWidth);
+    auto col3 = area;
+
+    g.drawText("Degree", col1.removeFromTop(rowHeight), juce::Justification::centred);
+    g.drawText("Type", col2.removeFromTop(rowHeight), juce::Justification::centred);
+    g.drawText("Inversion", col3.removeFromTop(rowHeight), juce::Justification::centred);
+
+    g.setFont(13.0f);
+
+    // Degree column
+    for (int i = 0; i < static_cast<int>(degrees.size()); ++i)
+    {
+        auto rowArea = col1.removeFromTop(rowHeight);
+        bool isSelected = (i == selection_.degree);
+        bool isCurrentColumn = (currentColumn_ == 0);
+
+        if (isSelected)
+        {
+            g.setColour(isCurrentColumn ? selectedColor.withAlpha(0.3f) : dimColor.withAlpha(0.2f));
+            g.fillRect(rowArea.reduced(padding, 2));
+        }
+
+        g.setColour(isSelected ? highlightColor : textColor);
+        std::string display = isCurrentColumn && isSelected ? "> " + degrees[i].roman + " <" : degrees[i].roman;
+        g.drawText(display, rowArea, juce::Justification::centred);
+    }
+
+    // Type column
+    for (int i = 0; i < static_cast<int>(kChordTypes.size()); ++i)
+    {
+        auto rowArea = col2.removeFromTop(rowHeight);
+        bool isSelected = (i == selection_.typeIndex);
+        bool isCurrentColumn = (currentColumn_ == 1);
+
+        if (isSelected)
+        {
+            g.setColour(isCurrentColumn ? selectedColor.withAlpha(0.3f) : dimColor.withAlpha(0.2f));
+            g.fillRect(rowArea.reduced(padding, 2));
+        }
+
+        g.setColour(isSelected ? highlightColor : textColor);
+        std::string display = isCurrentColumn && isSelected ? "> " + kChordTypes[i].name + " <" : kChordTypes[i].name;
+        g.drawText(display, rowArea, juce::Justification::centred);
+    }
+
+    // Inversion column (dynamic based on chord size)
+    static const char* inversionNames[] = {"root", "1st", "2nd", "3rd", "4th", "5th", "6th"};
+    for (int i = 0; i < maxInversions && i < 7; ++i)
+    {
+        auto rowArea = col3.removeFromTop(rowHeight);
+        bool isSelected = (i == selection_.inversion);
+        bool isCurrentColumn = (currentColumn_ == 2);
+
+        if (isSelected)
+        {
+            g.setColour(isCurrentColumn ? selectedColor.withAlpha(0.3f) : dimColor.withAlpha(0.2f));
+            g.fillRect(rowArea.reduced(padding, 2));
+        }
+
+        g.setColour(isSelected ? highlightColor : textColor);
+        std::string display = isCurrentColumn && isSelected ?
+            "> " + std::string(inversionNames[i]) + " <" : inversionNames[i];
+        g.drawText(display, rowArea, juce::Justification::centred);
+    }
+}
+
 void ChordPopup::drawPianoKeyboard(juce::Graphics& g, juce::Rectangle<int> area)
 {
     // Draw 2 octaves of piano centered on the chord
