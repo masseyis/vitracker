@@ -2,6 +2,7 @@
 
 #include "Screen.h"
 #include "../model/Clipboard.h"
+#include "ChordPopup.h"
 
 namespace ui {
 
@@ -23,6 +24,7 @@ public:
     // For external triggering
     std::function<void(int note, int instrument)> onNotePreview;
     std::function<void(int instrumentIndex)> onJumpToInstrument;
+    std::function<void(const std::vector<int>& notes, int instrument)> onChordPreview;
 
     int getCurrentPatternIndex() const { return currentPattern_; }
     void setCurrentPattern(int index) { currentPattern_ = index; }
@@ -74,6 +76,10 @@ private:
     // Name editing
     bool editingName_ = false;
     std::string nameBuffer_;
+
+    // Chord popup
+    std::unique_ptr<ChordPopup> chordPopup_;
+    void showChordPopup();
 };
 
 } // namespace ui
