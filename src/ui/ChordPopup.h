@@ -85,7 +85,7 @@ public:
 
     void paint(juce::Graphics& g) override;
     void resized() override;
-    bool keyPressed(const juce::KeyPress& key, juce::Component* originatingComponent) override;
+    bool keyPressed(const juce::KeyPress& key) override;
     void timerCallback() override;
 
     // Show popup with context
