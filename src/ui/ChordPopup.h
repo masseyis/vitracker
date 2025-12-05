@@ -110,6 +110,8 @@ private:
 
     void drawPianoKeyboard(juce::Graphics& g, juce::Rectangle<int> area);
     void drawColumnSelector(juce::Graphics& g, juce::Rectangle<int> area);
+    int getDefaultChordTypeForDegree(int degree) const;
+    bool isChordTypeInKey(int typeIndex) const;
 
     ChordSelection selection_;
     std::string scaleLock_;
@@ -121,9 +123,9 @@ private:
     int currentColumn_ = 0;    // 0=degree, 1=type, 2=inversion
     int previewDebounce_ = 0;  // Countdown for debounced preview
 
-    static constexpr int kPopupWidth = 500;
-    static constexpr int kPopupHeight = 400;
-    static constexpr int kPianoHeight = 80;
+    static constexpr int kPopupWidth = 520;
+    static constexpr int kPopupHeight = 520;
+    static constexpr int kPianoHeight = 70;
     static constexpr int kPreviewDebounceMs = 200;
 
     // Colors (matching app theme)
@@ -138,6 +140,7 @@ private:
     static inline const juce::Colour whiteKeyColor{0xfff0f0f0};
     static inline const juce::Colour blackKeyColor{0xff2a2a2a};
     static inline const juce::Colour chordNoteColor{0xffff6666};
+    static inline const juce::Colour inKeyColor{0xff66ff66};  // Green for in-key chords
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ChordPopup)
 };

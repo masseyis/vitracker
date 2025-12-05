@@ -13,7 +13,6 @@ void ChordPopup::show(int rootNote, int instrument, const std::string& scaleLock
 {
     selection_.rootNote = rootNote;
     selection_.degree = 0;
-    selection_.typeIndex = 0;
     selection_.inversion = 0;
     instrumentIndex_ = instrument;
     scaleLock_ = scaleLock;
@@ -45,6 +44,9 @@ void ChordPopup::show(int rootNote, int instrument, const std::string& scaleLock
         scaleRoot_ = 0;
         isMinorScale_ = false;
     }
+
+    // Set default chord type based on scale degree (I = maj, ii = min, etc.)
+    selection_.typeIndex = getDefaultChordTypeForDegree(selection_.degree);
 
     updateChordNotes();
     setVisible(true);
@@ -158,6 +160,51 @@ std::string ChordPopup::getChordDisplayName() const
     return name;
 }
 
+int ChordPopup::getDefaultChordTypeForDegree(int degree) const
+{
+    const auto& degrees = isMinorScale_ ? kMinorScaleDegrees : kMajorScaleDegrees;
+    if (degree < 0 || degree >= static_cast<int>(degrees.size()))
+        return 0;
+
+    // For vii in major or ii in minor, default to dim
+    // In major: vii is diminished (degree 6)
+    // In minor: ii is diminished (degree 1)
+    if (!isMinorScale_ && degree == 6) return 2;  // dim
+    if (isMinorScale_ && degree == 1) return 2;   // dim
+
+    // Otherwise, return maj (0) for major degrees, min (1) for minor degrees
+    return degrees[degree].isMinor ? 1 : 0;
+}
+
+bool ChordPopup::isChordTypeInKey(int typeIndex) const
+{
+    const auto& degrees = isMinorScale_ ? kMinorScaleDegrees : kMajorScaleDegrees;
+    bool degreeIsMinor = degrees[selection_.degree].isMinor;
+
+    // Check for diminished degree (vii in major, ii in minor)
+    bool isDiminishedDegree = (!isMinorScale_ && selection_.degree == 6) ||
+                              (isMinorScale_ && selection_.degree == 1);
+
+    const std::string& typeName = kChordTypes[typeIndex].name;
+
+    if (isDiminishedDegree)
+    {
+        // Diminished chords and half-diminished are in key
+        return typeName == "dim" || typeName == "dim7" || typeName == "m7b5";
+    }
+    else if (degreeIsMinor)
+    {
+        // Minor chords are in key for minor degrees
+        return typeName == "min" || typeName == "min7" || typeName == "min9";
+    }
+    else
+    {
+        // Major chords are in key for major degrees
+        return typeName == "maj" || typeName == "maj7" || typeName == "maj9" ||
+               typeName == "7" || typeName == "9";  // Dominant 7ths work on V
+    }
+}
+
 void ChordPopup::resized()
 {
     // Centered in parent - handled in paint
@@ -195,7 +242,7 @@ void ChordPopup::paint(juce::Graphics& g)
     contentArea.removeFromTop(15);
 
     // Column selector
-    drawColumnSelector(g, contentArea.removeFromTop(200));
+    drawColumnSelector(g, contentArea.removeFromTop(340));
 
     // Footer with instructions
     g.setColour(dimColor);
@@ -262,6 +309,9 @@ bool ChordPopup::keyPressed(const juce::KeyPress& key)
         if (currentColumn_ == 0)
         {
             selection_.degree = std::max(0, selection_.degree - 1);
+            // Auto-set chord type to match degree (maj/min/dim)
+            selection_.typeIndex = getDefaultChordTypeForDegree(selection_.degree);
+            selection_.inversion = 0;
         }
         else if (currentColumn_ == 1)
         {
@@ -285,6 +335,9 @@ bool ChordPopup::keyPressed(const juce::KeyPress& key)
         {
             selection_.degree = std::min(static_cast<int>(degrees.size()) - 1,
                                           selection_.degree + 1);
+            // Auto-set chord type to match degree (maj/min/dim)
+            selection_.typeIndex = getDefaultChordTypeForDegree(selection_.degree);
+            selection_.inversion = 0;
         }
         else if (currentColumn_ == 1)
         {
@@ -353,6 +406,7 @@ void ChordPopup::drawColumnSelector(juce::Graphics& g, juce::Rectangle<int> area
         auto rowArea = col2.removeFromTop(rowHeight);
         bool isSelected = (i == selection_.typeIndex);
         bool isCurrentColumn = (currentColumn_ == 1);
+        bool isInKey = isChordTypeInKey(i);
 
         if (isSelected)
         {
@@ -360,7 +414,14 @@ void ChordPopup::drawColumnSelector(juce::Graphics& g, juce::Rectangle<int> area
             g.fillRect(rowArea.reduced(padding, 2));
         }
 
-        g.setColour(isSelected ? highlightColor : textColor);
+        // Use green for in-key chord types, dim for out-of-key
+        if (isSelected)
+            g.setColour(highlightColor);
+        else if (isInKey)
+            g.setColour(inKeyColor);
+        else
+            g.setColour(dimColor);
+
         std::string display = isCurrentColumn && isSelected ? "> " + kChordTypes[i].name + " <" : kChordTypes[i].name;
         g.drawText(display, rowArea, juce::Justification::centred);
     }
@@ -388,15 +449,17 @@ void ChordPopup::drawColumnSelector(juce::Graphics& g, juce::Rectangle<int> area
 
 void ChordPopup::drawPianoKeyboard(juce::Graphics& g, juce::Rectangle<int> area)
 {
-    // Draw 2 octaves of piano centered on the chord
-    int numWhiteKeys = 14; // 2 octaves
+    // Draw 3 octaves of piano centered on the chord
+    int numWhiteKeys = 21; // 3 octaves
     int whiteKeyWidth = area.getWidth() / numWhiteKeys;
     int blackKeyWidth = whiteKeyWidth * 2 / 3;
     int blackKeyHeight = area.getHeight() * 2 / 3;
 
     // Find the lowest note to display (center chord in view)
     int lowestChordNote = selection_.notes.empty() ? 60 : selection_.notes.front();
-    int startOctave = (lowestChordNote / 12) - 1;
+    int highestChordNote = selection_.notes.empty() ? 60 : selection_.notes.back();
+    int chordMidpoint = (lowestChordNote + highestChordNote) / 2;
+    int startOctave = (chordMidpoint / 12) - 1;  // Center on chord midpoint
 
     // Pattern of white keys: C D E F G A B (0, 2, 4, 5, 7, 9, 11 in octave)
     static const int whiteKeyNotes[] = {0, 2, 4, 5, 7, 9, 11};
