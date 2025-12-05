@@ -125,6 +125,12 @@ App::App()
             audioEngine_.triggerNote(0, note, instrument, 1.0f);
             previewNoteCounter_ = PREVIEW_NOTE_FRAMES;  // Start countdown to release
         };
+
+        patternScreen->onChordPreview = [this](const std::vector<int>& notes, int instrument) {
+            if (audioEngine_.isPlaying()) return;
+            audioEngine_.previewChord(notes, instrument);
+            previewNoteCounter_ = PREVIEW_NOTE_FRAMES;
+        };
     }
 
     // Wire up note preview and preset manager for InstrumentScreen (now index 3)
