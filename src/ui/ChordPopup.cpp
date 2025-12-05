@@ -176,4 +176,76 @@ bool ChordPopup::keyPressed(const juce::KeyPress& key)
     return false;
 }
 
+void ChordPopup::drawPianoKeyboard(juce::Graphics& g, juce::Rectangle<int> area)
+{
+    // Draw 2 octaves of piano centered on the chord
+    int numWhiteKeys = 14; // 2 octaves
+    int whiteKeyWidth = area.getWidth() / numWhiteKeys;
+    int blackKeyWidth = whiteKeyWidth * 2 / 3;
+    int blackKeyHeight = area.getHeight() * 2 / 3;
+
+    // Find the lowest note to display (center chord in view)
+    int lowestChordNote = selection_.notes.empty() ? 60 : selection_.notes.front();
+    int startOctave = (lowestChordNote / 12) - 1;
+
+    // Pattern of white keys: C D E F G A B (0, 2, 4, 5, 7, 9, 11 in octave)
+    static const int whiteKeyNotes[] = {0, 2, 4, 5, 7, 9, 11};
+    static const bool hasBlackKeyAfter[] = {true, true, false, true, true, true, false};
+
+    // Draw white keys first
+    int x = area.getX();
+    for (int i = 0; i < numWhiteKeys; ++i)
+    {
+        int octave = startOctave + (i / 7);
+        int noteInOctave = whiteKeyNotes[i % 7];
+        int midiNote = octave * 12 + noteInOctave;
+
+        bool isChordNote = std::find(selection_.notes.begin(), selection_.notes.end(),
+                                      midiNote) != selection_.notes.end();
+
+        juce::Rectangle<int> keyRect(x, area.getY(), whiteKeyWidth - 1, area.getHeight());
+
+        g.setColour(isChordNote ? chordNoteColor : whiteKeyColor);
+        g.fillRect(keyRect);
+        g.setColour(borderColor);
+        g.drawRect(keyRect);
+
+        // Draw note name on C keys
+        if (noteInOctave == 0)
+        {
+            g.setColour(dimColor);
+            g.setFont(10.0f);
+            g.drawText("C" + juce::String(octave), keyRect.removeFromBottom(15),
+                       juce::Justification::centred);
+        }
+
+        x += whiteKeyWidth;
+    }
+
+    // Draw black keys on top
+    x = area.getX();
+    for (int i = 0; i < numWhiteKeys; ++i)
+    {
+        int octave = startOctave + (i / 7);
+        int noteInOctave = whiteKeyNotes[i % 7];
+
+        if (hasBlackKeyAfter[i % 7])
+        {
+            int blackNote = octave * 12 + noteInOctave + 1;
+            bool isChordNote = std::find(selection_.notes.begin(), selection_.notes.end(),
+                                          blackNote) != selection_.notes.end();
+
+            int blackX = x + whiteKeyWidth - blackKeyWidth / 2;
+            juce::Rectangle<int> keyRect(blackX, area.getY(), blackKeyWidth, blackKeyHeight);
+
+            g.setColour(isChordNote ? chordNoteColor : blackKeyColor);
+            g.fillRect(keyRect);
+            g.setColour(borderColor);
+            g.drawRect(keyRect);
+        }
+
+        x += whiteKeyWidth;
+    }
+}
+
 } // namespace ui
