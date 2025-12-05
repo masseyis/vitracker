@@ -3,6 +3,7 @@
 
 #include "mod_envelope.h"
 #include <algorithm>
+#include <cmath>
 
 namespace plaits {
 
