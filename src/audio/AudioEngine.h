@@ -6,11 +6,13 @@
 #include "PlaitsInstrument.h"
 #include "SamplerInstrument.h"
 #include "SlicerInstrument.h"
+#include "VASynthInstrument.h"
 #include "../model/Project.h"
 #include "../model/Groove.h"
 #include <JuceHeader.h>
 #include <array>
 #include <mutex>
+#include <atomic>
 #include <memory>
 
 namespace audio {
@@ -29,18 +31,18 @@ public:
 
     void setProject(model::Project* project) { project_ = project; }
 
-    // Transport
+    // Transport (lock-free for UI thread safety)
     void play();
     void stop();
-    bool isPlaying() const { return playing_; }
+    bool isPlaying() const { return playing_.load(std::memory_order_relaxed); }
 
     // Play mode
     void setPlayMode(PlayMode mode) { playMode_ = mode; }
     PlayMode getPlayMode() const { return playMode_; }
 
-    int getCurrentRow() const { return currentRow_; }
-    int getCurrentPattern() const { return currentPattern_; }
-    void setCurrentPattern(int pattern) { currentPattern_ = pattern; }
+    int getCurrentRow() const { return currentRow_.load(std::memory_order_relaxed); }
+    int getCurrentPattern() const { return currentPattern_.load(std::memory_order_relaxed); }
+    void setCurrentPattern(int pattern) { currentPattern_.store(pattern, std::memory_order_relaxed); }
     int getSongRow() const { return currentSongRow_; }
     int getChainPosition() const { return currentChainPosition_; }
 
@@ -59,6 +61,7 @@ public:
     const PlaitsInstrument* getInstrumentProcessor(int index) const;
     SamplerInstrument* getSamplerProcessor(int index);
     SlicerInstrument* getSlicerProcessor(int index);
+    VASynthInstrument* getVASynthProcessor(int index);
 
 private:
     Voice* allocateVoice(int note);
@@ -83,13 +86,16 @@ private:
     std::array<std::unique_ptr<PlaitsInstrument>, NUM_INSTRUMENTS> instrumentProcessors_;
     std::array<std::unique_ptr<SamplerInstrument>, NUM_INSTRUMENTS> samplerProcessors_;
     std::array<std::unique_ptr<SlicerInstrument>, NUM_INSTRUMENTS> slicerProcessors_;
+    std::array<std::unique_ptr<VASynthInstrument>, NUM_INSTRUMENTS> vaSynthProcessors_;
 
     double sampleRate_ = 48000.0;
     int samplesPerBlock_ = 512;
 
-    bool playing_ = false;
-    int currentRow_ = 0;
-    int currentPattern_ = 0;
+    std::atomic<bool> playing_{false};
+    std::atomic<bool> pendingPlay_{false};   // Signal to start playback
+    std::atomic<bool> pendingStop_{false};   // Signal to stop playback
+    std::atomic<int> currentRow_{0};         // Atomic for lock-free UI reads
+    std::atomic<int> currentPattern_{0};     // Atomic for lock-free UI reads
     double samplesUntilNextRow_ = 0.0;
 
     // Song playback state

@@ -1,4 +1,5 @@
 #include "MixerScreen.h"
+#include "HelpPopup.h"
 
 namespace ui {
 
@@ -30,13 +31,17 @@ void MixerScreen::paint(juce::Graphics& g)
     g.drawText("MIXER", area.removeFromTop(40).reduced(20, 0), juce::Justification::centredLeft);
 
     area.removeFromTop(10);
+
+    // Reserve space for FX section at bottom
+    auto fxArea = area.removeFromBottom(kFxSectionHeight);
+
     area = area.reduced(10, 0);
 
     int numInstruments = getVisibleInstrumentCount();
     int maxVisible = getMaxVisibleStrips();
 
     // Adjust scroll offset if needed
-    if (cursorInstrument_ >= 0)
+    if (!inFxSection_ && cursorInstrument_ >= 0)
     {
         if (cursorInstrument_ < scrollOffset_)
             scrollOffset_ = cursorInstrument_;
@@ -64,7 +69,7 @@ void MixerScreen::paint(juce::Graphics& g)
         {
             int instrumentIndex = scrollOffset_ + i;
             auto stripArea = area.removeFromLeft(kStripWidth);
-            bool isSelected = (cursorInstrument_ == instrumentIndex);
+            bool isSelected = (!inFxSection_ && cursorInstrument_ == instrumentIndex);
             drawInstrumentStrip(g, stripArea, instrumentIndex, isSelected);
         }
 
@@ -82,7 +87,13 @@ void MixerScreen::paint(juce::Graphics& g)
     }
 
     // Master strip (always visible)
+    bool masterSelected = (!inFxSection_ && cursorInstrument_ < 0);
+    g.setFont(14.0f);
+    g.setColour(masterSelected ? cursorColor : fgColor);
     drawMasterStrip(g, masterArea);
+
+    // FX section
+    drawFxSection(g, fxArea);
 }
 
 void MixerScreen::drawInstrumentStrip(juce::Graphics& g, juce::Rectangle<int> area, int instrumentIndex, bool isSelected)
@@ -159,7 +170,7 @@ void MixerScreen::drawInstrumentStrip(juce::Graphics& g, juce::Rectangle<int> ar
 void MixerScreen::drawMasterStrip(juce::Graphics& g, juce::Rectangle<int> area)
 {
     auto& mixer = project_.getMixer();
-    bool isSelected = (cursorInstrument_ < 0);
+    bool isSelected = (!inFxSection_ && cursorInstrument_ < 0);
 
     g.setFont(14.0f);
     g.setColour(isSelected ? cursorColor : fgColor);
@@ -183,6 +194,278 @@ void MixerScreen::drawMasterStrip(juce::Graphics& g, juce::Rectangle<int> area)
                area.removeFromTop(20), juce::Justification::centred);
 }
 
+void MixerScreen::drawFxSection(juce::Graphics& g, juce::Rectangle<int> area)
+{
+    // Separator line
+    g.setColour(highlightColor);
+    g.drawLine(static_cast<float>(area.getX() + 10), static_cast<float>(area.getY()),
+               static_cast<float>(area.getRight() - 10), static_cast<float>(area.getY()), 1.0f);
+
+    area.removeFromTop(5);
+    area = area.reduced(10, 0);
+
+    // FX label
+    g.setFont(12.0f);
+    g.setColour(inFxSection_ ? cursorColor : fgColor.darker(0.3f));
+    g.drawText("FX", area.removeFromLeft(30), juce::Justification::centredLeft);
+
+    // Seven effect panels - calculate width accounting for 6 gaps between 7 panels
+    int totalGaps = 6 * 6;  // 6px gap between panels (slightly smaller for 7 panels)
+    int panelWidth = (area.getWidth() - totalGaps) / 7;
+    for (int fx = 0; fx < 7; ++fx)
+    {
+        auto panelArea = area.removeFromLeft(panelWidth);
+        bool isSelected = (inFxSection_ && cursorFx_ == fx);
+        int selectedParam = isSelected ? cursorFxParam_ : -1;
+        drawFxPanel(g, panelArea, fx, isSelected, selectedParam);
+        if (fx < 6)  // Only add gap between panels, not after the last one
+            area.removeFromLeft(6);
+    }
+}
+
+void MixerScreen::drawFxPanel(juce::Graphics& g, juce::Rectangle<int> area, int fxIndex, bool isSelected, int selectedParam)
+{
+    auto& mixer = project_.getMixer();
+
+    // Panel background
+    if (isSelected)
+    {
+        g.setColour(highlightColor.brighter(0.1f));
+        g.fillRoundedRectangle(area.toFloat(), 4.0f);
+    }
+
+    // Handle Sidechain panel (index 4) specially
+    if (fxIndex == 4)
+    {
+        // Effect name
+        g.setFont(11.0f);
+        g.setColour(isSelected ? cursorColor : fgColor);
+        g.drawText("SCHAIN", area.removeFromTop(16), juce::Justification::centred);
+
+        area.removeFromTop(2);
+
+        // Source instrument selector (param 0)
+        auto sourceArea = area.removeFromTop(22);
+        g.setFont(10.0f);
+        g.setColour(selectedParam == 0 ? cursorColor : fgColor.darker(0.2f));
+        g.drawText("Src", sourceArea.removeFromLeft(22), juce::Justification::centredLeft);
+
+        // Draw source name box
+        auto sourceBox = sourceArea.reduced(2, 3);
+        g.setColour(highlightColor);
+        g.fillRect(sourceBox);
+        g.setColour(selectedParam == 0 ? cursorColor : juce::Colour(0xff4a9090));
+        g.drawRect(sourceBox, 1);
+
+        // Get source instrument name
+        juce::String sourceName = "None";
+        if (mixer.sidechainSource >= 0)
+        {
+            auto* inst = project_.getInstrument(mixer.sidechainSource);
+            if (inst)
+                sourceName = juce::String(mixer.sidechainSource + 1) + ":" + juce::String(inst->getName()).substring(0, 3);
+            else
+                sourceName = juce::String(mixer.sidechainSource + 1);
+        }
+        g.setColour(fgColor);
+        g.setFont(9.0f);
+        g.drawText(sourceName, sourceBox, juce::Justification::centred);
+
+        area.removeFromTop(2);
+
+        // Ratio parameter (param 1) - how much to duck
+        auto ratioArea = area.removeFromTop(22);
+        g.setFont(10.0f);
+        g.setColour(selectedParam == 1 ? cursorColor : fgColor.darker(0.2f));
+        g.drawText("Amt", ratioArea.removeFromLeft(22), juce::Justification::centredLeft);
+
+        // Draw mini slider for ratio
+        auto sliderArea = ratioArea.reduced(2, 4);
+        g.setColour(highlightColor);
+        g.fillRect(sliderArea);
+        int fill = static_cast<int>(sliderArea.getWidth() * mixer.sidechainRatio);
+        g.setColour(selectedParam == 1 ? cursorColor : juce::Colour(0xff4a9090));
+        g.fillRect(sliderArea.getX(), sliderArea.getY(), fill, sliderArea.getHeight());
+        g.setColour(fgColor);
+        g.setFont(9.0f);
+        g.drawText(juce::String(static_cast<int>(mixer.sidechainRatio * 100)), sliderArea, juce::Justification::centred);
+
+        return;
+    }
+
+    // Handle DJ Filter panel (index 5) - bipolar slider
+    if (fxIndex == 5)
+    {
+        g.setFont(11.0f);
+        g.setColour(isSelected ? cursorColor : fgColor);
+        g.drawText("FILTER", area.removeFromTop(16), juce::Justification::centred);
+
+        area.removeFromTop(2);
+
+        // Position parameter (param 0) - bipolar: -1 LP, 0 bypass, +1 HP
+        auto posArea = area.removeFromTop(22);
+        g.setFont(10.0f);
+        g.setColour(selectedParam == 0 ? cursorColor : fgColor.darker(0.2f));
+
+        // Show LP/HP indicator based on position
+        juce::String typeLabel = mixer.djFilterPosition < -0.1f ? "LP" :
+                                 mixer.djFilterPosition > 0.1f ? "HP" : "--";
+        g.drawText(typeLabel, posArea.removeFromLeft(18), juce::Justification::centredLeft);
+
+        // Draw bipolar slider (center = bypass)
+        auto sliderArea = posArea.reduced(2, 4);
+        g.setColour(highlightColor);
+        g.fillRect(sliderArea);
+
+        // Draw center line
+        int centerX = sliderArea.getCentreX();
+        g.setColour(fgColor.darker(0.5f));
+        g.drawVerticalLine(centerX, static_cast<float>(sliderArea.getY()), static_cast<float>(sliderArea.getBottom()));
+
+        // Draw fill from center
+        g.setColour(selectedParam == 0 ? cursorColor : juce::Colour(0xff4a9090));
+        if (mixer.djFilterPosition < 0) {
+            int fillWidth = static_cast<int>(sliderArea.getWidth() * 0.5f * (-mixer.djFilterPosition));
+            g.fillRect(centerX - fillWidth, sliderArea.getY(), fillWidth, sliderArea.getHeight());
+        } else if (mixer.djFilterPosition > 0) {
+            int fillWidth = static_cast<int>(sliderArea.getWidth() * 0.5f * mixer.djFilterPosition);
+            g.fillRect(centerX, sliderArea.getY(), fillWidth, sliderArea.getHeight());
+        }
+
+        g.setColour(fgColor);
+        g.setFont(9.0f);
+        g.drawText(juce::String(static_cast<int>(mixer.djFilterPosition * 100)), sliderArea, juce::Justification::centred);
+
+        area.removeFromTop(2);
+
+        // Show "Master" label to indicate this affects master bus
+        auto labelArea = area.removeFromTop(22);
+        g.setFont(9.0f);
+        g.setColour(fgColor.darker(0.4f));
+        g.drawText("Master Bus", labelArea, juce::Justification::centred);
+
+        return;
+    }
+
+    // Handle Limiter panel (index 6)
+    if (fxIndex == 6)
+    {
+        g.setFont(11.0f);
+        g.setColour(isSelected ? cursorColor : fgColor);
+        g.drawText("LIMIT", area.removeFromTop(16), juce::Justification::centred);
+
+        area.removeFromTop(2);
+
+        // Threshold parameter (param 0)
+        auto threshArea = area.removeFromTop(22);
+        g.setFont(10.0f);
+        g.setColour(selectedParam == 0 ? cursorColor : fgColor.darker(0.2f));
+        g.drawText("Thr", threshArea.removeFromLeft(20), juce::Justification::centredLeft);
+
+        auto slider1Area = threshArea.reduced(2, 4);
+        g.setColour(highlightColor);
+        g.fillRect(slider1Area);
+        int fill1 = static_cast<int>(slider1Area.getWidth() * mixer.limiterThreshold);
+        g.setColour(selectedParam == 0 ? cursorColor : juce::Colour(0xff4a9090));
+        g.fillRect(slider1Area.getX(), slider1Area.getY(), fill1, slider1Area.getHeight());
+        g.setColour(fgColor);
+        g.setFont(9.0f);
+        g.drawText(juce::String(static_cast<int>(mixer.limiterThreshold * 100)), slider1Area, juce::Justification::centred);
+
+        area.removeFromTop(2);
+
+        // Release parameter (param 1)
+        auto relArea = area.removeFromTop(22);
+        g.setFont(10.0f);
+        g.setColour(selectedParam == 1 ? cursorColor : fgColor.darker(0.2f));
+        g.drawText("Rel", relArea.removeFromLeft(20), juce::Justification::centredLeft);
+
+        auto slider2Area = relArea.reduced(2, 4);
+        g.setColour(highlightColor);
+        g.fillRect(slider2Area);
+        int fill2 = static_cast<int>(slider2Area.getWidth() * mixer.limiterRelease);
+        g.setColour(selectedParam == 1 ? cursorColor : juce::Colour(0xff4a9090));
+        g.fillRect(slider2Area.getX(), slider2Area.getY(), fill2, slider2Area.getHeight());
+        g.setColour(fgColor);
+        g.setFont(9.0f);
+        g.drawText(juce::String(static_cast<int>(mixer.limiterRelease * 100)), slider2Area, juce::Justification::centred);
+
+        return;
+    }
+
+    // Standard effect panels (0-3)
+    const char* fxNames[] = {"REVERB", "DELAY", "CHORUS", "DRIVE"};
+    const char* param1Names[] = {"Size", "Time", "Rate", "Gain"};
+    const char* param2Names[] = {"Damp", "Fdbk", "Depth", "Tone"};
+
+    float param1Values[] = {mixer.reverbSize, mixer.delayTime, mixer.chorusRate, mixer.driveGain};
+    float param2Values[] = {mixer.reverbDamping, mixer.delayFeedback, mixer.chorusDepth, mixer.driveTone};
+
+    // Effect name
+    g.setFont(11.0f);
+    g.setColour(isSelected ? cursorColor : fgColor);
+    g.drawText(fxNames[fxIndex], area.removeFromTop(16), juce::Justification::centred);
+
+    area.removeFromTop(2);
+
+    // Parameter 1
+    auto param1Area = area.removeFromTop(22);
+    g.setFont(10.0f);
+    g.setColour(selectedParam == 0 ? cursorColor : fgColor.darker(0.2f));
+    g.drawText(param1Names[fxIndex], param1Area.removeFromLeft(35), juce::Justification::centredLeft);
+
+    // Value display for param1
+    juce::String val1Str;
+    if (fxIndex == 1)  // Delay time shows note value
+        val1Str = getDelayTimeLabel(param1Values[fxIndex]);
+    else
+        val1Str = juce::String(static_cast<int>(param1Values[fxIndex] * 100));
+
+    // Draw mini slider
+    auto slider1Area = param1Area.reduced(2, 4);
+    g.setColour(highlightColor);
+    g.fillRect(slider1Area);
+    int fill1 = static_cast<int>(slider1Area.getWidth() * param1Values[fxIndex]);
+    g.setColour(selectedParam == 0 ? cursorColor : juce::Colour(0xff4a9090));
+    g.fillRect(slider1Area.getX(), slider1Area.getY(), fill1, slider1Area.getHeight());
+    g.setColour(fgColor);
+    g.setFont(9.0f);
+    g.drawText(val1Str, slider1Area, juce::Justification::centred);
+
+    area.removeFromTop(2);
+
+    // Parameter 2
+    auto param2Area = area.removeFromTop(22);
+    g.setFont(10.0f);
+    g.setColour(selectedParam == 1 ? cursorColor : fgColor.darker(0.2f));
+    g.drawText(param2Names[fxIndex], param2Area.removeFromLeft(35), juce::Justification::centredLeft);
+
+    juce::String val2Str = juce::String(static_cast<int>(param2Values[fxIndex] * 100));
+
+    // Draw mini slider
+    auto slider2Area = param2Area.reduced(2, 4);
+    g.setColour(highlightColor);
+    g.fillRect(slider2Area);
+    int fill2 = static_cast<int>(slider2Area.getWidth() * param2Values[fxIndex]);
+    g.setColour(selectedParam == 1 ? cursorColor : juce::Colour(0xff4a9090));
+    g.fillRect(slider2Area.getX(), slider2Area.getY(), fill2, slider2Area.getHeight());
+    g.setColour(fgColor);
+    g.setFont(9.0f);
+    g.drawText(val2Str, slider2Area, juce::Justification::centred);
+}
+
+juce::String MixerScreen::getDelayTimeLabel(float time) const
+{
+    // Map time value to note division label
+    if (time < 0.15f) return "1/16";
+    if (time < 0.3f) return "1/8";
+    if (time < 0.45f) return "D1/8";
+    if (time < 0.6f) return "1/4";
+    if (time < 0.75f) return "D1/4";
+    if (time < 0.9f) return "1/2";
+    return "D1/2";
+}
+
 void MixerScreen::resized()
 {
 }
@@ -191,34 +474,74 @@ void MixerScreen::navigate(int dx, int dy)
 {
     int numInstruments = getVisibleInstrumentCount();
 
-    if (dx != 0)
+    if (inFxSection_)
     {
-        if (cursorInstrument_ < 0)
+        // Navigation within FX section
+        if (dx != 0)
         {
-            // On master, can only go left to instruments
-            if (dx < 0 && numInstruments > 0)
-                cursorInstrument_ = numInstruments - 1;
+            cursorFx_ = std::clamp(cursorFx_ + dx, 0, 6);
         }
-        else
+        if (dy != 0)
         {
-            cursorInstrument_ += dx;
-            if (cursorInstrument_ < 0)
-                cursorInstrument_ = 0;
-            else if (cursorInstrument_ >= numInstruments)
-                cursorInstrument_ = -1;  // Go to master
+            int newParam = cursorFxParam_ + dy;
+            if (newParam < 0)
+            {
+                // Move up out of FX section to mixer strips
+                inFxSection_ = false;
+                cursorRow_ = 3;  // Go to bottom row of strips
+            }
+            else
+            {
+                cursorFxParam_ = std::clamp(newParam, 0, 1);
+            }
         }
     }
-
-    if (dy != 0)
+    else
     {
-        if (cursorInstrument_ < 0)
+        // Navigation in mixer strips
+        if (dx != 0)
         {
-            // Master only has volume (row 0)
-            cursorRow_ = 0;
+            if (cursorInstrument_ < 0)
+            {
+                // On master, can only go left to instruments
+                if (dx < 0 && numInstruments > 0)
+                    cursorInstrument_ = numInstruments - 1;
+            }
+            else
+            {
+                cursorInstrument_ += dx;
+                if (cursorInstrument_ < 0)
+                    cursorInstrument_ = 0;
+                else if (cursorInstrument_ >= numInstruments)
+                    cursorInstrument_ = -1;  // Go to master
+            }
         }
-        else
+
+        if (dy != 0)
         {
-            cursorRow_ = std::clamp(cursorRow_ + dy, 0, 3);
+            if (cursorInstrument_ < 0)
+            {
+                // Master only has volume (row 0), down goes to FX
+                if (dy > 0)
+                {
+                    inFxSection_ = true;
+                    cursorFxParam_ = 0;
+                }
+            }
+            else
+            {
+                int newRow = cursorRow_ + dy;
+                if (newRow > 3)
+                {
+                    // Move down to FX section
+                    inFxSection_ = true;
+                    cursorFxParam_ = 0;
+                }
+                else
+                {
+                    cursorRow_ = std::clamp(newRow, 0, 3);
+                }
+            }
         }
     }
 
@@ -235,20 +558,181 @@ bool MixerScreen::handleEditKey(const juce::KeyPress& key)
     auto keyCode = key.getKeyCode();
     auto textChar = key.getTextCharacter();
     bool shiftHeld = key.getModifiers().isShiftDown();
+    bool altHeld = key.getModifiers().isAltDown();
 
-    // Left/Right navigate between instruments
+    // Handle FX section with Alt+Left/Right for value adjustment
+    if (inFxSection_)
+    {
+        // Alt+Left/Right adjusts values (horizontal sliders)
+        if (altHeld && (keyCode == juce::KeyPress::leftKey || keyCode == juce::KeyPress::rightKey))
+        {
+            auto& mixer = project_.getMixer();
+
+            // Sidechain source is special - increment/decrement instrument index
+            if (cursorFx_ == 4 && cursorFxParam_ == 0)
+            {
+                int numInst = project_.getInstrumentCount();
+                int delta = (keyCode == juce::KeyPress::rightKey) ? 1 : -1;
+                mixer.sidechainSource = std::clamp(mixer.sidechainSource + delta, -1, numInst - 1);
+                repaint();
+                return false;
+            }
+
+            float delta = shiftHeld ? 0.01f : 0.05f;
+            if (keyCode == juce::KeyPress::leftKey)
+                delta = -delta;
+
+            // Adjust the selected FX parameter
+            switch (cursorFx_)
+            {
+                case 0:  // Reverb
+                    if (cursorFxParam_ == 0)
+                        mixer.reverbSize = std::clamp(mixer.reverbSize + delta, 0.0f, 1.0f);
+                    else
+                        mixer.reverbDamping = std::clamp(mixer.reverbDamping + delta, 0.0f, 1.0f);
+                    break;
+                case 1:  // Delay
+                    if (cursorFxParam_ == 0)
+                        mixer.delayTime = std::clamp(mixer.delayTime + delta, 0.0f, 1.0f);
+                    else
+                        mixer.delayFeedback = std::clamp(mixer.delayFeedback + delta, 0.0f, 0.95f);
+                    break;
+                case 2:  // Chorus
+                    if (cursorFxParam_ == 0)
+                        mixer.chorusRate = std::clamp(mixer.chorusRate + delta, 0.0f, 1.0f);
+                    else
+                        mixer.chorusDepth = std::clamp(mixer.chorusDepth + delta, 0.0f, 1.0f);
+                    break;
+                case 3:  // Drive
+                    if (cursorFxParam_ == 0)
+                        mixer.driveGain = std::clamp(mixer.driveGain + delta, 0.0f, 1.0f);
+                    else
+                        mixer.driveTone = std::clamp(mixer.driveTone + delta, 0.0f, 1.0f);
+                    break;
+                case 4:  // Sidechain - only ratio uses slider (param 1)
+                    if (cursorFxParam_ == 1)
+                        mixer.sidechainRatio = std::clamp(mixer.sidechainRatio + delta, 0.0f, 1.0f);
+                    break;
+                case 5:  // DJ Filter - bipolar position (single param)
+                    mixer.djFilterPosition = std::clamp(mixer.djFilterPosition + delta, -1.0f, 1.0f);
+                    break;
+                case 6:  // Limiter
+                    if (cursorFxParam_ == 0)
+                        mixer.limiterThreshold = std::clamp(mixer.limiterThreshold + delta, 0.1f, 1.0f);
+                    else
+                        mixer.limiterRelease = std::clamp(mixer.limiterRelease + delta, 0.01f, 1.0f);
+                    break;
+            }
+            repaint();
+            return false;
+        }
+
+        // +/- also adjusts values
+        if (textChar == '+' || textChar == '=' || textChar == '-')
+        {
+            auto& mixer = project_.getMixer();
+
+            // Sidechain source is special - increment/decrement instrument index
+            if (cursorFx_ == 4 && cursorFxParam_ == 0)
+            {
+                int numInst = project_.getInstrumentCount();
+                int delta = (textChar == '-') ? -1 : 1;
+                mixer.sidechainSource = std::clamp(mixer.sidechainSource + delta, -1, numInst - 1);
+                repaint();
+                return false;
+            }
+
+            float delta = shiftHeld ? 0.01f : 0.05f;
+            if (textChar == '-')
+                delta = -delta;
+
+            switch (cursorFx_)
+            {
+                case 0:  // Reverb
+                    if (cursorFxParam_ == 0)
+                        mixer.reverbSize = std::clamp(mixer.reverbSize + delta, 0.0f, 1.0f);
+                    else
+                        mixer.reverbDamping = std::clamp(mixer.reverbDamping + delta, 0.0f, 1.0f);
+                    break;
+                case 1:  // Delay
+                    if (cursorFxParam_ == 0)
+                        mixer.delayTime = std::clamp(mixer.delayTime + delta, 0.0f, 1.0f);
+                    else
+                        mixer.delayFeedback = std::clamp(mixer.delayFeedback + delta, 0.0f, 0.95f);
+                    break;
+                case 2:  // Chorus
+                    if (cursorFxParam_ == 0)
+                        mixer.chorusRate = std::clamp(mixer.chorusRate + delta, 0.0f, 1.0f);
+                    else
+                        mixer.chorusDepth = std::clamp(mixer.chorusDepth + delta, 0.0f, 1.0f);
+                    break;
+                case 3:  // Drive
+                    if (cursorFxParam_ == 0)
+                        mixer.driveGain = std::clamp(mixer.driveGain + delta, 0.0f, 1.0f);
+                    else
+                        mixer.driveTone = std::clamp(mixer.driveTone + delta, 0.0f, 1.0f);
+                    break;
+                case 4:  // Sidechain - only ratio uses slider (param 1)
+                    if (cursorFxParam_ == 1)
+                        mixer.sidechainRatio = std::clamp(mixer.sidechainRatio + delta, 0.0f, 1.0f);
+                    break;
+                case 5:  // DJ Filter - bipolar position (single param)
+                    mixer.djFilterPosition = std::clamp(mixer.djFilterPosition + delta, -1.0f, 1.0f);
+                    break;
+                case 6:  // Limiter
+                    if (cursorFxParam_ == 0)
+                        mixer.limiterThreshold = std::clamp(mixer.limiterThreshold + delta, 0.1f, 1.0f);
+                    else
+                        mixer.limiterRelease = std::clamp(mixer.limiterRelease + delta, 0.01f, 1.0f);
+                    break;
+            }
+            repaint();
+            return false;
+        }
+
+        // Regular Left/Right navigates between FX panels
+        if (keyCode == juce::KeyPress::leftKey)
+        {
+            navigate(-1, 0);
+            return true;  // Consumed - don't let KeyHandler also navigate
+        }
+        if (keyCode == juce::KeyPress::rightKey)
+        {
+            navigate(1, 0);
+            return true;  // Consumed - don't let KeyHandler also navigate
+        }
+
+        // Up/Down navigates between parameters or exits FX section
+        if (keyCode == juce::KeyPress::upKey || keyCode == juce::KeyPress::downKey)
+        {
+            navigate(0, keyCode == juce::KeyPress::downKey ? 1 : -1);
+            return true;  // Consumed - don't let KeyHandler also navigate
+        }
+
+        // Tab cycles between param 0 and param 1
+        if (keyCode == juce::KeyPress::tabKey)
+        {
+            cursorFxParam_ = (cursorFxParam_ + 1) % 2;
+            repaint();
+            return false;
+        }
+
+        return false;
+    }
+
+    // Left/Right navigate between instruments/master
     if (keyCode == juce::KeyPress::leftKey)
     {
         navigate(-1, 0);
-        return false;
+        return true;  // Consumed - prevent KeyHandler double navigation
     }
     if (keyCode == juce::KeyPress::rightKey)
     {
         navigate(1, 0);
-        return false;
+        return true;  // Consumed - prevent KeyHandler double navigation
     }
 
-    // Tab cycles through parameters (vol -> pan -> mute -> solo)
+    // Tab cycles through parameters
     if (keyCode == juce::KeyPress::tabKey)
     {
         if (cursorInstrument_ < 0)
@@ -368,6 +852,45 @@ bool MixerScreen::handleEditKey(const juce::KeyPress& key)
 
     repaint();
     return false;
+}
+
+std::vector<HelpSection> MixerScreen::getHelpContent() const
+{
+    return {
+        {"Channel Navigation", {
+            {"Left/Right", "Select instrument channel"},
+            {"Up/Down", "Move between Vol/Pan/Mute/Solo"},
+            {"Down (from Solo)", "Enter FX section"},
+            {"Tab", "Cycle through rows"},
+        }},
+        {"Volume & Pan Rows", {
+            {"Up/Down", "Adjust value"},
+            {"+/-", "Adjust value"},
+            {"Shift", "Fine adjustment (hold)"},
+        }},
+        {"Mute & Solo Rows", {
+            {"Up/Down", "Toggle"},
+            {"m", "Toggle mute"},
+            {"s", "Toggle solo"},
+            {"Enter/Space", "Toggle"},
+        }},
+        {"FX Section", {
+            {"Left/Right", "Select effect"},
+            {"Up/Down", "Select parameter / exit to strips"},
+            {"Alt+L/R", "Adjust FX parameter"},
+            {"+/-", "Adjust FX parameter"},
+            {"Tab", "Switch param 1 / param 2"},
+        }},
+        {"Master Effects", {
+            {"Reverb", "Size, Damping"},
+            {"Delay", "Time, Feedback"},
+            {"Chorus", "Rate, Depth"},
+            {"Drive", "Gain, Tone"},
+            {"Sidechain", "Source, Amount"},
+            {"Filter", "LP/HP position"},
+            {"Limiter", "Threshold, Release"},
+        }},
+    };
 }
 
 } // namespace ui

@@ -54,6 +54,25 @@ int Song::getLength() const
     return maxLen;
 }
 
+void Song::setLength(int length)
+{
+    if (length < 1) length = 1;
+
+    for (auto& track : tracks_)
+    {
+        if (static_cast<int>(track.size()) < length)
+        {
+            // Extend with empty cells
+            track.resize(static_cast<size_t>(length), -1);
+        }
+        else if (static_cast<int>(track.size()) > length)
+        {
+            // Truncate
+            track.resize(static_cast<size_t>(length));
+        }
+    }
+}
+
 void Song::clear()
 {
     for (auto& track : tracks_)

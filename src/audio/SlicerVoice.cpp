@@ -4,17 +4,10 @@
 
 namespace audio {
 
-SlicerVoice::SlicerVoice() {
-    ampEnvelope_.setSampleRate(48000.0f);
-    filterEnvelope_.setSampleRate(48000.0f);
-}
+SlicerVoice::SlicerVoice() = default;
 
 void SlicerVoice::setSampleRate(double sampleRate) {
     sampleRate_ = sampleRate;
-    ampEnvelope_.setSampleRate(static_cast<float>(sampleRate));
-    filterEnvelope_.setSampleRate(static_cast<float>(sampleRate));
-    filterL_.Init(static_cast<float>(sampleRate));
-    filterR_.Init(static_cast<float>(sampleRate));
 }
 
 void SlicerVoice::setSampleData(const float* leftData, const float* rightData, size_t numSamples, int originalSampleRate) {
@@ -30,15 +23,24 @@ void SlicerVoice::trigger(int sliceIndex, float velocity, const model::SlicerPar
     if (!sampleDataL_ || sampleLength_ == 0) return;
 
     const auto& slices = params.slicePoints;
+
+    // Calculate scale factor if using stretched buffer
+    // Slice points are stored in original sample coordinates
+    double scaleFactor = 1.0;
+    if (params.sample.numSamples > 0 && sampleLength_ != params.sample.numSamples) {
+        scaleFactor = static_cast<double>(sampleLength_) / static_cast<double>(params.sample.numSamples);
+    }
+
     if (slices.empty()) {
         // No slices defined - play whole sample
         sliceStart_ = 0;
         sliceEnd_ = sampleLength_;
     } else if (sliceIndex >= 0 && sliceIndex < static_cast<int>(slices.size())) {
-        sliceStart_ = slices[static_cast<size_t>(sliceIndex)];
+        // Scale slice positions to match the buffer being played
+        sliceStart_ = static_cast<size_t>(slices[static_cast<size_t>(sliceIndex)] * scaleFactor);
         // End is either next slice or end of sample
         if (sliceIndex + 1 < static_cast<int>(slices.size())) {
-            sliceEnd_ = slices[static_cast<size_t>(sliceIndex + 1)];
+            sliceEnd_ = static_cast<size_t>(slices[static_cast<size_t>(sliceIndex + 1)] * scaleFactor);
         } else {
             sliceEnd_ = sampleLength_;
         }
@@ -51,31 +53,12 @@ void SlicerVoice::trigger(int sliceIndex, float velocity, const model::SlicerPar
     velocity_ = velocity;
     active_ = true;
     playPosition_ = static_cast<double>(sliceStart_);
-
-    // Set up envelopes
-    ampEnvelope_.setAttack(params.ampEnvelope.attack);
-    ampEnvelope_.setDecay(params.ampEnvelope.decay);
-    ampEnvelope_.setSustain(params.ampEnvelope.sustain);
-    ampEnvelope_.setRelease(params.ampEnvelope.release);
-    ampEnvelope_.trigger();
-
-    filterEnvelope_.setAttack(params.filterEnvelope.attack);
-    filterEnvelope_.setDecay(params.filterEnvelope.decay);
-    filterEnvelope_.setSustain(params.filterEnvelope.sustain);
-    filterEnvelope_.setRelease(params.filterEnvelope.release);
-    filterEnvelope_.trigger();
-
-    // Store filter params
-    baseCutoff_ = params.filter.cutoff;
-    filterEnvAmount_ = params.filterEnvAmount;
-
-    filterL_.SetResonance(params.filter.resonance);
-    filterR_.SetResonance(params.filter.resonance);
 }
 
 void SlicerVoice::release() {
-    ampEnvelope_.release();
-    filterEnvelope_.release();
+    // Slicer voices are one-shot - they play to the end of the slice
+    // Don't trigger envelope release, let the slice play out naturally
+    // The voice will deactivate when it reaches sliceEnd_
 }
 
 void SlicerVoice::render(float* leftOut, float* rightOut, int numSamples) {
@@ -110,32 +93,12 @@ void SlicerVoice::render(float* leftOut, float* rightOut, int numSamples) {
             sampleR = sampleL;  // Mono: duplicate left to right
         }
 
-        // Process envelopes
-        float ampEnv = ampEnvelope_.process();
-        float filterEnv = filterEnvelope_.process();
+        // Apply velocity
+        leftOut[i] = sampleL * velocity_;
+        rightOut[i] = sampleR * velocity_;
 
-        // Apply filter with envelope modulation
-        float cutoff = baseCutoff_ + filterEnvAmount_ * filterEnv;
-        cutoff = std::clamp(cutoff, 0.0f, 1.0f);
-        // Convert normalized cutoff (0-1) to Hz (20-20000) using exponential mapping
-        float cutoffHz = 20.0f * std::pow(1000.0f, cutoff);
-        filterL_.SetCutoff(cutoffHz);
-        filterR_.SetCutoff(cutoffHz);
-
-        sampleL = filterL_.Process(sampleL);
-        sampleR = filterR_.Process(sampleR);
-
-        // Apply amplitude envelope and velocity
-        leftOut[i] = sampleL * ampEnv * velocity_;
-        rightOut[i] = sampleR * ampEnv * velocity_;
-
-        // Advance position (sample rate conversion only, no pitch shift)
-        playPosition_ += playbackRate_;
-
-        // Check if envelope finished
-        if (!ampEnvelope_.isActive()) {
-            active_ = false;
-        }
+        // Advance position (sample rate conversion + speed adjustment)
+        playPosition_ += playbackRate_ * static_cast<double>(speed_);
     }
 }
 

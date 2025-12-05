@@ -93,6 +93,17 @@ App::App()
         addAndMakeVisible(screens_[currentScreen_].get());
     }
 
+    // Initialize help popup (hidden by default, always on top)
+    addChildComponent(helpPopup_);
+
+    // Initialize Tip Me button
+    tipMeButton_.setColour(juce::TextButton::buttonColourId, juce::Colour(0xffff5e5b));
+    tipMeButton_.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
+    tipMeButton_.onClick = []() {
+        juce::URL("https://ko-fi.com/masseyis").launchInDefaultBrowser();
+    };
+    addAndMakeVisible(tipMeButton_);
+
     // Edit mode key forwarding - use virtual handleEdit() on all screens
     keyHandler_->onEditKey = [this](const juce::KeyPress& key) -> bool {
         if (screens_[currentScreen_])
@@ -106,6 +117,8 @@ App::App()
     if (auto* patternScreen = dynamic_cast<ui::PatternScreen*>(screens_[3].get()))
     {
         patternScreen->onNotePreview = [this](int note, int instrument) {
+            // Don't preview while track is playing - it conflicts with playback
+            if (audioEngine_.isPlaying()) return;
             audioEngine_.triggerNote(0, note, instrument, 1.0f);
             previewNoteCounter_ = PREVIEW_NOTE_FRAMES;  // Start countdown to release
         };
@@ -115,6 +128,8 @@ App::App()
     if (auto* instrumentScreen = dynamic_cast<ui::InstrumentScreen*>(screens_[4].get()))
     {
         instrumentScreen->onNotePreview = [this](int note, int instrument) {
+            // Don't preview while track is playing - it conflicts with playback
+            if (audioEngine_.isPlaying()) return;
             audioEngine_.triggerNote(0, note, instrument, 1.0f);
             previewNoteCounter_ = PREVIEW_NOTE_FRAMES;  // Start countdown to release
         };
@@ -191,8 +206,14 @@ App::App()
         }
     };
 
-    // Mode change callback
-    modeManager_.onModeChanged = [this](input::Mode) { repaint(); };
+    // Mode change callback - clear selection when leaving Visual mode
+    modeManager_.onModeChanged = [this](input::Mode newMode) {
+        if (newMode != input::Mode::Visual) {
+            if (auto* ps = dynamic_cast<ui::PatternScreen*>(screens_[currentScreen_].get()))
+                ps->clearSelection();
+        }
+        repaint();
+    };
 
     // File operations
     keyHandler_->onSave = [this](const std::string& filename) { saveProject(filename); };
@@ -384,7 +405,8 @@ App::App()
     };
 
     // Start timer for UI updates (playhead position)
-    startTimerHz(30);
+    // 10fps is sufficient for playhead display and reduces CPU load
+    startTimerHz(10);
 }
 
 App::~App()
@@ -399,7 +421,10 @@ void App::timerCallback()
 {
     if (audioEngine_.isPlaying())
     {
-        repaint();  // Update playhead display
+        // Only repaint the active screen, not the entire app
+        // This dramatically reduces CPU usage during playback
+        if (screens_[currentScreen_])
+            screens_[currentScreen_]->repaint();
     }
 
     // Release preview note after timeout
@@ -464,13 +489,19 @@ void App::paint(juce::Graphics& g)
 void App::resized()
 {
     auto area = getLocalBounds();
-    area.removeFromBottom(STATUS_BAR_HEIGHT);
+    auto statusBarArea = area.removeFromBottom(STATUS_BAR_HEIGHT);
 
     for (auto& screen : screens_)
     {
         if (screen)
             screen->setBounds(area);
     }
+
+    // Help popup covers the whole window
+    helpPopup_.setBounds(getLocalBounds());
+
+    // Position Tip Me button in status bar (right side)
+    tipMeButton_.setBounds(statusBarArea.removeFromRight(70).reduced(4, 3));
 }
 
 void App::visibilityChanged()
@@ -492,6 +523,25 @@ void App::visibilityChanged()
 bool App::keyPressed(const juce::KeyPress& key, juce::Component* originatingComponent)
 {
     juce::ignoreUnused(originatingComponent);
+
+    // Handle help popup toggle
+    if (key.getTextCharacter() == '?')
+    {
+        toggleHelp();
+        return true;
+    }
+
+    // If help is showing, Escape closes it
+    if (helpPopup_.isShowing())
+    {
+        if (key.getKeyCode() == juce::KeyPress::escapeKey)
+        {
+            hideHelp();
+            return true;
+        }
+        // Block other keys while help is showing
+        return true;
+    }
 
     bool handled = keyHandler_->handleKey(key);
     if (handled) repaint();
@@ -543,6 +593,9 @@ void App::drawStatusBar(juce::Graphics& g, juce::Rectangle<int> area)
         juce::String("PLAYING Row ") + juce::String(audioEngine_.getCurrentRow()) :
         "STOPPED";
     g.drawText(transportText, area.removeFromLeft(150), juce::Justification::centred, true);
+
+    // Reserve space for Tip Me button (right side)
+    area.removeFromRight(75);
 
     // Tempo (right)
     g.setColour(juce::Colours::white);
@@ -640,4 +693,28 @@ void App::newProject()
     audioEngine_.stop();
     project_ = model::Project("Untitled");
     repaint();
+}
+
+void App::showHelp()
+{
+    if (screens_[currentScreen_])
+    {
+        helpPopup_.setScreenTitle(screens_[currentScreen_]->getTitle());
+        helpPopup_.setContent(screens_[currentScreen_]->getHelpContent());
+    }
+    helpPopup_.show();
+    helpPopup_.toFront(true);
+}
+
+void App::hideHelp()
+{
+    helpPopup_.hide();
+}
+
+void App::toggleHelp()
+{
+    if (helpPopup_.isShowing())
+        hideHelp();
+    else
+        showHelp();
 }

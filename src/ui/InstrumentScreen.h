@@ -7,8 +7,50 @@
 #include "WaveformDisplay.h"
 #include "SliceWaveformDisplay.h"
 #include "../audio/SlicerInstrument.h"
+#include "../audio/VASynthInstrument.h"
 
 namespace ui {
+
+// VA Synth-specific row types
+enum class VASynthRowType {
+    Osc1Waveform,
+    Osc1Octave,
+    Osc1Level,
+    Osc2Waveform,
+    Osc2Octave,
+    Osc2Detune,
+    Osc2Level,
+    Osc3Waveform,
+    Osc3Octave,
+    Osc3Detune,
+    Osc3Level,
+    NoiseLevel,
+    FilterCutoff,
+    FilterResonance,
+    FilterEnvAmount,
+    AmpAttack,
+    AmpDecay,
+    AmpSustain,
+    AmpRelease,
+    FilterAttack,
+    FilterDecay,
+    FilterSustain,
+    FilterRelease,
+    Glide,
+    Polyphony,  // Voice count (1-16, 1 = mono with legato)
+    Lfo1,           // Multi-field: rate, shape, dest, amount
+    Lfo2,
+    Env1,           // Multi-field: attack, decay, dest, amount
+    Env2,
+    Reverb,         // FX sends
+    Delay,
+    Chorus,
+    Drive,
+    Sidechain,
+    Volume,
+    Pan,
+    NumVASynthRows
+};
 
 // Sampler-specific row types
 enum class SamplerRowType {
@@ -21,6 +63,15 @@ enum class SamplerRowType {
     Release,
     Cutoff,
     Resonance,
+    Lfo1,           // Multi-field: rate, shape, dest, amount
+    Lfo2,
+    Env1,           // Multi-field: attack, decay, dest, amount
+    Env2,
+    Reverb,         // FX sends
+    Delay,
+    Chorus,
+    Drive,
+    Sidechain,
     Volume,
     Pan,
     NumSamplerRows
@@ -36,6 +87,15 @@ enum class SlicerRowType {
     Pitch,          // Pitch shift in semitones (editable when repitch=true)
     Repitch,        // Toggle: ON = pitch changes with speed, OFF = RubberBand
     Polyphony,      // Voice count (1 = choke/mono)
+    Lfo1,           // Multi-field: rate, shape, dest, amount
+    Lfo2,
+    Env1,           // Multi-field: attack, decay, dest, amount
+    Env2,
+    Reverb,         // FX sends
+    Delay,
+    Chorus,
+    Drive,
+    Sidechain,
     Volume,
     Pan,
     NumSlicerRows
@@ -67,7 +127,7 @@ enum class InstrumentRowType {
     NumRows
 };
 
-class InstrumentScreen : public Screen
+class InstrumentScreen : public Screen, public juce::Timer, public juce::FileDragAndDropTarget
 {
 public:
     InstrumentScreen(model::Project& project, input::ModeManager& modeManager);
@@ -80,6 +140,11 @@ public:
     bool handleEditKey(const juce::KeyPress& key);
 
     std::string getTitle() const override { return "INSTRUMENT"; }
+    std::vector<HelpSection> getHelpContent() const override;
+
+    // FileDragAndDropTarget interface
+    bool isInterestedInFileDrag(const juce::StringArray& files) override;
+    void filesDropped(const juce::StringArray& files, int x, int y) override;
 
     std::function<void(int note, int instrument)> onNotePreview;
 
@@ -97,10 +162,13 @@ public:
     // Slicer UI update (called after :chop command)
     void updateSlicerDisplay();
 
+    // Timer callback for playhead updates
+    void timerCallback() override;
+
 private:
     void drawInstrumentTabs(juce::Graphics& g, juce::Rectangle<int> area);
     void drawTypeSelector(juce::Graphics& g, juce::Rectangle<int> area);
-    void cycleInstrumentType();
+    void cycleInstrumentType(bool reverse = false);
     void drawRow(juce::Graphics& g, juce::Rectangle<int> area, int row, bool selected);
     void drawModRow(juce::Graphics& g, juce::Rectangle<int> area, int row, bool selected);
     void drawSliderRow(juce::Graphics& g, juce::Rectangle<int> area, const char* label,
@@ -112,6 +180,10 @@ private:
     // Slicer-specific methods
     bool handleSlicerKey(const juce::KeyPress& key, bool isEditMode);
     void paintSlicerUI(juce::Graphics& g);
+
+    // VA Synth-specific methods
+    bool handleVASynthKey(const juce::KeyPress& key, bool isEditMode);
+    void paintVASynthUI(juce::Graphics& g);
 
     bool editingName_ = false;
     std::string nameBuffer_;
@@ -149,13 +221,19 @@ private:
     void updateSamplerDisplay();
     void paintSamplerUI(juce::Graphics& g);
 
-    // Sampler/Slicer cursor tracking
+    // Sampler/Slicer/VASynth cursor tracking
     int samplerCursorRow_ = 0;
+    int samplerCursorField_ = 0;  // For multi-field rows (LFO/ENV)
     int slicerCursorRow_ = 0;
+    int slicerCursorField_ = 0;   // For multi-field rows (LFO/ENV)
+    int vaSynthCursorRow_ = 0;
+    int vaSynthCursorField_ = 0;  // For multi-field rows (LFO/ENV)
+    int vaSynthCursorCol_ = 0;    // 0=left column, 1=right column
 
     static constexpr int kNumRows = static_cast<int>(InstrumentRowType::NumRows);
     static constexpr int kNumSamplerRows = static_cast<int>(SamplerRowType::NumSamplerRows);
     static constexpr int kNumSlicerRows = static_cast<int>(SlicerRowType::NumSlicerRows);
+    static constexpr int kNumVASynthRows = static_cast<int>(VASynthRowType::NumVASynthRows);
     static constexpr int kRowHeight = 24;
     static constexpr int kLabelWidth = 80;
     static constexpr int kBarWidth = 180;

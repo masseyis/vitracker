@@ -3,10 +3,15 @@
 #include <JuceHeader.h>
 #include "../model/Project.h"
 #include "../input/ModeManager.h"
+#include <vector>
 
 namespace audio { class AudioEngine; }
 
 namespace ui {
+
+// Forward declarations for help system
+struct HelpEntry;
+struct HelpSection;
 
 class Screen : public juce::Component
 {
@@ -21,6 +26,9 @@ public:
     virtual bool handleEdit(const juce::KeyPress& key) { juce::ignoreUnused(key); return false; }
 
     virtual std::string getTitle() const = 0;
+
+    // Help system - override in each screen to provide context-sensitive help
+    virtual std::vector<HelpSection> getHelpContent() const;
 
     virtual void setAudioEngine(audio::AudioEngine* engine) { audioEngine_ = engine; }
 

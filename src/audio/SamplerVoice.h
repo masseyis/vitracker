@@ -21,6 +21,7 @@ public:
 
     bool isActive() const { return active_; }
     int getNote() const { return currentNote_; }
+    size_t getPlayPosition() const { return static_cast<size_t>(playPosition_); }
 
 private:
     double sampleRate_ = 48000.0;

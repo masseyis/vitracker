@@ -21,6 +21,17 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(googletest)
 
+# Fetch RubberBand for time-stretching (using single-file build)
+FetchContent_Declare(
+    rubberband
+    GIT_REPOSITORY https://github.com/breakfastquay/rubberband.git
+    GIT_TAG v3.3.0
+)
+FetchContent_GetProperties(rubberband)
+if(NOT rubberband_POPULATED)
+    FetchContent_Populate(rubberband)
+endif()
+
 # Main application
 juce_add_gui_app(Vitracker
     COMPANY_NAME "MasseyIS"
@@ -60,6 +71,7 @@ target_sources(Vitracker PRIVATE
     src/ui/WaveformDisplay.cpp
     src/ui/SliceWaveformDisplay.cpp
     src/ui/SamplerScreen.cpp
+    src/ui/HelpPopup.cpp
     src/audio/Voice.cpp
     src/audio/AudioEngine.cpp
     src/audio/Effects.cpp
@@ -68,11 +80,14 @@ target_sources(Vitracker PRIVATE
     src/audio/SamplerInstrument.cpp
     src/audio/SlicerVoice.cpp
     src/audio/SlicerInstrument.cpp
-    ${DSP_SOURCES})
+    src/audio/VASynthInstrument.cpp
+    ${DSP_SOURCES}
+    ${rubberband_SOURCE_DIR}/single/RubberBandSingle.cpp)
 
 target_include_directories(Vitracker PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/dsp)
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/dsp
+    ${rubberband_SOURCE_DIR})
 
 target_compile_definitions(Vitracker PUBLIC
     JUCE_WEB_BROWSER=0
@@ -95,3 +110,8 @@ target_link_libraries(Vitracker PRIVATE
     juce::juce_recommended_config_flags
     juce::juce_recommended_lto_flags
     juce::juce_recommended_warning_flags)
+
+# RubberBand uses vDSP on macOS (requires Accelerate framework)
+if(APPLE)
+    target_link_libraries(Vitracker PRIVATE "-framework Accelerate")
+endif()

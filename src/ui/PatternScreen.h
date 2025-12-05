@@ -18,6 +18,7 @@ public:
     bool handleEditKey(const juce::KeyPress& key);
 
     std::string getTitle() const override { return "PATTERN"; }
+    std::vector<HelpSection> getHelpContent() const override;
 
     // For external triggering
     std::function<void(int note, int instrument)> onNotePreview;
@@ -40,6 +41,7 @@ public:
     void halvePattern();
 
     bool hasSelection() const { return hasSelection_; }
+    void clearSelection() { hasSelection_ = false; repaint(); }
 
 private:
     void drawPatternTabs(juce::Graphics& g, juce::Rectangle<int> area);

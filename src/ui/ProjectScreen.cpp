@@ -1,4 +1,5 @@
 #include "ProjectScreen.h"
+#include "HelpPopup.h"
 
 namespace ui {
 
@@ -164,6 +165,34 @@ bool ProjectScreen::handleEditKey(const juce::KeyPress& key)
         }
     }
     return false;
+}
+
+std::vector<HelpSection> ProjectScreen::getHelpContent() const
+{
+    return {
+        {"Navigation", {
+            {"Up/Down", "Move between fields"},
+        }},
+        {"Name Field", {
+            {"(any key)", "Auto-enters text editing"},
+            {"Enter", "Confirm name change"},
+            {"Escape", "Cancel name change"},
+        }},
+        {"Tempo Field", {
+            {"+/- or L/R", "Adjust tempo by 1 BPM"},
+        }},
+        {"Groove Field", {
+            {"+/- or L/R", "Cycle groove templates"},
+        }},
+        {"File Operations (global)", {
+            {":w", "Save project (file dialog)"},
+            {":w name", "Save as 'name.vit'"},
+            {":e", "Load project (file dialog)"},
+            {":e name", "Load 'name.vit'"},
+            {":new", "New empty project"},
+            {":q", "Quit application"},
+        }},
+    };
 }
 
 } // namespace ui

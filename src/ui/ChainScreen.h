@@ -16,6 +16,7 @@ public:
     bool handleEditKey(const juce::KeyPress& key);
 
     std::string getTitle() const override { return "CHAIN"; }
+    std::vector<HelpSection> getHelpContent() const override;
 
     void setCurrentChain(int chainIndex) { currentChain_ = chainIndex; }
     int getCurrentChain() const { return currentChain_; }

@@ -1,4 +1,5 @@
 #include "InstrumentScreen.h"
+#include "HelpPopup.h"
 #include "../audio/AudioEngine.h"
 #include "../audio/SlicerInstrument.h"
 
@@ -63,11 +64,38 @@ InstrumentScreen::InstrumentScreen(model::Project& project, input::ModeManager& 
     // Sampler waveform display
     samplerWaveformDisplay_ = std::make_unique<WaveformDisplay>();
     addChildComponent(samplerWaveformDisplay_.get());
+
+    // Start playhead update timer (30Hz for smooth animation)
+    startTimer(33);
 }
 
 void InstrumentScreen::setAudioEngine(audio::AudioEngine* engine)
 {
     audioEngine_ = engine;
+}
+
+void InstrumentScreen::timerCallback()
+{
+    if (!audioEngine_) return;
+
+    auto* instrument = project_.getInstrument(currentInstrument_);
+    if (!instrument) return;
+
+    if (instrument->getType() == model::InstrumentType::Slicer) {
+        if (auto* slicer = audioEngine_->getSlicerProcessor(currentInstrument_)) {
+            int64_t pos = slicer->getPlayheadPosition();
+            if (sliceWaveformDisplay_) {
+                sliceWaveformDisplay_->setPlayheadPosition(pos);
+            }
+        }
+    } else if (instrument->getType() == model::InstrumentType::Sampler) {
+        if (auto* sampler = audioEngine_->getSamplerProcessor(currentInstrument_)) {
+            int64_t pos = sampler->getPlayheadPosition();
+            if (samplerWaveformDisplay_) {
+                samplerWaveformDisplay_->setPlayheadPosition(pos);
+            }
+        }
+    }
 }
 
 void InstrumentScreen::drawInstrumentTabs(juce::Graphics& g, juce::Rectangle<int> area)
@@ -124,14 +152,15 @@ void InstrumentScreen::drawTypeSelector(juce::Graphics& g, juce::Rectangle<int> 
     g.setColour(fgColor.darker(0.5f));
     g.drawText("TYPE:", area.removeFromLeft(50), juce::Justification::centredLeft);
 
-    const char* typeNames[] = {"Plaits", "Sampler", "Slicer"};
+    const char* typeNames[] = {"Plaits", "Sampler", "Slicer", "VASynth"};
     const model::InstrumentType types[] = {
         model::InstrumentType::Plaits,
         model::InstrumentType::Sampler,
-        model::InstrumentType::Slicer
+        model::InstrumentType::Slicer,
+        model::InstrumentType::VASynth
     };
 
-    for (int i = 0; i < 3; ++i) {
+    for (int i = 0; i < 4; ++i) {
         auto buttonArea = area.removeFromLeft(70);
         bool isSelected = (types[i] == currentType);
 
@@ -192,6 +221,12 @@ void InstrumentScreen::paint(juce::Graphics& g)
     // Check if this is a slicer instrument and render slicer UI
     if (instrument && instrument->getType() == model::InstrumentType::Slicer) {
         paintSlicerUI(g);
+        return;
+    }
+
+    // Check if this is a VA synth instrument and render VA synth UI
+    if (instrument && instrument->getType() == model::InstrumentType::VASynth) {
+        paintVASynthUI(g);
         return;
     }
 
@@ -614,6 +649,54 @@ void InstrumentScreen::resized()
 
 void InstrumentScreen::navigate(int dx, int dy)
 {
+    auto* instrument = project_.getInstrument(currentInstrument_);
+
+    // Handle Slicer navigation
+    if (instrument && instrument->getType() == model::InstrumentType::Slicer) {
+        if (dy != 0) {
+            slicerCursorRow_ = std::clamp(slicerCursorRow_ + dy, 0, kNumSlicerRows - 1);
+        }
+        if (dx != 0) {
+            // Left/Right switches instruments in Slicer mode
+            int numInstruments = project_.getInstrumentCount();
+            currentInstrument_ = (currentInstrument_ + dx + numInstruments) % numInstruments;
+            setCurrentInstrument(currentInstrument_);
+        }
+        repaint();
+        return;
+    }
+
+    // Handle Sampler navigation
+    if (instrument && instrument->getType() == model::InstrumentType::Sampler) {
+        if (dy != 0) {
+            samplerCursorRow_ = std::clamp(samplerCursorRow_ + dy, 0, kNumSamplerRows - 1);
+        }
+        if (dx != 0) {
+            // Left/Right switches instruments in Sampler mode
+            int numInstruments = project_.getInstrumentCount();
+            currentInstrument_ = (currentInstrument_ + dx + numInstruments) % numInstruments;
+            setCurrentInstrument(currentInstrument_);
+        }
+        repaint();
+        return;
+    }
+
+    // Handle VA Synth navigation
+    if (instrument && instrument->getType() == model::InstrumentType::VASynth) {
+        if (dy != 0) {
+            vaSynthCursorRow_ = std::clamp(vaSynthCursorRow_ + dy, 0, kNumVASynthRows - 1);
+        }
+        if (dx != 0) {
+            // Left/Right switches instruments in VASynth mode
+            int numInstruments = project_.getInstrumentCount();
+            currentInstrument_ = (currentInstrument_ + dx + numInstruments) % numInstruments;
+            setCurrentInstrument(currentInstrument_);
+        }
+        repaint();
+        return;
+    }
+
+    // Plaits navigation (original behavior)
     if (dx != 0 && !isModRow(cursorRow_))
     {
         // Switch instruments
@@ -647,8 +730,10 @@ bool InstrumentScreen::handleEditKey(const juce::KeyPress& key)
     auto keyCode = key.getKeyCode();
 
     // Tab key cycles through instrument types (works for all instrument types)
+    // Shift+Tab cycles backwards
     if (keyCode == juce::KeyPress::tabKey) {
-        cycleInstrumentType();
+        bool reverse = key.getModifiers().isShiftDown();
+        cycleInstrumentType(reverse);
         return true;
     }
 
@@ -662,6 +747,12 @@ bool InstrumentScreen::handleEditKey(const juce::KeyPress& key)
     if (instrument && instrument->getType() == model::InstrumentType::Slicer) {
         return handleSlicerKey(key, true);
     }
+
+    // Check if this is a VA synth instrument and handle VA synth keys
+    if (instrument && instrument->getType() == model::InstrumentType::VASynth) {
+        return handleVASynthKey(key, true);
+    }
+
     auto textChar = key.getTextCharacter();
     bool shiftHeld = key.getModifiers().isShiftDown();
 
@@ -1294,13 +1385,85 @@ bool InstrumentScreen::handleSamplerKey(const juce::KeyPress& key, bool /*isEdit
         return true;
     }
 
-    // Left/Right or +/-: adjust values
+    // Check if current row is a modulation row (has multiple fields)
+    auto isModRow = [](int row) {
+        auto type = static_cast<SamplerRowType>(row);
+        return type == SamplerRowType::Lfo1 || type == SamplerRowType::Lfo2 ||
+               type == SamplerRowType::Env1 || type == SamplerRowType::Env2;
+    };
+
+    bool altHeld = key.getModifiers().isAltDown();
+
+    // Tab or Left/Right (without Alt): navigate fields on mod rows
+    if (isModRow(samplerCursorRow_) && !altHeld)
+    {
+        if (keyCode == juce::KeyPress::tabKey || keyCode == juce::KeyPress::rightKey)
+        {
+            samplerCursorField_ = (samplerCursorField_ + 1) % 4;
+            repaint();
+            return true;
+        }
+        if (keyCode == juce::KeyPress::leftKey)
+        {
+            samplerCursorField_ = (samplerCursorField_ + 3) % 4;  // -1 with wrap
+            repaint();
+            return true;
+        }
+    }
+
+    // Alt+Left/Right or +/-: adjust values
     int delta = 0;
-    if (keyCode == juce::KeyPress::rightKey || textChar == '+' || textChar == '=') delta = 1;
-    else if (keyCode == juce::KeyPress::leftKey || textChar == '-') delta = -1;
+    if (textChar == '+' || textChar == '=') delta = 1;
+    else if (textChar == '-') delta = -1;
+    // For mod rows, require Alt for arrow keys; for other rows, arrows work directly
+    if (isModRow(samplerCursorRow_)) {
+        if (altHeld && keyCode == juce::KeyPress::rightKey) delta = 1;
+        else if (altHeld && keyCode == juce::KeyPress::leftKey) delta = -1;
+    } else {
+        if (keyCode == juce::KeyPress::rightKey) delta = 1;
+        else if (keyCode == juce::KeyPress::leftKey) delta = -1;
+    }
 
     if (delta != 0)
     {
+        // Handle modulation rows specially (multi-field)
+        if (isModRow(samplerCursorRow_))
+        {
+            auto& mod = params.modulation;
+            auto rowType = static_cast<SamplerRowType>(samplerCursorRow_);
+
+            // Get reference to the appropriate params
+            model::SamplerLfoParams* lfo = nullptr;
+            model::SamplerModEnvParams* env = nullptr;
+            bool isEnv = (rowType == SamplerRowType::Env1 || rowType == SamplerRowType::Env2);
+
+            if (rowType == SamplerRowType::Lfo1) lfo = &mod.lfo1;
+            else if (rowType == SamplerRowType::Lfo2) lfo = &mod.lfo2;
+            else if (rowType == SamplerRowType::Env1) env = &mod.env1;
+            else if (rowType == SamplerRowType::Env2) env = &mod.env2;
+
+            // Adjust based on field
+            if (lfo) {
+                switch (samplerCursorField_) {
+                    case 0: lfo->rateIndex = std::clamp(lfo->rateIndex + delta, 0, 15); break;
+                    case 1: lfo->shapeIndex = std::clamp(lfo->shapeIndex + delta, 0, 4); break;
+                    case 2: lfo->destIndex = std::clamp(lfo->destIndex + delta, 0, static_cast<int>(model::SamplerModDest::NumDestinations) - 1); break;
+                    case 3: lfo->amount = static_cast<int8_t>(std::clamp(static_cast<int>(lfo->amount) + delta, -64, 63)); break;
+                }
+            } else if (env) {
+                float envStep = shiftHeld ? 0.01f : 0.05f;
+                switch (samplerCursorField_) {
+                    case 0: env->attack = std::clamp(env->attack + delta * envStep, 0.001f, 2.0f); break;
+                    case 1: env->decay = std::clamp(env->decay + delta * envStep, 0.001f, 10.0f); break;
+                    case 2: env->destIndex = std::clamp(env->destIndex + delta, 0, static_cast<int>(model::SamplerModDest::NumDestinations) - 1); break;
+                    case 3: env->amount = static_cast<int8_t>(std::clamp(static_cast<int>(env->amount) + delta, -64, 63)); break;
+                }
+            }
+            if (onNotePreview) onNotePreview(60, currentInstrument_);
+            repaint();
+            return true;
+        }
+
         auto recalculatePitchRatio = [&]() {
             if (params.autoRepitchEnabled && params.rootNote > 0) {
                 params.pitchRatio = static_cast<float>(std::pow(2.0, (params.targetRootNote - params.rootNote) / 12.0));
@@ -1310,7 +1473,7 @@ bool InstrumentScreen::handleSamplerKey(const juce::KeyPress& key, bool /*isEdit
         };
 
         float step = shiftHeld ? 0.01f : 0.05f;
-        int noteStep = shiftHeld ? 1 : 12;  // semitone vs octave
+        int noteStep = shiftHeld ? 12 : 1;  // octave with shift, semitone by default
 
         switch (static_cast<SamplerRowType>(samplerCursorRow_))
         {
@@ -1344,6 +1507,25 @@ bool InstrumentScreen::handleSamplerKey(const juce::KeyPress& key, bool /*isEdit
             case SamplerRowType::Resonance:
                 params.filter.resonance = std::clamp(params.filter.resonance + delta * step, 0.0f, 1.0f);
                 break;
+            // FX sends
+            case SamplerRowType::Reverb:
+                params.modulation.fxSends.reverb = std::clamp(params.modulation.fxSends.reverb + delta * step, 0.0f, 1.0f);
+                break;
+            case SamplerRowType::Delay:
+                params.modulation.fxSends.delay = std::clamp(params.modulation.fxSends.delay + delta * step, 0.0f, 1.0f);
+                break;
+            case SamplerRowType::Chorus:
+                params.modulation.fxSends.chorus = std::clamp(params.modulation.fxSends.chorus + delta * step, 0.0f, 1.0f);
+                break;
+            case SamplerRowType::Drive:
+                params.modulation.fxSends.drive = std::clamp(params.modulation.fxSends.drive + delta * step, 0.0f, 1.0f);
+                break;
+            case SamplerRowType::Sidechain:
+                {
+                    auto& sends = instrument->getSends();
+                    sends.sidechainDuck = std::clamp(sends.sidechainDuck + delta * step, 0.0f, 1.0f);
+                }
+                break;
             case SamplerRowType::Volume:
                 instrument->setVolume(std::clamp(instrument->getVolume() + delta * step, 0.0f, 1.0f));
                 break;
@@ -1363,7 +1545,7 @@ bool InstrumentScreen::handleSamplerKey(const juce::KeyPress& key, bool /*isEdit
         auto chooser = std::make_shared<juce::FileChooser>(
             "Load Sample",
             juce::File::getSpecialLocation(juce::File::userHomeDirectory),
-            "*.wav;*.aiff;*.aif"
+            "*.wav;*.aiff;*.aif;*.mp3;*.flac;*.ogg"
         );
 
         chooser->launchAsync(
@@ -1445,6 +1627,7 @@ void InstrumentScreen::paintSamplerUI(juce::Graphics& g) {
         }
 
         g.setColour(selected ? cursorColor : fgColor);
+        g.setFont(14.0f);
         g.drawText(label, rowArea.getX(), rowArea.getY(), kLabelWidth, kRowHeight, juce::Justification::centredLeft);
 
         if (isToggle) {
@@ -1457,6 +1640,33 @@ void InstrumentScreen::paintSamplerUI(juce::Graphics& g) {
         } else {
             g.drawText(value, rowArea.getX() + kLabelWidth, rowArea.getY(), 200, kRowHeight, juce::Justification::centredLeft);
         }
+    };
+
+    // Draw slider row (Plaits style)
+    auto drawSamplerSliderRow = [&](int rowIndex, const char* label, float value, const juce::String& valueText) {
+        bool selected = (samplerCursorRow_ == rowIndex);
+        auto rowArea = contentArea.removeFromTop(kRowHeight);
+
+        if (selected) {
+            g.setColour(highlightColor.withAlpha(0.3f));
+            g.fillRect(rowArea);
+        }
+
+        g.setColour(selected ? cursorColor : fgColor);
+        g.setFont(14.0f);
+        g.drawText(label, rowArea.getX(), rowArea.getY(), kLabelWidth, kRowHeight, juce::Justification::centredLeft);
+
+        // Slider bar (Plaits style)
+        int barX = rowArea.getX() + kLabelWidth;
+        int barY = rowArea.getY() + (kRowHeight - 10) / 2;
+        g.setColour(juce::Colour(0xff303030));
+        g.fillRect(barX, barY, kBarWidth, 10);
+        g.setColour(selected ? cursorColor : juce::Colour(0xff4a9090));
+        g.fillRect(barX, barY, static_cast<int>(kBarWidth * value), 10);
+
+        // Value text
+        g.setColour(selected ? cursorColor : fgColor);
+        g.drawText(valueText, barX + kBarWidth + 10, rowArea.getY(), 100, kRowHeight, juce::Justification::centredLeft);
     };
 
     // Helper for note name
@@ -1478,43 +1688,130 @@ void InstrumentScreen::paintSamplerUI(juce::Graphics& g) {
     // Row 2: Auto-Repitch toggle
     drawSamplerRow(2, "AUTO-REPITCH", params.autoRepitchEnabled ? "ON" : "OFF", true);
 
-    // Row 3: Attack
+    // Row 3: Attack (normalize: 0-2s mapped to 0-1 for bar)
+    float attackNorm = std::clamp(params.ampEnvelope.attack / 2.0f, 0.0f, 1.0f);
     juce::String attackStr = juce::String(static_cast<int>(params.ampEnvelope.attack * 1000.0f)) + "ms";
-    drawSamplerRow(3, "ATTACK", attackStr);
+    drawSamplerSliderRow(3, "ATTACK", attackNorm, attackStr);
 
-    // Row 4: Decay
+    // Row 4: Decay (normalize: 0-5s mapped to 0-1 for bar)
+    float decayNorm = std::clamp(params.ampEnvelope.decay / 5.0f, 0.0f, 1.0f);
     juce::String decayStr = juce::String(static_cast<int>(params.ampEnvelope.decay * 1000.0f)) + "ms";
-    drawSamplerRow(4, "DECAY", decayStr);
+    drawSamplerSliderRow(4, "DECAY", decayNorm, decayStr);
 
     // Row 5: Sustain
     juce::String sustainStr = juce::String(static_cast<int>(params.ampEnvelope.sustain * 100.0f)) + "%";
-    drawSamplerRow(5, "SUSTAIN", sustainStr);
+    drawSamplerSliderRow(5, "SUSTAIN", params.ampEnvelope.sustain, sustainStr);
 
-    // Row 6: Release
+    // Row 6: Release (normalize: 0-5s mapped to 0-1 for bar)
+    float releaseNorm = std::clamp(params.ampEnvelope.release / 5.0f, 0.0f, 1.0f);
     juce::String releaseStr = juce::String(static_cast<int>(params.ampEnvelope.release * 1000.0f)) + "ms";
-    drawSamplerRow(6, "RELEASE", releaseStr);
+    drawSamplerSliderRow(6, "RELEASE", releaseNorm, releaseStr);
 
     // Row 7: Cutoff
     float cutoffHz = 20.0f * std::pow(1000.0f, params.filter.cutoff);
     juce::String cutoffStr = juce::String(static_cast<int>(cutoffHz)) + "Hz";
-    drawSamplerRow(7, "CUTOFF", cutoffStr);
+    drawSamplerSliderRow(7, "CUTOFF", params.filter.cutoff, cutoffStr);
 
     // Row 8: Resonance
     juce::String resoStr = juce::String(static_cast<int>(params.filter.resonance * 100.0f)) + "%";
-    drawSamplerRow(8, "RESONANCE", resoStr);
+    drawSamplerSliderRow(8, "RESONANCE", params.filter.resonance, resoStr);
 
-    // Row 9: Volume
+    // Modulation section header
+    contentArea.removeFromTop(8);
+    g.setColour(fgColor.darker(0.3f));
+    g.drawText("-- MODULATION --", contentArea.removeFromTop(16), juce::Justification::centredLeft);
+    contentArea.removeFromTop(4);
+
+    // LFO/ENV rows - multi-field (rate, shape, dest, amount) - Plaits style
+    auto drawSamplerModRow = [&](int rowIndex, const char* label, const model::SamplerLfoParams* lfo, const model::SamplerModEnvParams* env) {
+        bool selected = (samplerCursorRow_ == rowIndex);
+        auto rowArea = contentArea.removeFromTop(kRowHeight);
+
+        if (selected) {
+            g.setColour(highlightColor.withAlpha(0.3f));
+            g.fillRect(rowArea);
+        }
+
+        g.setColour(selected ? cursorColor : fgColor);
+        g.setFont(14.0f);
+        g.drawText(label, rowArea.getX(), rowArea.getY(), kLabelWidth, kRowHeight, juce::Justification::centredLeft);
+
+        // Draw 4 fields with gray boxes (Plaits style)
+        int fieldX = rowArea.getX() + kLabelWidth;
+        int fieldWidth = 50;
+        int fieldGap = 8;
+
+        for (int f = 0; f < 4; f++) {
+            bool fieldSelected = selected && (samplerCursorField_ == f);
+            juce::String fieldValue;
+
+            if (lfo) {
+                switch (f) {
+                    case 0: fieldValue = getLfoRateName(lfo->rateIndex); break;
+                    case 1: fieldValue = getLfoShapeName(lfo->shapeIndex); break;
+                    case 2: fieldValue = model::getModDestName(static_cast<model::SamplerModDest>(lfo->destIndex)); break;
+                    case 3: fieldValue = (lfo->amount >= 0 ? "+" : "") + juce::String(lfo->amount); break;
+                }
+            } else if (env) {
+                switch (f) {
+                    case 0: fieldValue = juce::String(static_cast<int>(env->attack * 1000)) + "ms"; break;
+                    case 1: fieldValue = juce::String(static_cast<int>(env->decay * 1000)) + "ms"; break;
+                    case 2: fieldValue = model::getModDestName(static_cast<model::SamplerModDest>(env->destIndex)); break;
+                    case 3: fieldValue = (env->amount >= 0 ? "+" : "") + juce::String(env->amount); break;
+                }
+            }
+
+            // Gray background box (Plaits style)
+            g.setColour(fieldSelected ? cursorColor : juce::Colour(0xff606060));
+            g.fillRect(fieldX, rowArea.getY() + 4, fieldWidth, kRowHeight - 8);
+            g.setColour(fieldSelected ? juce::Colours::black : fgColor);
+            g.setFont(14.0f);
+            g.drawText(fieldValue, fieldX, rowArea.getY(), fieldWidth, kRowHeight, juce::Justification::centred);
+            fieldX += fieldWidth + fieldGap;
+        }
+    };
+
+    // Row 9: LFO1
+    drawSamplerModRow(static_cast<int>(SamplerRowType::Lfo1), "LFO1", &params.modulation.lfo1, nullptr);
+    // Row 10: LFO2
+    drawSamplerModRow(static_cast<int>(SamplerRowType::Lfo2), "LFO2", &params.modulation.lfo2, nullptr);
+    // Row 11: ENV1
+    drawSamplerModRow(static_cast<int>(SamplerRowType::Env1), "ENV1", nullptr, &params.modulation.env1);
+    // Row 12: ENV2
+    drawSamplerModRow(static_cast<int>(SamplerRowType::Env2), "ENV2", nullptr, &params.modulation.env2);
+
+    // FX sends section header
+    contentArea.removeFromTop(8);
+    g.setColour(fgColor.darker(0.3f));
+    g.drawText("-- FX SENDS --", contentArea.removeFromTop(16), juce::Justification::centredLeft);
+    contentArea.removeFromTop(4);
+
+    // FX send rows use the same slider style
+    drawSamplerSliderRow(static_cast<int>(SamplerRowType::Reverb), "REVERB", params.modulation.fxSends.reverb, juce::String(static_cast<int>(params.modulation.fxSends.reverb * 100)) + "%");
+    drawSamplerSliderRow(static_cast<int>(SamplerRowType::Delay), "DELAY", params.modulation.fxSends.delay, juce::String(static_cast<int>(params.modulation.fxSends.delay * 100)) + "%");
+    drawSamplerSliderRow(static_cast<int>(SamplerRowType::Chorus), "CHORUS", params.modulation.fxSends.chorus, juce::String(static_cast<int>(params.modulation.fxSends.chorus * 100)) + "%");
+    drawSamplerSliderRow(static_cast<int>(SamplerRowType::Drive), "DRIVE", params.modulation.fxSends.drive, juce::String(static_cast<int>(params.modulation.fxSends.drive * 100)) + "%");
+    drawSamplerSliderRow(static_cast<int>(SamplerRowType::Sidechain), "SIDECHAIN", inst->getSends().sidechainDuck, juce::String(static_cast<int>(inst->getSends().sidechainDuck * 100)) + "%");
+
+    // Volume & Pan section header
+    contentArea.removeFromTop(8);
+    g.setColour(fgColor.darker(0.3f));
+    g.drawText("-- OUTPUT --", contentArea.removeFromTop(16), juce::Justification::centredLeft);
+    contentArea.removeFromTop(4);
+
+    // Volume
     float vol = inst->getVolume();
     juce::String volStr = juce::String(static_cast<int>(vol * 100.0f)) + "%";
-    drawSamplerRow(9, "VOLUME", volStr);
+    drawSamplerSliderRow(static_cast<int>(SamplerRowType::Volume), "VOLUME", vol, volStr);
 
-    // Row 10: Pan
+    // Pan
     float pan = inst->getPan();
+    float panNorm = (pan + 1.0f) / 2.0f;  // Convert -1..1 to 0..1 for bar
     juce::String panStr;
     if (pan < -0.01f) panStr = "L" + juce::String(static_cast<int>(-pan * 100));
     else if (pan > 0.01f) panStr = "R" + juce::String(static_cast<int>(pan * 100));
     else panStr = "C";
-    drawSamplerRow(10, "PAN", panStr);
+    drawSamplerSliderRow(static_cast<int>(SamplerRowType::Pan), "PAN", panNorm, panStr);
 
     // Pitch ratio display
     contentArea.removeFromTop(8);
@@ -1591,6 +1888,7 @@ void InstrumentScreen::paintSlicerUI(juce::Graphics& g) {
         }
 
         g.setColour(greyed ? fgColor.darker(0.6f) : (selected ? cursorColor : fgColor));
+        g.setFont(14.0f);
         g.drawText(label, rowArea.getX(), rowArea.getY(), kLabelWidth, kRowHeight, juce::Justification::centredLeft);
         g.drawText(value, rowArea.getX() + kLabelWidth, rowArea.getY(), 120, kRowHeight, juce::Justification::centredLeft);
 
@@ -1598,6 +1896,33 @@ void InstrumentScreen::paintSlicerUI(juce::Graphics& g) {
             g.setColour(fgColor.darker(0.4f));
             g.drawText(extra, rowArea.getX() + kLabelWidth + 120, rowArea.getY(), 200, kRowHeight, juce::Justification::centredLeft);
         }
+    };
+
+    // Draw slider row (Plaits style)
+    auto drawSlicerSliderRow = [&](int rowIndex, const char* label, float value, const juce::String& valueText) {
+        bool selected = (slicerCursorRow_ == rowIndex);
+        auto rowArea = contentArea.removeFromTop(kRowHeight);
+
+        if (selected) {
+            g.setColour(highlightColor.withAlpha(0.3f));
+            g.fillRect(rowArea);
+        }
+
+        g.setColour(selected ? cursorColor : fgColor);
+        g.setFont(14.0f);
+        g.drawText(label, rowArea.getX(), rowArea.getY(), kLabelWidth, kRowHeight, juce::Justification::centredLeft);
+
+        // Slider bar (Plaits style)
+        int barX = rowArea.getX() + kLabelWidth;
+        int barY = rowArea.getY() + (kRowHeight - 10) / 2;
+        g.setColour(juce::Colour(0xff303030));
+        g.fillRect(barX, barY, kBarWidth, 10);
+        g.setColour(selected ? cursorColor : juce::Colour(0xff4a9090));
+        g.fillRect(barX, barY, static_cast<int>(kBarWidth * value), 10);
+
+        // Value text
+        g.setColour(selected ? cursorColor : fgColor);
+        g.drawText(valueText, barX + kBarWidth + 10, rowArea.getY(), 100, kRowHeight, juce::Justification::centredLeft);
     };
 
     // Chop mode names
@@ -1655,26 +1980,137 @@ void InstrumentScreen::paintSlicerUI(juce::Graphics& g) {
     juce::String polyStr = params.polyphony == 1 ? "1 (choke)" : juce::String(params.polyphony);
     drawSlicerRow(static_cast<int>(SlicerRowType::Polyphony), "POLYPHONY", polyStr);
 
-    // Row 8: Volume
+    // Modulation section header
+    contentArea.removeFromTop(8);
+    g.setColour(fgColor.darker(0.3f));
+    g.drawText("-- MODULATION --", contentArea.removeFromTop(16), juce::Justification::centredLeft);
+    contentArea.removeFromTop(4);
+
+    // LFO/ENV rows - multi-field (rate, shape, dest, amount) - Plaits style
+    auto drawSlicerModRow = [&](int rowIndex, const char* label, const model::SamplerLfoParams* lfo, const model::SamplerModEnvParams* env) {
+        bool selected = (slicerCursorRow_ == rowIndex);
+        auto rowArea = contentArea.removeFromTop(kRowHeight);
+
+        if (selected) {
+            g.setColour(highlightColor.withAlpha(0.3f));
+            g.fillRect(rowArea);
+        }
+
+        g.setColour(selected ? cursorColor : fgColor);
+        g.setFont(14.0f);
+        g.drawText(label, rowArea.getX(), rowArea.getY(), kLabelWidth, kRowHeight, juce::Justification::centredLeft);
+
+        // Draw 4 fields with gray boxes (Plaits style)
+        int fieldX = rowArea.getX() + kLabelWidth;
+        int fieldWidth = 50;
+        int fieldGap = 8;
+
+        for (int f = 0; f < 4; f++) {
+            bool fieldSelected = selected && (slicerCursorField_ == f);
+            juce::String fieldValue;
+
+            if (lfo) {
+                switch (f) {
+                    case 0: fieldValue = getLfoRateName(lfo->rateIndex); break;
+                    case 1: fieldValue = getLfoShapeName(lfo->shapeIndex); break;
+                    case 2: fieldValue = model::getModDestName(static_cast<model::SamplerModDest>(lfo->destIndex)); break;
+                    case 3: fieldValue = (lfo->amount >= 0 ? "+" : "") + juce::String(lfo->amount); break;
+                }
+            } else if (env) {
+                switch (f) {
+                    case 0: fieldValue = juce::String(static_cast<int>(env->attack * 1000)) + "ms"; break;
+                    case 1: fieldValue = juce::String(static_cast<int>(env->decay * 1000)) + "ms"; break;
+                    case 2: fieldValue = model::getModDestName(static_cast<model::SamplerModDest>(env->destIndex)); break;
+                    case 3: fieldValue = (env->amount >= 0 ? "+" : "") + juce::String(env->amount); break;
+                }
+            }
+
+            // Gray background box (Plaits style)
+            g.setColour(fieldSelected ? cursorColor : juce::Colour(0xff606060));
+            g.fillRect(fieldX, rowArea.getY() + 4, fieldWidth, kRowHeight - 8);
+            g.setColour(fieldSelected ? juce::Colours::black : fgColor);
+            g.setFont(14.0f);
+            g.drawText(fieldValue, fieldX, rowArea.getY(), fieldWidth, kRowHeight, juce::Justification::centred);
+            fieldX += fieldWidth + fieldGap;
+        }
+    };
+
+    drawSlicerModRow(static_cast<int>(SlicerRowType::Lfo1), "LFO1", &params.modulation.lfo1, nullptr);
+    drawSlicerModRow(static_cast<int>(SlicerRowType::Lfo2), "LFO2", &params.modulation.lfo2, nullptr);
+    drawSlicerModRow(static_cast<int>(SlicerRowType::Env1), "ENV1", nullptr, &params.modulation.env1);
+    drawSlicerModRow(static_cast<int>(SlicerRowType::Env2), "ENV2", nullptr, &params.modulation.env2);
+
+    // FX sends section header
+    contentArea.removeFromTop(8);
+    g.setColour(fgColor.darker(0.3f));
+    g.drawText("-- FX SENDS --", contentArea.removeFromTop(16), juce::Justification::centredLeft);
+    contentArea.removeFromTop(4);
+
+    // FX send rows use slider style
+    drawSlicerSliderRow(static_cast<int>(SlicerRowType::Reverb), "REVERB", params.modulation.fxSends.reverb, juce::String(static_cast<int>(params.modulation.fxSends.reverb * 100)) + "%");
+    drawSlicerSliderRow(static_cast<int>(SlicerRowType::Delay), "DELAY", params.modulation.fxSends.delay, juce::String(static_cast<int>(params.modulation.fxSends.delay * 100)) + "%");
+    drawSlicerSliderRow(static_cast<int>(SlicerRowType::Chorus), "CHORUS", params.modulation.fxSends.chorus, juce::String(static_cast<int>(params.modulation.fxSends.chorus * 100)) + "%");
+    drawSlicerSliderRow(static_cast<int>(SlicerRowType::Drive), "DRIVE", params.modulation.fxSends.drive, juce::String(static_cast<int>(params.modulation.fxSends.drive * 100)) + "%");
+    drawSlicerSliderRow(static_cast<int>(SlicerRowType::Sidechain), "SIDECHAIN", inst->getSends().sidechainDuck, juce::String(static_cast<int>(inst->getSends().sidechainDuck * 100)) + "%");
+
+    // Output section header
+    contentArea.removeFromTop(8);
+    g.setColour(fgColor.darker(0.3f));
+    g.drawText("-- OUTPUT --", contentArea.removeFromTop(16), juce::Justification::centredLeft);
+    contentArea.removeFromTop(4);
+
+    // Volume
     float vol = inst->getVolume();
     juce::String volStr = juce::String(static_cast<int>(vol * 100.0f)) + "%";
-    drawSlicerRow(static_cast<int>(SlicerRowType::Volume), "VOLUME", volStr);
+    drawSlicerSliderRow(static_cast<int>(SlicerRowType::Volume), "VOLUME", vol, volStr);
 
-    // Row 9: Pan
+    // Pan
     float pan = inst->getPan();
+    float panNorm = (pan + 1.0f) / 2.0f;  // Convert -1..1 to 0..1 for bar
     juce::String panStr;
     if (pan < -0.01f) panStr = "L" + juce::String(static_cast<int>(-pan * 100));
     else if (pan > 0.01f) panStr = "R" + juce::String(static_cast<int>(pan * 100));
     else panStr = "C";
-    drawSlicerRow(static_cast<int>(SlicerRowType::Pan), "PAN", panStr);
+    drawSlicerSliderRow(static_cast<int>(SlicerRowType::Pan), "PAN", panNorm, panStr);
 
-    // Instructions
+    // Check lazy chop status
+    audio::SlicerInstrument* slicer = nullptr;
+    if (audioEngine_) {
+        slicer = audioEngine_->getSlicerProcessor(currentInstrument_);
+    }
+
+    // Lazy chop status indicator
+    if (params.chopMode == model::ChopMode::Lazy && slicer) {
+        contentArea.removeFromTop(8);
+        if (slicer->isLazyChopPlaying()) {
+            g.setColour(juce::Colours::green);
+            g.setFont(14.0f);
+            g.drawText(">>> PLAYING - press 'c' to add slice, Enter to stop <<<",
+                       contentArea.removeFromTop(24), juce::Justification::centred);
+        } else {
+            g.setColour(fgColor.darker(0.3f));
+            g.setFont(12.0f);
+            g.drawText("Press Enter to start lazy chop preview",
+                       contentArea.removeFromTop(20), juce::Justification::centredLeft);
+        }
+    }
+
+    // Instructions - vary based on chop mode
     contentArea.removeFromTop(8);
     g.setColour(fgColor.darker(0.5f));
     g.setFont(12.0f);
-    g.drawText("o: load   Enter: play slice   h/l: slices   s: add   d: delete",
-               contentArea.removeFromTop(20), juce::Justification::centredLeft);
-    g.drawText("+/-: adjust   Shift+h/l: scroll   Tab: change type",
+
+    if (params.chopMode == model::ChopMode::Lazy) {
+        g.drawText("o: load   Enter: play slice   c: chop at playhead   Shift+X: clear",
+                   contentArea.removeFromTop(20), juce::Justification::centredLeft);
+    } else if (params.chopMode == model::ChopMode::Divisions) {
+        g.drawText("o: load   Enter: play slice   Alt+Up/Dn: divisions   h/l: slices",
+                   contentArea.removeFromTop(20), juce::Justification::centredLeft);
+    } else {
+        g.drawText("o: load   Enter: play slice   Alt+Up/Dn: sensitivity   h/l: slices",
+                   contentArea.removeFromTop(20), juce::Justification::centredLeft);
+    }
+    g.drawText("+/-: zoom   Shift+h/l: scroll   Tab: change type",
                contentArea.removeFromTop(20), juce::Justification::centredLeft);
 }
 
@@ -1718,7 +2154,13 @@ bool InstrumentScreen::handleSlicerKey(const juce::KeyPress& key, bool /*isEditM
         return true;
     }
 
-    // Enter: audition current slice
+    // Get slicer processor for lazy chop operations
+    audio::SlicerInstrument* slicer = nullptr;
+    if (audioEngine_) {
+        slicer = audioEngine_->getSlicerProcessor(currentInstrument_);
+    }
+
+    // Enter: always play the current slice
     if (keyCode == juce::KeyPress::returnKey) {
         // Play the current slice note (mapped to MIDI note)
         // Slices are mapped starting at C-1 (MIDI note 12)
@@ -1726,10 +2168,66 @@ bool InstrumentScreen::handleSlicerKey(const juce::KeyPress& key, bool /*isEditM
             int sliceNote = params.currentSlice + 12;  // BASE_NOTE = 12
             onNotePreview(sliceNote, currentInstrument_);
         }
+        repaint();
         return true;
     }
 
-    // Up/Down: navigate rows
+    // 'c' for chop: add slice at current playhead while a slice is playing
+    if (textChar == 'c' || textChar == 'C') {
+        if (slicer && params.chopMode == model::ChopMode::Lazy) {
+            int64_t playhead = slicer->getPlayheadPosition();
+            if (playhead >= 0) {
+                int newSliceIndex = slicer->addSliceAtPosition(static_cast<size_t>(playhead));
+                if (newSliceIndex >= 0) {
+                    // Select the slice that starts at the chop point (ahead of where we chopped)
+                    params.currentSlice = newSliceIndex;
+                }
+                updateSlicerDisplay();
+                repaint();
+            }
+        }
+        return true;
+    }
+
+    // 'x' to clear all slices (with confirmation via double-press - just clear for now)
+    if (textChar == 'x' || textChar == 'X') {
+        if (slicer && shiftHeld) {
+            // Shift+X clears all slices
+            slicer->clearSlices();
+            updateSlicerDisplay();
+            repaint();
+        }
+        return true;
+    }
+
+    // Alt+Up/Down: adjust sub-parameter for ChopMode row (divisions or sensitivity)
+    bool altHeld = key.getModifiers().isAltDown();
+    if (altHeld && (keyCode == juce::KeyPress::upKey || keyCode == juce::KeyPress::downKey)) {
+        int delta = (keyCode == juce::KeyPress::upKey) ? 1 : -1;
+        int step = shiftHeld ? 1 : 4;  // Fine vs coarse adjustment
+
+        if (slicerCursorRow_ == static_cast<int>(SlicerRowType::ChopMode)) {
+            if (params.chopMode == model::ChopMode::Divisions && slicer) {
+                params.numDivisions = std::clamp(params.numDivisions + delta * step, 2, 64);
+                slicer->chopIntoDivisions(params.numDivisions);
+                updateSlicerDisplay();
+                repaint();
+                return true;
+            } else if (params.chopMode == model::ChopMode::Transients && slicer) {
+                float sensStep = shiftHeld ? 0.02f : 0.1f;
+                params.transientSensitivity = std::clamp(params.transientSensitivity + delta * sensStep, 0.0f, 1.0f);
+                slicer->chopByTransients(params.transientSensitivity);
+                updateSlicerDisplay();
+                repaint();
+                return true;
+            }
+        }
+        // Alt+Up/Down not consumed - let navigation handle it
+        return false;
+    }
+
+    // Up/Down without Alt: navigate rows (handled by KeyHandler calling navigate())
+    // These won't normally be reached, but keep for safety
     if (keyCode == juce::KeyPress::upKey) {
         slicerCursorRow_ = std::max(0, slicerCursorRow_ - 1);
         repaint();
@@ -1741,29 +2239,120 @@ bool InstrumentScreen::handleSlicerKey(const juce::KeyPress& key, bool /*isEditM
         return true;
     }
 
-    // Left/Right: adjust values for current row
+    // Check if current row is a modulation row (has multiple fields)
+    auto isModRow = [](int row) {
+        auto type = static_cast<SlicerRowType>(row);
+        return type == SlicerRowType::Lfo1 || type == SlicerRowType::Lfo2 ||
+               type == SlicerRowType::Env1 || type == SlicerRowType::Env2;
+    };
+
+    // Tab or Left/Right (without Alt): navigate fields on mod rows
+    if (isModRow(slicerCursorRow_) && !altHeld)
+    {
+        if (keyCode == juce::KeyPress::tabKey || keyCode == juce::KeyPress::rightKey)
+        {
+            slicerCursorField_ = (slicerCursorField_ + 1) % 4;
+            repaint();
+            return true;
+        }
+        if (keyCode == juce::KeyPress::leftKey)
+        {
+            slicerCursorField_ = (slicerCursorField_ + 3) % 4;  // -1 with wrap
+            repaint();
+            return true;
+        }
+    }
+
+    // Alt+Left/Right or +/-: adjust values for current row
     int delta = 0;
-    if (keyCode == juce::KeyPress::rightKey) delta = 1;
-    else if (keyCode == juce::KeyPress::leftKey) delta = -1;
+    if (textChar == '+' || textChar == '=') delta = 1;
+    else if (textChar == '-') delta = -1;
+    // For mod rows, require Alt for arrow keys; for other rows, arrows work directly
+    if (isModRow(slicerCursorRow_)) {
+        if (altHeld && keyCode == juce::KeyPress::rightKey) delta = 1;
+        else if (altHeld && keyCode == juce::KeyPress::leftKey) delta = -1;
+    } else {
+        if (keyCode == juce::KeyPress::rightKey) delta = 1;
+        else if (keyCode == juce::KeyPress::leftKey) delta = -1;
+    }
 
     if (delta != 0) {
+        // Handle modulation rows specially (multi-field)
+        if (isModRow(slicerCursorRow_))
+        {
+            auto& mod = params.modulation;
+            auto rowType = static_cast<SlicerRowType>(slicerCursorRow_);
+
+            model::SamplerLfoParams* lfo = nullptr;
+            model::SamplerModEnvParams* env = nullptr;
+
+            if (rowType == SlicerRowType::Lfo1) lfo = &mod.lfo1;
+            else if (rowType == SlicerRowType::Lfo2) lfo = &mod.lfo2;
+            else if (rowType == SlicerRowType::Env1) env = &mod.env1;
+            else if (rowType == SlicerRowType::Env2) env = &mod.env2;
+
+            if (lfo) {
+                switch (slicerCursorField_) {
+                    case 0: lfo->rateIndex = std::clamp(lfo->rateIndex + delta, 0, 15); break;
+                    case 1: lfo->shapeIndex = std::clamp(lfo->shapeIndex + delta, 0, 4); break;
+                    case 2: lfo->destIndex = std::clamp(lfo->destIndex + delta, 0, static_cast<int>(model::SamplerModDest::NumDestinations) - 1); break;
+                    case 3: lfo->amount = static_cast<int8_t>(std::clamp(static_cast<int>(lfo->amount) + delta, -64, 63)); break;
+                }
+            } else if (env) {
+                float envStep = shiftHeld ? 0.01f : 0.05f;
+                switch (slicerCursorField_) {
+                    case 0: env->attack = std::clamp(env->attack + delta * envStep, 0.001f, 2.0f); break;
+                    case 1: env->decay = std::clamp(env->decay + delta * envStep, 0.001f, 10.0f); break;
+                    case 2: env->destIndex = std::clamp(env->destIndex + delta, 0, static_cast<int>(model::SamplerModDest::NumDestinations) - 1); break;
+                    case 3: env->amount = static_cast<int8_t>(std::clamp(static_cast<int>(env->amount) + delta, -64, 63)); break;
+                }
+            }
+            if (onNotePreview) onNotePreview(60, currentInstrument_);
+            repaint();
+            return true;
+        }
+
         float step = shiftHeld ? 0.01f : 0.05f;
         float bpmStep = shiftHeld ? 0.5f : 5.0f;
         float speedStep = shiftHeld ? 0.01f : 0.05f;
         int pitchStep = shiftHeld ? 1 : 12;
 
-        // Get slicer processor for dependency calculations
-        audio::SlicerInstrument* slicer = nullptr;
-        if (audioEngine_) {
-            slicer = audioEngine_->getSlicerProcessor(currentInstrument_);
-        }
-
         switch (static_cast<SlicerRowType>(slicerCursorRow_)) {
             case SlicerRowType::ChopMode: {
-                // Cycle through chop modes
-                int modeVal = static_cast<int>(params.chopMode);
-                modeVal = (modeVal + delta + 3) % 3;  // 3 modes
-                params.chopMode = static_cast<model::ChopMode>(modeVal);
+                if (shiftHeld) {
+                    // Shift+Left/Right adjusts sub-parameter (divisions or sensitivity)
+                    if (params.chopMode == model::ChopMode::Divisions && slicer) {
+                        params.numDivisions = std::clamp(params.numDivisions + delta, 2, 64);
+                        slicer->chopIntoDivisions(params.numDivisions);
+                        updateSlicerDisplay();
+                    } else if (params.chopMode == model::ChopMode::Transients && slicer) {
+                        params.transientSensitivity = std::clamp(params.transientSensitivity + delta * 0.05f, 0.0f, 1.0f);
+                        slicer->chopByTransients(params.transientSensitivity);
+                        updateSlicerDisplay();
+                    }
+                } else {
+                    // Plain Left/Right cycles through chop modes
+                    int modeVal = static_cast<int>(params.chopMode);
+                    modeVal = (modeVal + delta + 3) % 3;  // 3 modes
+                    model::ChopMode newMode = static_cast<model::ChopMode>(modeVal);
+                    params.chopMode = newMode;
+
+                    // Trigger appropriate chop action when mode changes
+                    if (slicer) {
+                        switch (newMode) {
+                            case model::ChopMode::Divisions:
+                                slicer->chopIntoDivisions(params.numDivisions);
+                                break;
+                            case model::ChopMode::Transients:
+                                slicer->chopByTransients(params.transientSensitivity);
+                                break;
+                            case model::ChopMode::Lazy:
+                                // Don't auto-chop for Lazy mode - user adds slices manually
+                                break;
+                        }
+                        updateSlicerDisplay();
+                    }
+                }
                 break;
             }
             case SlicerRowType::OriginalBars:
@@ -1819,6 +2408,25 @@ bool InstrumentScreen::handleSlicerKey(const juce::KeyPress& key, bool /*isEditM
             case SlicerRowType::Polyphony:
                 params.polyphony = std::clamp(params.polyphony + delta, 1, 8);
                 break;
+            // FX sends
+            case SlicerRowType::Reverb:
+                params.modulation.fxSends.reverb = std::clamp(params.modulation.fxSends.reverb + delta * step, 0.0f, 1.0f);
+                break;
+            case SlicerRowType::Delay:
+                params.modulation.fxSends.delay = std::clamp(params.modulation.fxSends.delay + delta * step, 0.0f, 1.0f);
+                break;
+            case SlicerRowType::Chorus:
+                params.modulation.fxSends.chorus = std::clamp(params.modulation.fxSends.chorus + delta * step, 0.0f, 1.0f);
+                break;
+            case SlicerRowType::Drive:
+                params.modulation.fxSends.drive = std::clamp(params.modulation.fxSends.drive + delta * step, 0.0f, 1.0f);
+                break;
+            case SlicerRowType::Sidechain:
+                {
+                    auto& sends = inst->getSends();
+                    sends.sidechainDuck = std::clamp(sends.sidechainDuck + delta * step, 0.0f, 1.0f);
+                }
+                break;
             case SlicerRowType::Volume:
                 inst->setVolume(std::clamp(inst->getVolume() + delta * step, 0.0f, 1.0f));
                 break;
@@ -1837,7 +2445,7 @@ bool InstrumentScreen::handleSlicerKey(const juce::KeyPress& key, bool /*isEditM
         auto chooser = std::make_shared<juce::FileChooser>(
             "Load Sample",
             juce::File::getSpecialLocation(juce::File::userHomeDirectory),
-            "*.wav;*.aiff;*.aif"
+            "*.wav;*.aiff;*.aif;*.mp3;*.flac;*.ogg"
         );
 
         chooser->launchAsync(
@@ -1871,15 +2479,6 @@ bool InstrumentScreen::handleSlicerKey(const juce::KeyPress& key, bool /*isEditM
         if (sliceWaveformDisplay_) {
             sliceWaveformDisplay_->nextSlice();
             params.currentSlice = sliceWaveformDisplay_->getCurrentSlice();
-            repaint();
-        }
-        return true;
-    }
-
-    // Add slice at cursor: s
-    if (textChar == 's') {
-        if (sliceWaveformDisplay_) {
-            sliceWaveformDisplay_->addSliceAtCursor();
             repaint();
         }
         return true;
@@ -1919,26 +2518,51 @@ bool InstrumentScreen::handleSlicerKey(const juce::KeyPress& key, bool /*isEditM
     return false;
 }
 
-void InstrumentScreen::cycleInstrumentType() {
+void InstrumentScreen::cycleInstrumentType(bool reverse) {
     auto* instrument = project_.getInstrument(currentInstrument_);
     if (!instrument) return;
 
     auto currentType = instrument->getType();
     model::InstrumentType newType;
 
-    switch (currentType) {
-        case model::InstrumentType::Plaits:
-            newType = model::InstrumentType::Sampler;
-            break;
-        case model::InstrumentType::Sampler:
-            newType = model::InstrumentType::Slicer;
-            break;
-        case model::InstrumentType::Slicer:
-            newType = model::InstrumentType::Plaits;
-            break;
-        default:
-            newType = model::InstrumentType::Plaits;
-            break;
+    if (!reverse) {
+        // Forward: Plaits -> Sampler -> Slicer -> VASynth -> Plaits
+        switch (currentType) {
+            case model::InstrumentType::Plaits:
+                newType = model::InstrumentType::Sampler;
+                break;
+            case model::InstrumentType::Sampler:
+                newType = model::InstrumentType::Slicer;
+                break;
+            case model::InstrumentType::Slicer:
+                newType = model::InstrumentType::VASynth;
+                break;
+            case model::InstrumentType::VASynth:
+                newType = model::InstrumentType::Plaits;
+                break;
+            default:
+                newType = model::InstrumentType::Plaits;
+                break;
+        }
+    } else {
+        // Reverse: Plaits -> VASynth -> Slicer -> Sampler -> Plaits
+        switch (currentType) {
+            case model::InstrumentType::Plaits:
+                newType = model::InstrumentType::VASynth;
+                break;
+            case model::InstrumentType::VASynth:
+                newType = model::InstrumentType::Slicer;
+                break;
+            case model::InstrumentType::Slicer:
+                newType = model::InstrumentType::Sampler;
+                break;
+            case model::InstrumentType::Sampler:
+                newType = model::InstrumentType::Plaits;
+                break;
+            default:
+                newType = model::InstrumentType::Plaits;
+                break;
+        }
     }
 
     instrument->setType(newType);
@@ -1984,6 +2608,658 @@ void InstrumentScreen::setCurrentInstrument(int index) {
         }
     }
     repaint();
+}
+
+// ============================================================================
+// VA Synth UI
+// ============================================================================
+
+void InstrumentScreen::paintVASynthUI(juce::Graphics& g) {
+    auto area = getLocalBounds();
+    area.removeFromTop(30);  // Instrument tabs
+    area.removeFromTop(26);  // Type selector
+
+    auto* inst = project_.getInstrument(currentInstrument_);
+    if (!inst || inst->getType() != model::InstrumentType::VASynth) return;
+
+    const auto& params = inst->getVAParams();
+    const auto& modParams = params.modulation;
+
+    // Header bar
+    auto headerArea = area.removeFromTop(30);
+    g.setColour(headerColor);
+    g.fillRect(headerArea);
+
+    g.setColour(fgColor);
+    g.setFont(18.0f);
+    juce::String title = "VA SYNTH: ";
+    if (editingName_)
+        title += juce::String(nameBuffer_) + "_";
+    else
+        title += juce::String(inst->getName());
+    g.drawText(title, headerArea.reduced(10, 0), juce::Justification::centredLeft, true);
+
+    area = area.reduced(5, 2);
+
+    // Split into two columns
+    int colWidth = area.getWidth() / 2;
+    auto leftCol = area.removeFromLeft(colWidth);
+    auto rightCol = area;
+
+    // Helper: determine which column a row belongs to
+    // Left column: rows 0-18 (OSC1/2/3, Noise, Filter, AmpEnv)
+    // Right column: rows 19-35 (FilterEnv, Glide, Poly, Mods, FX, Output)
+    auto isLeftColumn = [](int row) {
+        return row <= static_cast<int>(VASynthRowType::AmpRelease);
+    };
+
+    // Waveform names for display
+    const char* waveformNames[] = {"SAW", "SQR", "TRI", "PLS", "SIN"};
+    constexpr int kRowH = 24;  // Match Plaits row height
+    constexpr int kVABarWidth = 100;  // Narrower bars for two-column layout
+
+    // Lambda to draw a simple row (no slider bar)
+    auto drawRow = [&](juce::Rectangle<int>& col, int rowIndex, const char* label, const juce::String& value) {
+        auto rowArea = col.removeFromTop(kRowH);
+        bool isSelected = (rowIndex == vaSynthCursorRow_);
+        bool inActiveCol = (vaSynthCursorCol_ == 0 && isLeftColumn(rowIndex)) ||
+                           (vaSynthCursorCol_ == 1 && !isLeftColumn(rowIndex));
+
+        if (isSelected && inActiveCol) {
+            g.setColour(highlightColor.withAlpha(0.3f));
+            g.fillRect(rowArea);
+        }
+
+        g.setColour((isSelected && inActiveCol) ? cursorColor : fgColor);
+        g.setFont(14.0f);
+        g.drawText(label, rowArea.removeFromLeft(70), juce::Justification::centredLeft);
+
+        g.setColour((isSelected && inActiveCol) ? cursorColor : fgColor);
+        g.setFont(14.0f);
+        g.drawText(value, rowArea, juce::Justification::centredLeft);
+    };
+
+    // Lambda to draw a slider row (with bar like Plaits)
+    auto drawSliderRow = [&](juce::Rectangle<int>& col, int rowIndex, const char* label, float value, const juce::String& valueText) {
+        auto rowArea = col.removeFromTop(kRowH);
+        bool isSelected = (rowIndex == vaSynthCursorRow_);
+        bool inActiveCol = (vaSynthCursorCol_ == 0 && isLeftColumn(rowIndex)) ||
+                           (vaSynthCursorCol_ == 1 && !isLeftColumn(rowIndex));
+
+        if (isSelected && inActiveCol) {
+            g.setColour(highlightColor.withAlpha(0.3f));
+            g.fillRect(rowArea);
+        }
+
+        g.setColour((isSelected && inActiveCol) ? cursorColor : fgColor);
+        g.setFont(14.0f);
+        g.drawText(label, rowArea.removeFromLeft(70), juce::Justification::centredLeft);
+
+        // Slider bar (Plaits style)
+        int barX = rowArea.getX();
+        int barY = rowArea.getY() + (kRowH - 10) / 2;
+        g.setColour(juce::Colour(0xff303030));
+        g.fillRect(barX, barY, kVABarWidth, 10);
+        g.setColour((isSelected && inActiveCol) ? cursorColor : juce::Colour(0xff4a9090));
+        g.fillRect(barX, barY, static_cast<int>(kVABarWidth * value), 10);
+
+        // Value text
+        g.setColour((isSelected && inActiveCol) ? cursorColor : fgColor);
+        g.setFont(14.0f);
+        g.drawText(valueText, barX + kVABarWidth + 8, rowArea.getY(), 60, kRowH, juce::Justification::centredLeft);
+    };
+
+    // Lambda for section headers
+    auto drawHeader = [&](juce::Rectangle<int>& col, const char* text) {
+        col.removeFromTop(4);
+        g.setColour(fgColor.darker(0.5f));
+        g.setFont(12.0f);
+        g.drawText(text, col.removeFromTop(16), juce::Justification::centredLeft);
+    };
+
+    // Lambda for mod rows (4 fields) - Plaits style with gray boxes
+    auto drawModRow = [&](juce::Rectangle<int>& col, int rowIndex, const char* label, bool isEnv,
+                          int rateOrAttack, int shapeOrDecay, int dest, int amount) {
+        auto rowArea = col.removeFromTop(kRowH);
+        bool isSelected = (rowIndex == vaSynthCursorRow_);
+        bool inActiveCol = (vaSynthCursorCol_ == 1);  // Mod rows are in right column
+
+        if (isSelected && inActiveCol) {
+            g.setColour(highlightColor.withAlpha(0.3f));
+            g.fillRect(rowArea);
+        }
+
+        g.setColour((isSelected && inActiveCol) ? cursorColor : fgColor);
+        g.setFont(14.0f);
+        g.drawText(label, rowArea.removeFromLeft(40), juce::Justification::centredLeft);
+
+        int fw = 50;
+        int fieldGap = 4;
+        for (int f = 0; f < 4; ++f) {
+            bool fieldSel = isSelected && inActiveCol && (vaSynthCursorField_ == f);
+            juce::String str;
+            if (f == 0) str = isEnv ? (juce::String(rateOrAttack) + "%") : getLfoRateName(rateOrAttack);
+            else if (f == 1) str = isEnv ? (juce::String(shapeOrDecay) + "%") : getLfoShapeName(shapeOrDecay);
+            else if (f == 2) str = model::getModDestName(static_cast<model::SamplerModDest>(dest));
+            else str = (amount >= 0 ? "+" : "") + juce::String(amount);
+
+            // Gray background box (Plaits style)
+            g.setColour(fieldSel ? cursorColor : juce::Colour(0xff606060));
+            g.fillRect(rowArea.getX(), rowArea.getY() + 4, fw, kRowH - 8);
+            g.setColour(fieldSel ? juce::Colours::black : fgColor);
+            g.setFont(14.0f);
+            g.drawText(str, rowArea.getX(), rowArea.getY(), fw, kRowH, juce::Justification::centred);
+            rowArea.removeFromLeft(fw + fieldGap);
+        }
+    };
+
+    // ===== LEFT COLUMN =====
+    drawHeader(leftCol, "-- OSC 1 --");
+    drawRow(leftCol, static_cast<int>(VASynthRowType::Osc1Waveform), "WAVE", waveformNames[std::clamp(params.osc1.waveform, 0, 4)]);
+    drawRow(leftCol, static_cast<int>(VASynthRowType::Osc1Octave), "OCT", juce::String(params.osc1.octave > 0 ? "+" : "") + juce::String(params.osc1.octave));
+    drawSliderRow(leftCol, static_cast<int>(VASynthRowType::Osc1Level), "LEVEL", params.osc1.level, juce::String(static_cast<int>(params.osc1.level * 100)) + "%");
+
+    drawHeader(leftCol, "-- OSC 2 --");
+    drawRow(leftCol, static_cast<int>(VASynthRowType::Osc2Waveform), "WAVE", waveformNames[std::clamp(params.osc2.waveform, 0, 4)]);
+    drawRow(leftCol, static_cast<int>(VASynthRowType::Osc2Octave), "OCT", juce::String(params.osc2.octave > 0 ? "+" : "") + juce::String(params.osc2.octave));
+    drawRow(leftCol, static_cast<int>(VASynthRowType::Osc2Detune), "DETUNE", juce::String(static_cast<int>(params.osc2.cents)) + "c");
+    drawSliderRow(leftCol, static_cast<int>(VASynthRowType::Osc2Level), "LEVEL", params.osc2.level, juce::String(static_cast<int>(params.osc2.level * 100)) + "%");
+
+    drawHeader(leftCol, "-- OSC 3 --");
+    drawRow(leftCol, static_cast<int>(VASynthRowType::Osc3Waveform), "WAVE", waveformNames[std::clamp(params.osc3.waveform, 0, 4)]);
+    drawRow(leftCol, static_cast<int>(VASynthRowType::Osc3Octave), "OCT", juce::String(params.osc3.octave > 0 ? "+" : "") + juce::String(params.osc3.octave));
+    drawRow(leftCol, static_cast<int>(VASynthRowType::Osc3Detune), "DETUNE", juce::String(static_cast<int>(params.osc3.cents)) + "c");
+    drawSliderRow(leftCol, static_cast<int>(VASynthRowType::Osc3Level), "LEVEL", params.osc3.level, juce::String(static_cast<int>(params.osc3.level * 100)) + "%");
+
+    drawHeader(leftCol, "-- NOISE --");
+    drawSliderRow(leftCol, static_cast<int>(VASynthRowType::NoiseLevel), "LEVEL", params.noiseLevel, juce::String(static_cast<int>(params.noiseLevel * 100)) + "%");
+
+    drawHeader(leftCol, "-- FILTER --");
+    drawSliderRow(leftCol, static_cast<int>(VASynthRowType::FilterCutoff), "CUTOFF", params.filter.cutoff, juce::String(static_cast<int>(params.filter.cutoff * 100)) + "%");
+    drawSliderRow(leftCol, static_cast<int>(VASynthRowType::FilterResonance), "RESON", params.filter.resonance, juce::String(static_cast<int>(params.filter.resonance * 100)) + "%");
+    drawSliderRow(leftCol, static_cast<int>(VASynthRowType::FilterEnvAmount), "ENV AMT", params.filter.envAmount, juce::String(static_cast<int>(params.filter.envAmount * 100)) + "%");
+
+    drawHeader(leftCol, "-- AMP ENV --");
+    drawSliderRow(leftCol, static_cast<int>(VASynthRowType::AmpAttack), "ATTACK", params.ampEnv.attack, juce::String(static_cast<int>(params.ampEnv.attack * 100)) + "%");
+    drawSliderRow(leftCol, static_cast<int>(VASynthRowType::AmpDecay), "DECAY", params.ampEnv.decay, juce::String(static_cast<int>(params.ampEnv.decay * 100)) + "%");
+    drawSliderRow(leftCol, static_cast<int>(VASynthRowType::AmpSustain), "SUSTAIN", params.ampEnv.sustain, juce::String(static_cast<int>(params.ampEnv.sustain * 100)) + "%");
+    drawSliderRow(leftCol, static_cast<int>(VASynthRowType::AmpRelease), "RELEASE", params.ampEnv.release, juce::String(static_cast<int>(params.ampEnv.release * 100)) + "%");
+
+    // ===== RIGHT COLUMN =====
+    drawHeader(rightCol, "-- FILTER ENV --");
+    drawSliderRow(rightCol, static_cast<int>(VASynthRowType::FilterAttack), "ATTACK", params.filterEnv.attack, juce::String(static_cast<int>(params.filterEnv.attack * 100)) + "%");
+    drawSliderRow(rightCol, static_cast<int>(VASynthRowType::FilterDecay), "DECAY", params.filterEnv.decay, juce::String(static_cast<int>(params.filterEnv.decay * 100)) + "%");
+    drawSliderRow(rightCol, static_cast<int>(VASynthRowType::FilterSustain), "SUSTAIN", params.filterEnv.sustain, juce::String(static_cast<int>(params.filterEnv.sustain * 100)) + "%");
+    drawSliderRow(rightCol, static_cast<int>(VASynthRowType::FilterRelease), "RELEASE", params.filterEnv.release, juce::String(static_cast<int>(params.filterEnv.release * 100)) + "%");
+
+    drawHeader(rightCol, "-- VOICE --");
+    drawSliderRow(rightCol, static_cast<int>(VASynthRowType::Glide), "GLIDE", params.glide, juce::String(static_cast<int>(params.glide * 100)) + "%");
+    juce::String polyStr = params.monoMode ? "MONO" : juce::String(params.polyphony);
+    drawRow(rightCol, static_cast<int>(VASynthRowType::Polyphony), "VOICES", polyStr);
+
+    drawHeader(rightCol, "-- MODULATION --");
+    drawModRow(rightCol, static_cast<int>(VASynthRowType::Lfo1), "LFO1", false,
+               modParams.lfo1.rateIndex, modParams.lfo1.shapeIndex, modParams.lfo1.destIndex, modParams.lfo1.amount);
+    drawModRow(rightCol, static_cast<int>(VASynthRowType::Lfo2), "LFO2", false,
+               modParams.lfo2.rateIndex, modParams.lfo2.shapeIndex, modParams.lfo2.destIndex, modParams.lfo2.amount);
+    drawModRow(rightCol, static_cast<int>(VASynthRowType::Env1), "ENV1", true,
+               static_cast<int>(modParams.env1.attack * 100), static_cast<int>(modParams.env1.decay * 100),
+               modParams.env1.destIndex, modParams.env1.amount);
+    drawModRow(rightCol, static_cast<int>(VASynthRowType::Env2), "ENV2", true,
+               static_cast<int>(modParams.env2.attack * 100), static_cast<int>(modParams.env2.decay * 100),
+               modParams.env2.destIndex, modParams.env2.amount);
+
+    drawHeader(rightCol, "-- FX SENDS --");
+    drawSliderRow(rightCol, static_cast<int>(VASynthRowType::Reverb), "REVERB", modParams.fxSends.reverb, juce::String(static_cast<int>(modParams.fxSends.reverb * 100)) + "%");
+    drawSliderRow(rightCol, static_cast<int>(VASynthRowType::Delay), "DELAY", modParams.fxSends.delay, juce::String(static_cast<int>(modParams.fxSends.delay * 100)) + "%");
+    drawSliderRow(rightCol, static_cast<int>(VASynthRowType::Chorus), "CHORUS", modParams.fxSends.chorus, juce::String(static_cast<int>(modParams.fxSends.chorus * 100)) + "%");
+    drawSliderRow(rightCol, static_cast<int>(VASynthRowType::Drive), "DRIVE", modParams.fxSends.drive, juce::String(static_cast<int>(modParams.fxSends.drive * 100)) + "%");
+    drawSliderRow(rightCol, static_cast<int>(VASynthRowType::Sidechain), "SIDECHAIN", inst->getSends().sidechainDuck, juce::String(static_cast<int>(inst->getSends().sidechainDuck * 100)) + "%");
+
+    drawHeader(rightCol, "-- OUTPUT --");
+    drawSliderRow(rightCol, static_cast<int>(VASynthRowType::Volume), "VOLUME", params.masterLevel, juce::String(static_cast<int>(params.masterLevel * 100)) + "%");
+    float pan = inst->getPan();
+    float panNorm = (pan + 1.0f) / 2.0f;  // Convert -1..1 to 0..1 for bar display
+    juce::String panStr = pan < -0.01f ? ("L" + juce::String(static_cast<int>(-pan * 100)))
+                        : pan > 0.01f ? ("R" + juce::String(static_cast<int>(pan * 100))) : "C";
+    drawSliderRow(rightCol, static_cast<int>(VASynthRowType::Pan), "PAN", panNorm, panStr);
+}
+
+bool InstrumentScreen::handleVASynthKey(const juce::KeyPress& key, bool /*isEditMode*/) {
+    auto* instrument = project_.getInstrument(currentInstrument_);
+    if (!instrument || instrument->getType() != model::InstrumentType::VASynth) return false;
+
+    auto textChar = key.getTextCharacter();
+
+    // '[' and ']' switch instruments quickly - handle before VA synth specific keys
+    if (textChar == '[')
+    {
+        int numInstruments = project_.getInstrumentCount();
+        if (numInstruments > 0)
+            currentInstrument_ = (currentInstrument_ - 1 + numInstruments) % numInstruments;
+        repaint();
+        return true;
+    }
+    if (textChar == ']')
+    {
+        int numInstruments = project_.getInstrumentCount();
+        if (numInstruments > 0)
+            currentInstrument_ = (currentInstrument_ + 1) % numInstruments;
+        repaint();
+        return true;
+    }
+
+    auto& params = instrument->getVAParams();
+    auto keyCode = key.getKeyCode();
+    bool shift = key.getModifiers().isShiftDown();
+
+    float delta = shift ? 0.01f : 0.05f;
+    int intDelta = shift ? 1 : 1;
+
+    auto wrapWaveform = [](int current, int d) {
+        int next = current + d;
+        if (next < 0) next = 4;
+        if (next > 4) next = 0;
+        return next;
+    };
+
+    auto clampFloat = [](float& value, float d) {
+        value = std::clamp(value + d, 0.0f, 1.0f);
+    };
+
+    // Check if current row is a modulation row (has multiple fields)
+    auto isModRow = [](int row) {
+        auto type = static_cast<VASynthRowType>(row);
+        return type == VASynthRowType::Lfo1 || type == VASynthRowType::Lfo2 ||
+               type == VASynthRowType::Env1 || type == VASynthRowType::Env2;
+    };
+
+    bool altHeld = key.getModifiers().isAltDown();
+
+    // On mod rows: Tab or Left/Right (without Alt) navigate fields
+    if (isModRow(vaSynthCursorRow_) && !altHeld) {
+        if (keyCode == juce::KeyPress::tabKey || keyCode == juce::KeyPress::rightKey) {
+            vaSynthCursorField_ = (vaSynthCursorField_ + 1) % 4;
+            repaint();
+            return true;
+        }
+        if (keyCode == juce::KeyPress::leftKey) {
+            vaSynthCursorField_ = (vaSynthCursorField_ + 3) % 4;  // -1 with wrap
+            repaint();
+            return true;
+        }
+    }
+
+    // Column navigation with Left/Right (when not holding Alt, and NOT on mod row)
+    if (keyCode == juce::KeyPress::leftKey && !altHeld && !isModRow(vaSynthCursorRow_)) {
+        if (vaSynthCursorCol_ == 1) {
+            vaSynthCursorCol_ = 0;
+            // Keep same relative row position if possible, otherwise clamp
+            if (vaSynthCursorRow_ > static_cast<int>(VASynthRowType::AmpRelease)) {
+                vaSynthCursorRow_ = static_cast<int>(VASynthRowType::AmpRelease);
+            }
+            vaSynthCursorField_ = 0;
+        }
+        repaint();
+        return true;
+    }
+    if (keyCode == juce::KeyPress::rightKey && !altHeld && !isModRow(vaSynthCursorRow_)) {
+        if (vaSynthCursorCol_ == 0) {
+            vaSynthCursorCol_ = 1;
+            // Map to corresponding row in right column (preserve relative position)
+            // Left column has 19 rows (0-18), right has 17 (19-35)
+            int leftMax = static_cast<int>(VASynthRowType::AmpRelease);
+            int rightMin = static_cast<int>(VASynthRowType::FilterAttack);
+            int rightMax = static_cast<int>(VASynthRowType::Pan);
+            int rightRange = rightMax - rightMin;
+            // Map proportionally
+            float ratio = static_cast<float>(vaSynthCursorRow_) / static_cast<float>(leftMax);
+            vaSynthCursorRow_ = rightMin + static_cast<int>(ratio * rightRange);
+            vaSynthCursorRow_ = std::clamp(vaSynthCursorRow_, rightMin, rightMax);
+            vaSynthCursorField_ = 0;
+        }
+        repaint();
+        return true;
+    }
+
+    // Row navigation with Up/Down within current column
+    if (keyCode == juce::KeyPress::upKey) {
+        if (vaSynthCursorCol_ == 0) {
+            // Left column: 0 to AmpRelease (18)
+            vaSynthCursorRow_ = std::max(0, vaSynthCursorRow_ - 1);
+        } else {
+            // Right column: FilterAttack (19) to Pan
+            int minRow = static_cast<int>(VASynthRowType::FilterAttack);
+            vaSynthCursorRow_ = std::max(minRow, vaSynthCursorRow_ - 1);
+        }
+        vaSynthCursorField_ = 0;
+        repaint();
+        return true;
+    }
+    if (keyCode == juce::KeyPress::downKey) {
+        if (vaSynthCursorCol_ == 0) {
+            // Left column: max is AmpRelease (18)
+            int maxRow = static_cast<int>(VASynthRowType::AmpRelease);
+            vaSynthCursorRow_ = std::min(maxRow, vaSynthCursorRow_ + 1);
+        } else {
+            // Right column: max is Pan
+            int maxRow = static_cast<int>(VASynthRowType::Pan);
+            vaSynthCursorRow_ = std::min(maxRow, vaSynthCursorRow_ + 1);
+        }
+        vaSynthCursorField_ = 0;
+        repaint();
+        return true;
+    }
+
+    // Value adjustment - ALWAYS requires Alt+arrows or +/-
+    int valueDelta = 0;
+    if (textChar == '-') valueDelta = -1;
+    if (textChar == '+' || textChar == '=') valueDelta = 1;
+    if (altHeld && keyCode == juce::KeyPress::leftKey) valueDelta = -1;
+    if (altHeld && keyCode == juce::KeyPress::rightKey) valueDelta = 1;
+
+    if (valueDelta != 0) {
+        switch (static_cast<VASynthRowType>(vaSynthCursorRow_)) {
+            case VASynthRowType::Osc1Waveform:
+                params.osc1.waveform = wrapWaveform(params.osc1.waveform, valueDelta);
+                break;
+            case VASynthRowType::Osc1Octave:
+                params.osc1.octave = std::clamp(params.osc1.octave + valueDelta, -2, 2);
+                break;
+            case VASynthRowType::Osc1Level:
+                clampFloat(params.osc1.level, valueDelta * delta);
+                break;
+            case VASynthRowType::Osc2Waveform:
+                params.osc2.waveform = wrapWaveform(params.osc2.waveform, valueDelta);
+                break;
+            case VASynthRowType::Osc2Octave:
+                params.osc2.octave = std::clamp(params.osc2.octave + valueDelta, -2, 2);
+                break;
+            case VASynthRowType::Osc2Detune:
+                params.osc2.cents = std::clamp(params.osc2.cents + valueDelta * (shift ? 1.0f : 5.0f), -50.0f, 50.0f);
+                break;
+            case VASynthRowType::Osc2Level:
+                clampFloat(params.osc2.level, valueDelta * delta);
+                break;
+            case VASynthRowType::Osc3Waveform:
+                params.osc3.waveform = wrapWaveform(params.osc3.waveform, valueDelta);
+                break;
+            case VASynthRowType::Osc3Octave:
+                params.osc3.octave = std::clamp(params.osc3.octave + valueDelta, -2, 2);
+                break;
+            case VASynthRowType::Osc3Detune:
+                params.osc3.cents = std::clamp(params.osc3.cents + valueDelta * (shift ? 1.0f : 5.0f), -50.0f, 50.0f);
+                break;
+            case VASynthRowType::Osc3Level:
+                clampFloat(params.osc3.level, valueDelta * delta);
+                break;
+            case VASynthRowType::NoiseLevel:
+                clampFloat(params.noiseLevel, valueDelta * delta);
+                break;
+            case VASynthRowType::FilterCutoff:
+                clampFloat(params.filter.cutoff, valueDelta * delta);
+                break;
+            case VASynthRowType::FilterResonance:
+                clampFloat(params.filter.resonance, valueDelta * delta);
+                break;
+            case VASynthRowType::FilterEnvAmount:
+                clampFloat(params.filter.envAmount, valueDelta * delta);
+                break;
+            case VASynthRowType::AmpAttack:
+                clampFloat(params.ampEnv.attack, valueDelta * delta);
+                break;
+            case VASynthRowType::AmpDecay:
+                clampFloat(params.ampEnv.decay, valueDelta * delta);
+                break;
+            case VASynthRowType::AmpSustain:
+                clampFloat(params.ampEnv.sustain, valueDelta * delta);
+                break;
+            case VASynthRowType::AmpRelease:
+                clampFloat(params.ampEnv.release, valueDelta * delta);
+                break;
+            case VASynthRowType::FilterAttack:
+                clampFloat(params.filterEnv.attack, valueDelta * delta);
+                break;
+            case VASynthRowType::FilterDecay:
+                clampFloat(params.filterEnv.decay, valueDelta * delta);
+                break;
+            case VASynthRowType::FilterSustain:
+                clampFloat(params.filterEnv.sustain, valueDelta * delta);
+                break;
+            case VASynthRowType::FilterRelease:
+                clampFloat(params.filterEnv.release, valueDelta * delta);
+                break;
+            case VASynthRowType::Glide:
+                clampFloat(params.glide, valueDelta * delta);
+                break;
+            case VASynthRowType::Polyphony:
+                // Left decreases (towards mono), Right increases
+                if (params.monoMode && valueDelta > 0) {
+                    // Switch from mono to poly (1 voice)
+                    params.monoMode = false;
+                    params.polyphony = 1;
+                } else if (!params.monoMode && params.polyphony == 1 && valueDelta < 0) {
+                    // Switch from 1 voice to mono
+                    params.monoMode = true;
+                } else if (!params.monoMode) {
+                    // Adjust voice count
+                    params.polyphony = std::clamp(params.polyphony + valueDelta, 1, 16);
+                }
+                break;
+            case VASynthRowType::Volume:
+                clampFloat(params.masterLevel, valueDelta * delta);
+                break;
+            case VASynthRowType::Pan:
+                instrument->setPan(std::clamp(instrument->getPan() + valueDelta * delta, -1.0f, 1.0f));
+                break;
+
+            // Modulation rows - 4 fields each
+            case VASynthRowType::Lfo1:
+                {
+                    auto& lfo = params.modulation.lfo1;
+                    switch (vaSynthCursorField_) {
+                        case 0: lfo.rateIndex = std::clamp(lfo.rateIndex + valueDelta, 0, 15); break;
+                        case 1: lfo.shapeIndex = std::clamp(lfo.shapeIndex + valueDelta, 0, 4); break;
+                        case 2: lfo.destIndex = std::clamp(lfo.destIndex + valueDelta, 0, 8); break;
+                        case 3: lfo.amount = static_cast<int8_t>(std::clamp(static_cast<int>(lfo.amount) + valueDelta, -64, 63)); break;
+                    }
+                }
+                break;
+            case VASynthRowType::Lfo2:
+                {
+                    auto& lfo = params.modulation.lfo2;
+                    switch (vaSynthCursorField_) {
+                        case 0: lfo.rateIndex = std::clamp(lfo.rateIndex + valueDelta, 0, 15); break;
+                        case 1: lfo.shapeIndex = std::clamp(lfo.shapeIndex + valueDelta, 0, 4); break;
+                        case 2: lfo.destIndex = std::clamp(lfo.destIndex + valueDelta, 0, 8); break;
+                        case 3: lfo.amount = static_cast<int8_t>(std::clamp(static_cast<int>(lfo.amount) + valueDelta, -64, 63)); break;
+                    }
+                }
+                break;
+            case VASynthRowType::Env1:
+                {
+                    auto& env = params.modulation.env1;
+                    switch (vaSynthCursorField_) {
+                        case 0: env.attack = std::clamp(env.attack + valueDelta * delta, 0.0f, 1.0f); break;
+                        case 1: env.decay = std::clamp(env.decay + valueDelta * delta, 0.0f, 1.0f); break;
+                        case 2: env.destIndex = std::clamp(env.destIndex + valueDelta, 0, 8); break;
+                        case 3: env.amount = static_cast<int8_t>(std::clamp(static_cast<int>(env.amount) + valueDelta, -64, 63)); break;
+                    }
+                }
+                break;
+            case VASynthRowType::Env2:
+                {
+                    auto& env = params.modulation.env2;
+                    switch (vaSynthCursorField_) {
+                        case 0: env.attack = std::clamp(env.attack + valueDelta * delta, 0.0f, 1.0f); break;
+                        case 1: env.decay = std::clamp(env.decay + valueDelta * delta, 0.0f, 1.0f); break;
+                        case 2: env.destIndex = std::clamp(env.destIndex + valueDelta, 0, 8); break;
+                        case 3: env.amount = static_cast<int8_t>(std::clamp(static_cast<int>(env.amount) + valueDelta, -64, 63)); break;
+                    }
+                }
+                break;
+
+            // FX Sends
+            case VASynthRowType::Reverb:
+                params.modulation.fxSends.reverb = std::clamp(params.modulation.fxSends.reverb + valueDelta * delta, 0.0f, 1.0f);
+                break;
+            case VASynthRowType::Delay:
+                params.modulation.fxSends.delay = std::clamp(params.modulation.fxSends.delay + valueDelta * delta, 0.0f, 1.0f);
+                break;
+            case VASynthRowType::Chorus:
+                params.modulation.fxSends.chorus = std::clamp(params.modulation.fxSends.chorus + valueDelta * delta, 0.0f, 1.0f);
+                break;
+            case VASynthRowType::Drive:
+                params.modulation.fxSends.drive = std::clamp(params.modulation.fxSends.drive + valueDelta * delta, 0.0f, 1.0f);
+                break;
+            case VASynthRowType::Sidechain:
+                {
+                    auto& sends = instrument->getSends();
+                    sends.sidechainDuck = std::clamp(sends.sidechainDuck + valueDelta * delta, 0.0f, 1.0f);
+                }
+                break;
+
+            default:
+                break;
+        }
+        // Trigger preview note after any value change
+        if (onNotePreview) onNotePreview(60, currentInstrument_);
+        repaint();
+        return true;
+    }
+
+    return false;
+}
+
+bool InstrumentScreen::isInterestedInFileDrag(const juce::StringArray& files) {
+    // Only interested if we're on a Sampler or Slicer instrument
+    auto* inst = project_.getInstrument(currentInstrument_);
+    if (!inst) return false;
+
+    auto type = inst->getType();
+    if (type != model::InstrumentType::Sampler && type != model::InstrumentType::Slicer)
+        return false;
+
+    // Check if any file is an audio file
+    for (const auto& filePath : files) {
+        juce::File file(filePath);
+        auto ext = file.getFileExtension().toLowerCase();
+        if (ext == ".wav" || ext == ".aiff" || ext == ".aif" ||
+            ext == ".mp3" || ext == ".flac" || ext == ".ogg")
+            return true;
+    }
+    return false;
+}
+
+void InstrumentScreen::filesDropped(const juce::StringArray& files, int /*x*/, int /*y*/) {
+    if (!audioEngine_) return;
+
+    auto* inst = project_.getInstrument(currentInstrument_);
+    if (!inst) return;
+
+    // Find first valid audio file
+    juce::File audioFile;
+    for (const auto& filePath : files) {
+        juce::File file(filePath);
+        auto ext = file.getFileExtension().toLowerCase();
+        if (ext == ".wav" || ext == ".aiff" || ext == ".aif" ||
+            ext == ".mp3" || ext == ".flac" || ext == ".ogg") {
+            audioFile = file;
+            break;
+        }
+    }
+
+    if (!audioFile.existsAsFile()) return;
+
+    auto type = inst->getType();
+
+    if (type == model::InstrumentType::Sampler) {
+        if (auto* sampler = audioEngine_->getSamplerProcessor(currentInstrument_)) {
+            sampler->setInstrument(inst);
+            if (sampler->loadSample(audioFile)) {
+                updateSamplerDisplay();
+                repaint();
+            }
+        }
+    }
+    else if (type == model::InstrumentType::Slicer) {
+        if (auto* slicer = audioEngine_->getSlicerProcessor(currentInstrument_)) {
+            slicer->setInstrument(inst);
+            slicer->loadSample(audioFile);
+            updateSlicerDisplay();
+            repaint();
+        }
+    }
+}
+
+std::vector<HelpSection> InstrumentScreen::getHelpContent() const
+{
+    // Get current instrument type for context-specific help
+    auto* inst = project_.getInstrument(currentInstrument_);
+    auto type = inst ? inst->getType() : model::InstrumentType::Plaits;
+
+    std::vector<HelpSection> sections;
+
+    // Navigation - common to all types
+    sections.push_back({"Navigation", {
+        {"Up/Down", "Move between parameters"},
+        {"[  ]", "Previous/Next instrument"},
+        {"Tab / Shift+Tab", "Cycle instrument type"},
+        {"Shift+N", "Create new instrument"},
+        {"r", "Rename instrument"},
+    }});
+
+    // Type-specific help
+    if (type == model::InstrumentType::Plaits) {
+        sections.push_back({"Plaits Synth", {
+            {"Left/Right", "Switch instruments (non-mod rows)"},
+            {"Left/Right", "Navigate fields (mod rows)"},
+            {"+/- or L/R", "Adjust parameter value"},
+            {"Shift", "Fine adjustment (hold)"},
+        }});
+        sections.push_back({"Presets", {
+            {"Left/Right", "Cycle presets (on Preset row)"},
+        }});
+    }
+    else if (type == model::InstrumentType::VASynth) {
+        sections.push_back({"VA Synth", {
+            {"Left/Right", "Switch instruments"},
+            {"+/- or L/R", "Adjust parameter value"},
+            {"Shift", "Fine adjustment (hold)"},
+        }});
+    }
+    else if (type == model::InstrumentType::Sampler) {
+        sections.push_back({"Sampler", {
+            {"Drag & Drop", "Load audio file"},
+            {"Left/Right", "Switch instruments"},
+            {"+/-", "Adjust parameter value"},
+        }});
+    }
+    else if (type == model::InstrumentType::Slicer) {
+        sections.push_back({"Slicer", {
+            {"Drag & Drop", "Load audio file"},
+            {"Left/Right", "Switch instruments"},
+            {"+/-", "Adjust parameter value"},
+            {":chop N", "Divide into N equal slices"},
+        }});
+    }
+
+    // Modulation - common to all
+    sections.push_back({"Modulation (LFO/ENV)", {
+        {"Left/Right", "Navigate: Rate, Shape, Dest, Amount"},
+        {"Alt+Up/Down", "Adjust selected field"},
+        {"+/-", "Adjust selected field"},
+    }});
+
+    // Commands
+    sections.push_back({"Commands", {
+        {":sampler", "Create sampler instrument"},
+        {":slicer", "Create slicer instrument"},
+        {":save-preset name", "Save as user preset"},
+        {":delete-preset name", "Delete user preset"},
+    }});
+
+    return sections;
 }
 
 } // namespace ui

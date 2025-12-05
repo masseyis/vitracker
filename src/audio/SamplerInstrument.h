@@ -3,6 +3,7 @@
 #include "InstrumentProcessor.h"
 #include "SamplerVoice.h"
 #include "../model/Instrument.h"
+#include "../dsp/sampler_modulation.h"
 #include <JuceHeader.h>
 #include <array>
 #include <memory>
@@ -12,6 +13,7 @@ namespace audio {
 class SamplerInstrument : public InstrumentProcessor {
 public:
     static constexpr int NUM_VOICES = 8;
+    static constexpr int kMaxBlockSize = 512;
 
     SamplerInstrument();
     ~SamplerInstrument() override = default;
@@ -44,18 +46,41 @@ public:
     const juce::AudioBuffer<float>& getSampleBuffer() const { return sampleBuffer_; }
     int getSampleRate() const { return loadedSampleRate_; }
 
+    // Playhead position for UI display (-1 if no voice active)
+    int64_t getPlayheadPosition() const;
+
+    // Modulation access for UI
+    const dsp::SamplerModulationMatrix& getModMatrix() const { return modMatrix_; }
+
+    // Modulated values for UI visualization
+    float getModulatedVolume() const;
+    float getModulatedCutoff() const;
+    float getModulatedResonance() const;
+
+    // Set tempo for tempo-synced LFOs
+    void setTempo(double bpm);
+
 private:
     SamplerVoice* findFreeVoice();
     SamplerVoice* findVoiceToSteal();
+    void updateModulationParams();
+    void applyModulation(float* outL, float* outR, int numSamples);
 
     model::Instrument* instrument_ = nullptr;
     double sampleRate_ = 48000.0;
+    double tempo_ = 120.0;
+    int activeVoiceCount_ = 0;
 
     std::array<SamplerVoice, NUM_VOICES> voices_;
     juce::AudioBuffer<float> sampleBuffer_;
     int loadedSampleRate_ = 44100;
 
     juce::AudioFormatManager formatManager_;
+    dsp::SamplerModulationMatrix modMatrix_;
+
+    // Temporary buffers for processing
+    std::array<float, kMaxBlockSize> tempBufferL_;
+    std::array<float, kMaxBlockSize> tempBufferR_;
 };
 
 } // namespace audio

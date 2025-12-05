@@ -69,6 +69,9 @@ struct SlicerParams {
     AdsrParams ampEnvelope;
     float filterEnvAmount = 0.0f;
     AdsrParams filterEnvelope;
+
+    // Modulation matrix (LFOs, mod envelopes, FX sends)
+    SamplerModulationParams modulation;
 };
 
 } // namespace model

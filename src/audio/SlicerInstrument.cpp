@@ -1,5 +1,6 @@
 #include "SlicerInstrument.h"
 #include "../dsp/AudioAnalysis.h"
+#include <rubberband/RubberBandStretcher.h>
 #include <algorithm>
 #include <cmath>
 
@@ -7,10 +8,17 @@ namespace audio {
 
 SlicerInstrument::SlicerInstrument() {
     formatManager_.registerBasicFormats();
+    tempBufferL_.fill(0.0f);
+    tempBufferR_.fill(0.0f);
 }
 
 void SlicerInstrument::init(double sampleRate) {
-    setSampleRate(sampleRate);
+    sampleRate_ = sampleRate;
+    for (auto& voice : voices_) {
+        voice.setSampleRate(sampleRate);
+    }
+    modMatrix_.init();
+    modMatrix_.setTempo(tempo_);
 }
 
 void SlicerInstrument::setSampleRate(double sampleRate) {
@@ -27,23 +35,79 @@ void SlicerInstrument::process(float* outL, float* outR, int numSamples) {
 
     if (!hasSample() || !instrument_) return;
 
-    // Temp buffers for voice mixing
-    std::vector<float> tempL(static_cast<size_t>(numSamples), 0.0f);
-    std::vector<float> tempR(static_cast<size_t>(numSamples), 0.0f);
+    // Handle lazy chop preview playback
+    if (lazyChopPlaying_) {
+        const float* srcL = sampleBuffer_.getReadPointer(0);
+        const float* srcR = sampleBuffer_.getNumChannels() > 1
+            ? sampleBuffer_.getReadPointer(1)
+            : srcL;  // Mono: use left for both
 
-    for (auto& voice : voices_) {
-        if (voice.isActive()) {
-            voice.render(tempL.data(), tempR.data(), numSamples);
+        size_t totalSamples = static_cast<size_t>(sampleBuffer_.getNumSamples());
 
-            for (size_t i = 0; i < static_cast<size_t>(numSamples); ++i) {
-                outL[i] += tempL[i];
-                outR[i] += tempR[i];
-            }
-
-            // Clear temp for next voice
-            std::fill(tempL.begin(), tempL.end(), 0.0f);
-            std::fill(tempR.begin(), tempR.end(), 0.0f);
+        for (int i = 0; i < numSamples && lazyChopPlayhead_ < totalSamples; ++i) {
+            outL[i] = srcL[lazyChopPlayhead_];
+            outR[i] = srcR[lazyChopPlayhead_];
+            lazyChopPlayhead_++;
         }
+
+        // Stop when we reach the end
+        if (lazyChopPlayhead_ >= totalSamples) {
+            lazyChopPlaying_ = false;
+        }
+        return;  // Don't process regular voices during lazy chop
+    }
+
+    // Normal voice processing - process in blocks for modulation
+    int samplesRemaining = numSamples;
+    int offset = 0;
+
+    while (samplesRemaining > 0) {
+        int blockSize = std::min(samplesRemaining, kMaxBlockSize);
+
+        // Clear temp buffers
+        std::fill_n(tempBufferL_.begin(), blockSize, 0.0f);
+        std::fill_n(tempBufferR_.begin(), blockSize, 0.0f);
+
+        // Update modulation (once per block)
+        updateModulationParams();
+        modMatrix_.process(static_cast<float>(sampleRate_), blockSize);
+
+        // Render all voices into temp buffers
+        std::vector<float> voiceTempL(static_cast<size_t>(blockSize), 0.0f);
+        std::vector<float> voiceTempR(static_cast<size_t>(blockSize), 0.0f);
+
+        for (auto& voice : voices_) {
+            if (voice.isActive()) {
+                voice.render(voiceTempL.data(), voiceTempR.data(), blockSize);
+
+                for (int i = 0; i < blockSize; ++i) {
+                    tempBufferL_[static_cast<size_t>(i)] += voiceTempL[static_cast<size_t>(i)];
+                    tempBufferR_[static_cast<size_t>(i)] += voiceTempR[static_cast<size_t>(i)];
+                }
+
+                // Clear voice temp for next voice
+                std::fill(voiceTempL.begin(), voiceTempL.end(), 0.0f);
+                std::fill(voiceTempR.begin(), voiceTempR.end(), 0.0f);
+            }
+        }
+
+        // Apply modulation (volume, pan, etc.)
+        applyModulation(tempBufferL_.data(), tempBufferR_.data(), blockSize);
+
+        // Copy to output
+        for (int i = 0; i < blockSize; ++i) {
+            outL[offset + i] = tempBufferL_[static_cast<size_t>(i)];
+            outR[offset + i] = tempBufferR_[static_cast<size_t>(i)];
+        }
+
+        offset += blockSize;
+        samplesRemaining -= blockSize;
+    }
+
+    // Update active voice count
+    activeVoiceCount_ = 0;
+    for (const auto& voice : voices_) {
+        if (voice.isActive()) activeVoiceCount_++;
     }
 }
 
@@ -81,18 +145,39 @@ void SlicerInstrument::noteOn(int midiNote, float velocity) {
     }
 
     if (voice) {
+        // Choose buffer based on repitch setting
+        const juce::AudioBuffer<float>* bufferToUse = &sampleBuffer_;
+        float playbackSpeed = params.speed;
+
+        // If repitch is off and stretched buffer is ready, use it at 1x speed
+        if (!params.repitch && stretchedBufferReady_ && stretchedBuffer_.getNumSamples() > 0) {
+            bufferToUse = &stretchedBuffer_;
+            playbackSpeed = 1.0f;  // Stretched buffer already at correct speed
+        }
+
         // Pass both channel pointers (JUCE uses planar format)
-        const float* leftData = sampleBuffer_.getReadPointer(0);
-        const float* rightData = sampleBuffer_.getNumChannels() > 1
-            ? sampleBuffer_.getReadPointer(1)
+        const float* leftData = bufferToUse->getReadPointer(0);
+        const float* rightData = bufferToUse->getNumChannels() > 1
+            ? bufferToUse->getReadPointer(1)
             : nullptr;
         voice->setSampleData(
             leftData,
             rightData,
-            static_cast<size_t>(sampleBuffer_.getNumSamples()),
+            static_cast<size_t>(bufferToUse->getNumSamples()),
             loadedSampleRate_
         );
+        voice->setPlaybackSpeed(playbackSpeed);
         voice->trigger(sliceIndex, velocity, params);
+
+        // Trigger modulation envelopes on first note after silence
+        int newActiveCount = 0;
+        for (const auto& v : voices_) {
+            if (v.isActive()) newActiveCount++;
+        }
+        if (activeVoiceCount_ == 0 && newActiveCount > 0) {
+            modMatrix_.triggerEnvelopes();
+        }
+        activeVoiceCount_ = newActiveCount;
     }
 }
 
@@ -238,19 +323,59 @@ void SlicerInstrument::chopIntoDivisions(int numDivisions) {
     }
 }
 
-void SlicerInstrument::addSliceAtPosition(size_t samplePosition) {
-    if (!instrument_) return;
+void SlicerInstrument::chopByTransients(float sensitivity) {
+    if (!instrument_ || sampleBuffer_.getNumSamples() == 0) return;
+
+    auto& params = instrument_->getSlicerParams();
+    params.slicePoints.clear();
+    params.transientSensitivity = sensitivity;
+    params.chopMode = model::ChopMode::Transients;
+
+    // Use the first channel for transient detection
+    const float* data = sampleBuffer_.getReadPointer(0);
+    size_t numSamples = static_cast<size_t>(sampleBuffer_.getNumSamples());
+
+    // Detect transients
+    auto transients = dsp::AudioAnalysis::detectTransients(
+        data, numSamples, loadedSampleRate_, sensitivity
+    );
+
+    // Always include start position (0) as first slice
+    params.slicePoints.push_back(0);
+
+    // Add detected transients, snapping to zero crossings
+    for (size_t transientPos : transients) {
+        // Skip if too close to start
+        if (transientPos < 1000) continue;
+
+        size_t snappedPos = findNearestZeroCrossing(transientPos);
+        params.slicePoints.push_back(snappedPos);
+    }
+
+    // Remove duplicates (from zero-crossing snapping) and sort
+    std::sort(params.slicePoints.begin(), params.slicePoints.end());
+    auto last = std::unique(params.slicePoints.begin(), params.slicePoints.end());
+    params.slicePoints.erase(last, params.slicePoints.end());
+
+    DBG("Transient detection found " << params.slicePoints.size() << " slices with sensitivity " << sensitivity);
+}
+
+int SlicerInstrument::addSliceAtPosition(size_t samplePosition) {
+    if (!instrument_) return -1;
 
     auto& params = instrument_->getSlicerParams();
 
     // Snap to zero crossing
     size_t snappedPosition = findNearestZeroCrossing(samplePosition);
 
-    // Insert in sorted order
+    // Insert in sorted order and get the index
     auto it = std::lower_bound(params.slicePoints.begin(), params.slicePoints.end(), snappedPosition);
+    int newSliceIndex = static_cast<int>(it - params.slicePoints.begin());
     params.slicePoints.insert(it, snappedPosition);
 
     params.chopMode = model::ChopMode::Lazy;
+
+    return newSliceIndex;
 }
 
 void SlicerInstrument::removeSlice(int sliceIndex) {
@@ -265,7 +390,9 @@ void SlicerInstrument::removeSlice(int sliceIndex) {
 
 void SlicerInstrument::clearSlices() {
     if (!instrument_) return;
-    instrument_->getSlicerParams().slicePoints.clear();
+    auto& slicePoints = instrument_->getSlicerParams().slicePoints;
+    slicePoints.clear();
+    slicePoints.push_back(0);  // Always have one slice starting at 0
 }
 
 int SlicerInstrument::getNumSlices() const {
@@ -334,7 +461,7 @@ void SlicerInstrument::recalculateDependencies() {
 
     if (recalcSpeed && effectiveOriginalBPM > 0.0f) {
         // Speed = targetBPM / originalBPM
-        params.speed = params.targetBPM / effectiveOriginalBPM;
+        params.speed = std::clamp(params.targetBPM / effectiveOriginalBPM, 0.1f, 4.0f);
     } else if (recalcTarget && effectiveOriginalBPM > 0.0f) {
         // targetBPM = originalBPM * speed
         params.targetBPM = effectiveOriginalBPM * params.speed;
@@ -379,6 +506,11 @@ void SlicerInstrument::editOriginalBars(int newBars) {
 
     markEdited(model::SlicerLastEdited::OriginalBPM);
     recalculateDependencies();
+
+    // Regenerate stretched buffer if repitch is off (speed may have changed)
+    if (!params.repitch) {
+        regenerateStretchedBuffer();
+    }
 }
 
 void SlicerInstrument::editOriginalBPM(float newBPM) {
@@ -390,6 +522,11 @@ void SlicerInstrument::editOriginalBPM(float newBPM) {
 
     markEdited(model::SlicerLastEdited::OriginalBPM);
     recalculateDependencies();
+
+    // Regenerate stretched buffer if repitch is off (speed may have changed)
+    if (!params.repitch) {
+        regenerateStretchedBuffer();
+    }
 }
 
 void SlicerInstrument::editTargetBPM(float newBPM) {
@@ -400,6 +537,11 @@ void SlicerInstrument::editTargetBPM(float newBPM) {
 
     markEdited(model::SlicerLastEdited::TargetBPM);
     recalculateDependencies();
+
+    // Regenerate stretched buffer if repitch is off (speed may have changed)
+    if (!params.repitch) {
+        regenerateStretchedBuffer();
+    }
 }
 
 void SlicerInstrument::editSpeed(float newSpeed) {
@@ -410,6 +552,11 @@ void SlicerInstrument::editSpeed(float newSpeed) {
 
     markEdited(model::SlicerLastEdited::Speed);
     recalculateDependencies();
+
+    // Regenerate stretched buffer if repitch is off
+    if (!params.repitch) {
+        regenerateStretchedBuffer();
+    }
 }
 
 void SlicerInstrument::editPitch(int newSemitones) {
@@ -435,7 +582,314 @@ void SlicerInstrument::setRepitch(bool enabled) {
     // When enabling repitch, calculate pitch from current speed
     if (enabled) {
         params.pitchSemitones = static_cast<int>(std::round(12.0 * std::log2(params.speed)));
+        // Clear stretched buffer since we'll use variable speed playback
+        stretchedBuffer_.setSize(0, 0);
+        stretchedBufferReady_ = false;
+    } else {
+        // When disabling repitch, regenerate stretched buffer
+        regenerateStretchedBuffer();
     }
+}
+
+// ============================================================================
+// Lazy chop preview
+// ============================================================================
+
+void SlicerInstrument::startLazyChopPreview() {
+    if (!hasSample()) return;
+
+    // Stop any currently playing voices
+    allNotesOff();
+
+    lazyChopPlayhead_ = 0;
+    lazyChopPlaying_ = true;
+}
+
+void SlicerInstrument::stopLazyChopPreview() {
+    lazyChopPlaying_ = false;
+}
+
+void SlicerInstrument::addSliceAtPlayhead() {
+    if (!lazyChopPlaying_ || !instrument_) return;
+
+    // Add a slice at the current playhead position
+    addSliceAtPosition(lazyChopPlayhead_);
+}
+
+int64_t SlicerInstrument::getPlayheadPosition() const {
+    // During lazy chop preview, return the lazy chop playhead
+    if (lazyChopPlaying_) {
+        return static_cast<int64_t>(lazyChopPlayhead_);
+    }
+
+    // Otherwise, return the position of the first active voice
+    for (const auto& voice : voices_) {
+        if (voice.isActive()) {
+            int64_t voicePos = static_cast<int64_t>(voice.getPlayPosition());
+
+            // If using stretched buffer, convert position back to original sample coords
+            if (!instrument_->getSlicerParams().repitch &&
+                stretchedBufferReady_ && stretchedBuffer_.getNumSamples() > 0) {
+                double scaleFactor = static_cast<double>(sampleBuffer_.getNumSamples()) /
+                                     static_cast<double>(stretchedBuffer_.getNumSamples());
+                voicePos = static_cast<int64_t>(voicePos * scaleFactor);
+            }
+
+            return voicePos;
+        }
+    }
+    return -1;  // No active voice
+}
+
+// ============================================================================
+// Time-stretching with RubberBand
+// ============================================================================
+
+void SlicerInstrument::regenerateStretchedBuffer() {
+    if (!instrument_ || sampleBuffer_.getNumSamples() == 0) {
+        stretchedBufferReady_ = false;
+        return;
+    }
+
+    auto& params = instrument_->getSlicerParams();
+
+    // If repitch is enabled, we don't need the stretched buffer
+    if (params.repitch) {
+        stretchedBuffer_.setSize(0, 0);
+        stretchedBufferReady_ = false;
+        lastStretchSpeed_ = params.speed;
+        return;
+    }
+
+    // Skip if speed hasn't changed significantly
+    if (std::abs(params.speed - lastStretchSpeed_) < 0.001f && stretchedBufferReady_) {
+        return;
+    }
+
+    // Stop all voices before regenerating - they hold raw pointers to the buffer
+    // which would become invalid after reallocation
+    allNotesOff();
+
+    stretchedBufferReady_ = false;
+    lastStretchSpeed_ = params.speed;
+
+    // Safety check: speed must be > 0 to avoid divide by zero
+    if (params.speed <= 0.001f) {
+        DBG("Invalid speed value: " << params.speed << ", using original buffer");
+        stretchedBuffer_ = sampleBuffer_;
+        stretchedBufferReady_ = true;
+        return;
+    }
+
+    // Time ratio is inverse of speed (speed=2 means half duration = timeRatio 0.5)
+    double timeRatio = 1.0 / static_cast<double>(params.speed);
+
+    // For speed=1, just copy the original buffer
+    if (std::abs(params.speed - 1.0f) < 0.01f) {
+        stretchedBuffer_ = sampleBuffer_;
+        stretchedBufferReady_ = true;
+        DBG("Speed ~1.0, using original buffer");
+        return;
+    }
+
+    int numChannels = sampleBuffer_.getNumChannels();
+    size_t numInputSamples = static_cast<size_t>(sampleBuffer_.getNumSamples());
+
+    // Estimate output size
+    size_t estimatedOutputSamples = static_cast<size_t>(numInputSamples * timeRatio) + 1024;
+
+    DBG("Regenerating stretched buffer: speed=" << params.speed
+        << " timeRatio=" << timeRatio
+        << " inputSamples=" << numInputSamples
+        << " estimatedOutput=" << estimatedOutputSamples);
+
+    // Create RubberBand stretcher in offline mode for best quality
+    RubberBand::RubberBandStretcher stretcher(
+        static_cast<size_t>(loadedSampleRate_),
+        static_cast<size_t>(numChannels),
+        RubberBand::RubberBandStretcher::OptionProcessOffline |
+        RubberBand::RubberBandStretcher::OptionEngineFiner |
+        RubberBand::RubberBandStretcher::OptionPitchHighQuality,
+        timeRatio,
+        1.0  // pitch scale = 1.0 (preserve pitch)
+    );
+
+    // Process block size
+    const size_t blockSize = 1024;
+
+    // Prepare input pointers for each channel
+    std::vector<const float*> inputPtrs(static_cast<size_t>(numChannels));
+    for (int ch = 0; ch < numChannels; ++ch) {
+        inputPtrs[static_cast<size_t>(ch)] = sampleBuffer_.getReadPointer(ch);
+    }
+
+    // First pass: study
+    size_t pos = 0;
+    while (pos < numInputSamples) {
+        size_t remaining = numInputSamples - pos;
+        size_t thisBlock = std::min(blockSize, remaining);
+        bool final = (pos + thisBlock >= numInputSamples);
+
+        std::vector<const float*> blockPtrs(static_cast<size_t>(numChannels));
+        for (int ch = 0; ch < numChannels; ++ch) {
+            blockPtrs[static_cast<size_t>(ch)] = inputPtrs[static_cast<size_t>(ch)] + pos;
+        }
+
+        stretcher.study(blockPtrs.data(), thisBlock, final);
+        pos += thisBlock;
+    }
+
+    // Prepare output buffer
+    std::vector<std::vector<float>> outputChannels(static_cast<size_t>(numChannels));
+    for (auto& ch : outputChannels) {
+        ch.reserve(estimatedOutputSamples);
+    }
+
+    // Second pass: process and retrieve
+    pos = 0;
+    std::vector<float*> outputPtrs(static_cast<size_t>(numChannels));
+    std::vector<std::vector<float>> retrieveBuffers(static_cast<size_t>(numChannels));
+    for (auto& buf : retrieveBuffers) {
+        buf.resize(blockSize * 4);  // Extra space for output
+    }
+
+    while (pos < numInputSamples) {
+        size_t remaining = numInputSamples - pos;
+        size_t thisBlock = std::min(blockSize, remaining);
+        bool final = (pos + thisBlock >= numInputSamples);
+
+        std::vector<const float*> blockPtrs(static_cast<size_t>(numChannels));
+        for (int ch = 0; ch < numChannels; ++ch) {
+            blockPtrs[static_cast<size_t>(ch)] = inputPtrs[static_cast<size_t>(ch)] + pos;
+        }
+
+        stretcher.process(blockPtrs.data(), thisBlock, final);
+        pos += thisBlock;
+
+        // Retrieve available output
+        int available;
+        while ((available = stretcher.available()) > 0) {
+            size_t toRetrieve = std::min(static_cast<size_t>(available), retrieveBuffers[0].size());
+
+            for (int ch = 0; ch < numChannels; ++ch) {
+                outputPtrs[static_cast<size_t>(ch)] = retrieveBuffers[static_cast<size_t>(ch)].data();
+            }
+
+            size_t retrieved = stretcher.retrieve(outputPtrs.data(), toRetrieve);
+
+            for (int ch = 0; ch < numChannels; ++ch) {
+                outputChannels[static_cast<size_t>(ch)].insert(
+                    outputChannels[static_cast<size_t>(ch)].end(),
+                    retrieveBuffers[static_cast<size_t>(ch)].begin(),
+                    retrieveBuffers[static_cast<size_t>(ch)].begin() + static_cast<ptrdiff_t>(retrieved)
+                );
+            }
+        }
+    }
+
+    // Copy to JUCE buffer
+    if (!outputChannels.empty() && !outputChannels[0].empty()) {
+        int outputSamples = static_cast<int>(outputChannels[0].size());
+        stretchedBuffer_.setSize(numChannels, outputSamples);
+
+        for (int ch = 0; ch < numChannels; ++ch) {
+            stretchedBuffer_.copyFrom(ch, 0, outputChannels[static_cast<size_t>(ch)].data(), outputSamples);
+        }
+
+        stretchedBufferReady_ = true;
+        DBG("Stretched buffer ready: " << outputSamples << " samples (ratio: "
+            << (static_cast<float>(outputSamples) / numInputSamples) << ")");
+    } else {
+        DBG("Failed to generate stretched buffer");
+        stretchedBuffer_.setSize(0, 0);
+        stretchedBufferReady_ = false;
+    }
+}
+
+// ============================================================================
+// Modulation helpers
+// ============================================================================
+
+// Map 0-1 to milliseconds for attack (1ms to 2000ms, exponential)
+static float mapAttackMs(float normalized) {
+    return 1.0f + std::pow(normalized, 2.0f) * 1999.0f;
+}
+
+// Map 0-1 to milliseconds for decay (1ms to 10000ms, exponential)
+static float mapDecayMs(float normalized) {
+    return 1.0f + std::pow(normalized, 2.0f) * 9999.0f;
+}
+
+void SlicerInstrument::setTempo(double bpm) {
+    tempo_ = bpm;
+    modMatrix_.setTempo(bpm);
+}
+
+void SlicerInstrument::updateModulationParams() {
+    if (!instrument_) return;
+
+    const auto& mod = instrument_->getSlicerParams().modulation;
+
+    // Update LFO1
+    modMatrix_.getLfo1().SetRate(static_cast<plaits::LfoRateDivision>(mod.lfo1.rateIndex));
+    modMatrix_.getLfo1().SetShape(static_cast<plaits::LfoShape>(mod.lfo1.shapeIndex));
+    modMatrix_.setDestination(0, mod.lfo1.destIndex);
+    modMatrix_.setAmount(0, mod.lfo1.amount);
+
+    // Update LFO2
+    modMatrix_.getLfo2().SetRate(static_cast<plaits::LfoRateDivision>(mod.lfo2.rateIndex));
+    modMatrix_.getLfo2().SetShape(static_cast<plaits::LfoShape>(mod.lfo2.shapeIndex));
+    modMatrix_.setDestination(1, mod.lfo2.destIndex);
+    modMatrix_.setAmount(1, mod.lfo2.amount);
+
+    // Update ENV1
+    modMatrix_.getEnv1().SetAttack(static_cast<uint16_t>(mapAttackMs(mod.env1.attack)));
+    modMatrix_.getEnv1().SetDecay(static_cast<uint16_t>(mapDecayMs(mod.env1.decay)));
+    modMatrix_.setDestination(2, mod.env1.destIndex);
+    modMatrix_.setAmount(2, mod.env1.amount);
+
+    // Update ENV2
+    modMatrix_.getEnv2().SetAttack(static_cast<uint16_t>(mapAttackMs(mod.env2.attack)));
+    modMatrix_.getEnv2().SetDecay(static_cast<uint16_t>(mapDecayMs(mod.env2.decay)));
+    modMatrix_.setDestination(3, mod.env2.destIndex);
+    modMatrix_.setAmount(3, mod.env2.amount);
+
+    modMatrix_.setTempo(tempo_);
+}
+
+void SlicerInstrument::applyModulation(float* outL, float* outR, int numSamples) {
+    // SamplerModDest indices: Volume=0, Pitch=1, Cutoff=2, Resonance=3, Pan=4
+    // Get modulated volume (base 1.0)
+    float volumeMod = modMatrix_.getModulation(0);  // Volume
+    float volume = std::clamp(1.0f + volumeMod, 0.0f, 2.0f);
+
+    // Get modulated pan (-1 to +1 becomes left/right balance)
+    float panMod = modMatrix_.getModulation(4);  // Pan
+    float panL = std::clamp(1.0f - panMod, 0.0f, 1.0f);
+    float panR = std::clamp(1.0f + panMod, 0.0f, 1.0f);
+
+    // Apply volume and pan
+    for (int i = 0; i < numSamples; ++i) {
+        outL[i] *= volume * panL;
+        outR[i] *= volume * panR;
+    }
+}
+
+float SlicerInstrument::getModulatedVolume() const {
+    float volumeMod = modMatrix_.getModulation(0);  // Volume
+    return std::clamp(1.0f + volumeMod, 0.0f, 2.0f);
+}
+
+float SlicerInstrument::getModulatedCutoff() const {
+    if (!instrument_) return 1.0f;
+    float baseCutoff = instrument_->getSlicerParams().filter.cutoff;
+    return modMatrix_.getModulatedValue(2, baseCutoff);  // Cutoff
+}
+
+float SlicerInstrument::getModulatedResonance() const {
+    if (!instrument_) return 0.0f;
+    float baseRes = instrument_->getSlicerParams().filter.resonance;
+    return modMatrix_.getModulatedValue(3, baseRes);  // Resonance
 }
 
 } // namespace audio

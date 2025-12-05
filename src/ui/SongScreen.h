@@ -16,6 +16,7 @@ public:
     bool handleEditKey(const juce::KeyPress& key);
 
     std::string getTitle() const override { return "SONG"; }
+    std::vector<HelpSection> getHelpContent() const override;
 
     // Callback when Enter is pressed on a chain cell
     std::function<void(int chainIndex)> onJumpToChain;

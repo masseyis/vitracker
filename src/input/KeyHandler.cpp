@@ -22,8 +22,12 @@ bool KeyHandler::handleNormalMode(const juce::KeyPress& key)
     auto textChar = key.getTextCharacter();
 
     // Screen switching: 1-6
+    // But first, let the screen handle it (e.g., for name editing mode)
     if (textChar >= '1' && textChar <= '6')
     {
+        // Give screen a chance to consume the key first (e.g., text input)
+        if (onEditKey && onEditKey(key)) return true;
+        // Screen didn't consume it, so switch screens
         if (onScreenSwitch) onScreenSwitch(textChar - '0');
         return true;
     }
@@ -140,7 +144,15 @@ bool KeyHandler::handleNormalMode(const juce::KeyPress& key)
         }
     }
 
-    // Up/Down: always navigate (use Alt+Up/Down for value editing)
+    // Alt+Up/Down: forward to screen for value editing
+    if (key.getModifiers().isAltDown() &&
+        (keyCode == juce::KeyPress::upKey || keyCode == juce::KeyPress::downKey))
+    {
+        if (onEditKey && onEditKey(key)) return true;
+        // Not consumed - fall through to navigation
+    }
+
+    // Up/Down: navigate
     if (keyCode == juce::KeyPress::upKey)
     {
         if (onNavigate) onNavigate(0, -1);
@@ -271,6 +283,19 @@ bool KeyHandler::handleVisualMode(const juce::KeyPress& key)
     {
         if (onTranspose) onTranspose(-12);
         return true;
+    }
+
+    // 'f' for fill, 's' for randomize - forward to screen
+    if (textChar == 'f' || textChar == 's')
+    {
+        if (onEditKey && onEditKey(key)) return true;
+    }
+
+    // Alt+Up/Down for batch editing - forward to screen
+    if (key.getModifiers().isAltDown() &&
+        (keyCode == juce::KeyPress::upKey || keyCode == juce::KeyPress::downKey))
+    {
+        if (onEditKey && onEditKey(key)) return true;
     }
 
     return false;

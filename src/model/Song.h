@@ -19,6 +19,7 @@ public:
     void removeChain(int trackIndex, int position);
 
     int getLength() const;  // Length of longest track
+    void setLength(int length);  // Resize all tracks (pad with -1 or truncate)
 
     void clear();
 

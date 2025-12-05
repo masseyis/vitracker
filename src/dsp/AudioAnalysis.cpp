@@ -235,4 +235,114 @@ int AudioAnalysis::getNearestC(int midiNote) {
     return octave * 12;
 }
 
+std::vector<size_t> AudioAnalysis::detectTransients(const float* data, size_t numSamples,
+                                                     int sampleRate, float sensitivity) {
+    std::vector<size_t> transients;
+
+    if (!data || numSamples < static_cast<size_t>(sampleRate / 10)) {
+        return transients; // Need at least 100ms of audio
+    }
+
+    // Clamp sensitivity to valid range
+    sensitivity = std::clamp(sensitivity, 0.0f, 1.0f);
+
+    // Window size for energy calculation (~10ms windows)
+    int windowSize = sampleRate / 100;
+    int hopSize = windowSize / 2;
+
+    // Minimum distance between transients based on sensitivity
+    // Higher sensitivity = closer transients allowed
+    int minTransientDistance = static_cast<int>(sampleRate * (0.05f + 0.15f * (1.0f - sensitivity)));
+
+    // Compute energy envelope
+    std::vector<float> energy;
+    energy.reserve(numSamples / static_cast<size_t>(hopSize));
+
+    for (size_t i = 0; i + static_cast<size_t>(windowSize) < numSamples; i += static_cast<size_t>(hopSize)) {
+        float e = 0.0f;
+        for (int j = 0; j < windowSize; ++j) {
+            float sample = data[i + static_cast<size_t>(j)];
+            e += sample * sample;
+        }
+        energy.push_back(std::sqrt(e / static_cast<float>(windowSize)));
+    }
+
+    if (energy.size() < 3) {
+        return transients;
+    }
+
+    // Compute onset detection function (first derivative with half-wave rectification)
+    std::vector<float> onset;
+    onset.reserve(energy.size());
+    onset.push_back(0.0f);
+
+    for (size_t i = 1; i < energy.size(); ++i) {
+        float diff = energy[i] - energy[i - 1];
+        onset.push_back(std::max(0.0f, diff));
+    }
+
+    // Compute adaptive threshold
+    // Higher sensitivity = lower threshold
+    float baseThreshold = 0.1f - 0.08f * sensitivity; // Range: 0.02 to 0.1
+
+    // Compute median of onset values for adaptive scaling
+    std::vector<float> sortedOnset = onset;
+    std::sort(sortedOnset.begin(), sortedOnset.end());
+    float medianOnset = sortedOnset[sortedOnset.size() / 2];
+
+    // Also compute mean of non-zero onsets
+    float onsetSum = 0.0f;
+    int nonZeroCount = 0;
+    for (float o : onset) {
+        if (o > 0.0f) {
+            onsetSum += o;
+            nonZeroCount++;
+        }
+    }
+    float meanOnset = nonZeroCount > 0 ? onsetSum / static_cast<float>(nonZeroCount) : 0.0f;
+
+    // Adaptive threshold based on signal characteristics
+    float threshold = std::max(baseThreshold, medianOnset + (meanOnset - medianOnset) * (1.0f - sensitivity));
+
+    // Peak picking with local maximum detection
+    size_t lastTransientFrame = 0;
+    int minFrameDistance = minTransientDistance / hopSize;
+
+    for (size_t i = 2; i < onset.size() - 1; ++i) {
+        // Check if this is a local maximum
+        bool isPeak = onset[i] > onset[i - 1] && onset[i] >= onset[i + 1];
+
+        // Check if above threshold
+        bool aboveThreshold = onset[i] > threshold;
+
+        // Check minimum distance from last transient
+        bool distanceOk = (i - lastTransientFrame) >= static_cast<size_t>(minFrameDistance);
+
+        if (isPeak && aboveThreshold && distanceOk) {
+            // Convert frame index to sample position
+            size_t samplePos = i * static_cast<size_t>(hopSize);
+
+            // Refine position by finding actual peak in original signal
+            size_t searchStart = samplePos > 100 ? samplePos - 100 : 0;
+            size_t searchEnd = std::min(samplePos + 100, numSamples);
+
+            float maxAbs = 0.0f;
+            size_t refinedPos = samplePos;
+
+            for (size_t s = searchStart; s < searchEnd; ++s) {
+                float absVal = std::abs(data[s]);
+                if (absVal > maxAbs) {
+                    maxAbs = absVal;
+                    refinedPos = s;
+                }
+            }
+
+            transients.push_back(refinedPos);
+            lastTransientFrame = i;
+        }
+    }
+
+    return transients;
+}
+
 } // namespace dsp

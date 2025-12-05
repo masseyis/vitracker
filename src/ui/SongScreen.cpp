@@ -1,4 +1,5 @@
 #include "SongScreen.h"
+#include "HelpPopup.h"
 #include "../audio/AudioEngine.h"
 
 namespace ui {
@@ -162,6 +163,36 @@ bool SongScreen::handleEditKey(const juce::KeyPress& key)
     auto keyCode = key.getKeyCode();
     auto textChar = key.getTextCharacter();
 
+    // +/= : Add row to song (extend length)
+    if (textChar == '+' || textChar == '=')
+    {
+        auto& song = project_.getSong();
+        int currentLen = song.getLength();
+        if (currentLen < 256)  // Reasonable max length
+        {
+            song.setLength(currentLen + 1);
+            repaint();
+        }
+        return true;
+    }
+
+    // - : Remove row from song (shrink length)
+    if (textChar == '-' || textChar == '_')
+    {
+        auto& song = project_.getSong();
+        int currentLen = song.getLength();
+        if (currentLen > 1)
+        {
+            song.setLength(currentLen - 1);
+            // Adjust cursor if out of bounds
+            if (cursorRow_ >= currentLen - 1)
+                cursorRow_ = currentLen - 2;
+            if (cursorRow_ < 0) cursorRow_ = 0;
+            repaint();
+        }
+        return true;
+    }
+
     // Enter jumps to the chain screen with the selected chain
     if (keyCode == juce::KeyPress::returnKey)
     {
@@ -207,8 +238,8 @@ bool SongScreen::handleEditKey(const juce::KeyPress& key)
 
     // Left/Right do nothing in edit mode (no navigation)
 
-    // 'n' or '+' creates a new chain and assigns it
-    if (textChar == 'n' || textChar == '+' || textChar == '=')
+    // 'n' creates a new chain and assigns it
+    if (textChar == 'n')
     {
         int newChain = project_.addChain("Chain " + std::to_string(project_.getChainCount() + 1));
         setChainAt(cursorTrack_, cursorRow_, newChain);
@@ -258,6 +289,29 @@ bool SongScreen::handleEditKey(const juce::KeyPress& key)
     }
 
     return false;
+}
+
+std::vector<HelpSection> SongScreen::getHelpContent() const
+{
+    return {
+        {"Navigation", {
+            {"Left/Right", "Move between tracks"},
+            {"Enter", "Jump to chain at cursor"},
+        }},
+        {"Chain Selection", {
+            {"Up/Down", "Cycle through chains"},
+            {"Tab", "Cycle to next chain"},
+            {"0-9", "Quick chain selection (0-9)"},
+            {"n", "Create new chain"},
+        }},
+        {"Song Length", {
+            {"+", "Add row to song"},
+            {"-", "Remove row from song"},
+        }},
+        {"Clearing", {
+            {"Delete/d", "Clear cell"},
+        }},
+    };
 }
 
 } // namespace ui

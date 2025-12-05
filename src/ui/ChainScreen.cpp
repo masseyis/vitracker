@@ -1,4 +1,5 @@
 #include "ChainScreen.h"
+#include "HelpPopup.h"
 #include "../audio/AudioEngine.h"
 
 namespace ui {
@@ -588,6 +589,38 @@ int ChainScreen::getPatternAtCursor() const
         return indices[static_cast<size_t>(slotIdx)];
 
     return -1;
+}
+
+std::vector<HelpSection> ChainScreen::getHelpContent() const
+{
+    return {
+        {"Navigation", {
+            {"Up/Down", "Move cursor vertically"},
+            {"Left/Right", "Switch columns on pattern rows"},
+            {"[  ]", "Previous/Next chain"},
+            {"Enter", "Jump to pattern at cursor"},
+        }},
+        {"Scale Lock (row 0)", {
+            {"Left/Right", "Change scale lock"},
+            {"+  -", "Change scale lock"},
+        }},
+        {"Pattern Column", {
+            {"Alt+Up/Down", "Cycle through patterns"},
+            {"0-9", "Quick pattern selection"},
+            {"n", "Create new pattern"},
+            {"Delete/d", "Remove pattern from chain"},
+        }},
+        {"Transpose Column", {
+            {"Alt+Up/Down", "Adjust transpose"},
+            {"+  -", "Adjust transpose"},
+            {"0", "Reset transpose to zero"},
+            {"Delete/d", "Reset transpose to zero"},
+        }},
+        {"Chain Management", {
+            {"Shift+N", "Create new chain"},
+            {"r", "Rename chain"},
+        }},
+    };
 }
 
 } // namespace ui

@@ -1,4 +1,5 @@
 #include "PatternScreen.h"
+#include "HelpPopup.h"
 #include "../audio/AudioEngine.h"
 #include <algorithm>
 
@@ -198,6 +199,328 @@ bool PatternScreen::handleEditKey(const juce::KeyPress& key)
         return true;  // Consumed
     }
 
+    // Visual mode special keys: 'f' for fill, 's' for randomize
+    // Must be in Visual mode, not just have a selection
+    if (modeManager_.getMode() == input::Mode::Visual && hasSelection_ &&
+        (textChar == 'f' || textChar == 's'))
+    {
+        auto* pattern = project_.getPattern(currentPattern_);
+        if (pattern)
+        {
+            int minT = selection_.minTrack();
+            int maxT = selection_.maxTrack();
+            int minR = selection_.minRow();
+            int maxR = std::min(selection_.maxRow(), pattern->getLength() - 1);
+
+            if (textChar == 'f')
+            {
+                // Fill following established pattern
+                // For each track, collect populated values and repeat the sequence
+                for (int track = minT; track <= maxT; ++track)
+                {
+                    // Collect populated values with their relative positions
+                    std::vector<std::pair<int, model::Step>> populated;  // relative row, step
+                    for (int row = minR; row <= maxR; ++row)
+                    {
+                        const auto& step = pattern->getStep(track, row);
+                        bool hasData = false;
+                        if (cursorColumn_ == 0 && step.note > 0 && step.note <= 127) hasData = true;
+                        else if (cursorColumn_ == 1 && step.instrument >= 0) hasData = true;
+                        else if (cursorColumn_ == 2 && step.volume != 0xFF) hasData = true;
+                        else if (cursorColumn_ >= 3)
+                        {
+                            const model::FXCommand* fx = (cursorColumn_ == 3) ? &step.fx1 :
+                                                         (cursorColumn_ == 4) ? &step.fx2 : &step.fx3;
+                            if (fx->type != model::FXType::None) hasData = true;
+                        }
+                        if (hasData) populated.push_back({row - minR, step});  // Store relative position
+                    }
+
+                    if (populated.empty()) continue;
+
+                    // Calculate the pattern period (distance from first to just after last populated)
+                    int patternPeriod = populated.back().first + 1;
+                    if (populated.size() >= 2)
+                    {
+                        // If we have multiple values, use the span as the period
+                        patternPeriod = populated.back().first - populated.front().first + 1;
+                    }
+
+                    // Detect note intervals for melodic continuation
+                    std::vector<int> noteIntervals;
+                    if (cursorColumn_ == 0 && populated.size() >= 2)
+                    {
+                        for (size_t i = 1; i < populated.size(); ++i)
+                        {
+                            noteIntervals.push_back(populated[i].second.note - populated[i-1].second.note);
+                        }
+                    }
+
+                    // Fill the entire selection by repeating the pattern
+                    for (int row = minR; row <= maxR; ++row)
+                    {
+                        auto& step = pattern->getStep(track, row);
+                        int relRow = row - minR;
+
+                        // Check if this row needs filling
+                        bool isEmpty = false;
+                        if (cursorColumn_ == 0) isEmpty = (step.note <= 0 || step.note > 127);
+                        else if (cursorColumn_ == 1) isEmpty = (step.instrument < 0);
+                        else if (cursorColumn_ == 2) isEmpty = (step.volume == 0xFF);
+                        else if (cursorColumn_ >= 3)
+                        {
+                            const model::FXCommand* fx = (cursorColumn_ == 3) ? &step.fx1 :
+                                                         (cursorColumn_ == 4) ? &step.fx2 : &step.fx3;
+                            isEmpty = (fx->type == model::FXType::None);
+                        }
+
+                        if (isEmpty)
+                        {
+                            // Find which pattern element should go here
+                            // by matching relative position within the pattern period
+                            int posInPeriod = relRow % patternPeriod;
+                            int repetition = relRow / patternPeriod;
+
+                            // Find the source element at this position in the pattern
+                            for (size_t i = 0; i < populated.size(); ++i)
+                            {
+                                int srcRelPos = populated[i].first - populated.front().first;
+                                if (srcRelPos == posInPeriod)
+                                {
+                                    const auto& srcStep = populated[i].second;
+
+                                    if (cursorColumn_ == 0)
+                                    {
+                                        // For notes, apply cumulative interval for continuation
+                                        if (!noteIntervals.empty() && repetition > 0)
+                                        {
+                                            // Calculate total interval shift for this repetition
+                                            int totalShift = 0;
+                                            for (int rep = 0; rep < repetition; ++rep)
+                                            {
+                                                for (int interval : noteIntervals)
+                                                    totalShift += interval;
+                                            }
+                                            // Add intervals up to current position
+                                            for (size_t j = 0; j < i && j < noteIntervals.size(); ++j)
+                                                totalShift += noteIntervals[j];
+
+                                            int newNote = populated.front().second.note + totalShift;
+                                            step.note = static_cast<int8_t>(std::clamp(newNote, 1, 127));
+                                        }
+                                        else
+                                        {
+                                            step.note = srcStep.note;
+                                        }
+                                        if (step.instrument < 0 && srcStep.instrument >= 0)
+                                            step.instrument = srcStep.instrument;
+                                    }
+                                    else if (cursorColumn_ == 1)
+                                    {
+                                        step.instrument = srcStep.instrument;
+                                    }
+                                    else if (cursorColumn_ == 2)
+                                    {
+                                        step.volume = srcStep.volume;
+                                    }
+                                    else if (cursorColumn_ >= 3)
+                                    {
+                                        model::FXCommand* dstFx = (cursorColumn_ == 3) ? &step.fx1 :
+                                                                  (cursorColumn_ == 4) ? &step.fx2 : &step.fx3;
+                                        const model::FXCommand* srcFx = (cursorColumn_ == 3) ? &srcStep.fx1 :
+                                                                        (cursorColumn_ == 4) ? &srcStep.fx2 : &srcStep.fx3;
+                                        *dstFx = *srcFx;
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            else if (textChar == 's')
+            {
+                // Randomize populated values with valid random values
+                std::string scaleLock = getScaleLockForPattern(currentPattern_);
+                int numInstruments = project_.getInstrumentCount();
+
+                // Build scale note array for random note selection
+                std::vector<int> scaleNotes;
+                // Parse scale (simplified - assumes format like "C Major" or "A Minor")
+                int rootNote = 0;  // C
+                bool isMinor = (scaleLock.find("Minor") != std::string::npos);
+
+                static const char* noteNames[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
+                for (int i = 0; i < 12; ++i)
+                {
+                    if (scaleLock.find(noteNames[i]) == 0)
+                    {
+                        rootNote = i;
+                        break;
+                    }
+                }
+
+                // Generate scale notes across MIDI range
+                static const int majorIntervals[] = {0, 2, 4, 5, 7, 9, 11};
+                static const int minorIntervals[] = {0, 2, 3, 5, 7, 8, 10};
+                const int* intervals = isMinor ? minorIntervals : majorIntervals;
+
+                for (int octave = 0; octave < 11; ++octave)
+                {
+                    for (int i = 0; i < 7; ++i)
+                    {
+                        int note = octave * 12 + rootNote + intervals[i];
+                        if (note >= 1 && note <= 127)
+                            scaleNotes.push_back(note);
+                    }
+                }
+
+                juce::Random random;
+
+                for (int track = minT; track <= maxT; ++track)
+                {
+                    for (int row = minR; row <= maxR; ++row)
+                    {
+                        auto& step = pattern->getStep(track, row);
+
+                        if (cursorColumn_ == 0)
+                        {
+                            // Randomize notes (only if populated)
+                            if (step.note > 0 && step.note <= 127 && !scaleNotes.empty())
+                            {
+                                // Keep roughly in same octave range
+                                int currentOctave = step.note / 12;
+                                std::vector<int> nearbyNotes;
+                                for (int n : scaleNotes)
+                                {
+                                    if (std::abs(n / 12 - currentOctave) <= 1)
+                                        nearbyNotes.push_back(n);
+                                }
+                                if (!nearbyNotes.empty())
+                                    step.note = static_cast<int8_t>(nearbyNotes[random.nextInt(static_cast<int>(nearbyNotes.size()))]);
+                            }
+                        }
+                        else if (cursorColumn_ == 1)
+                        {
+                            // Randomize instruments (only if populated)
+                            if (step.instrument >= 0 && numInstruments > 0)
+                            {
+                                step.instrument = static_cast<int8_t>(random.nextInt(numInstruments));
+                            }
+                        }
+                        else if (cursorColumn_ == 2)
+                        {
+                            // Randomize volume (only if populated)
+                            if (step.volume != 0xFF)
+                            {
+                                // Keep in reasonable range (0x40-0xFF for audible)
+                                step.volume = static_cast<uint8_t>(0x40 + random.nextInt(0xBF));
+                            }
+                        }
+                        else if (cursorColumn_ >= 3)
+                        {
+                            // Randomize FX (only if populated)
+                            model::FXCommand* fx = (cursorColumn_ == 3) ? &step.fx1 :
+                                                   (cursorColumn_ == 4) ? &step.fx2 : &step.fx3;
+                            if (fx->type != model::FXType::None)
+                            {
+                                // Keep same FX type, randomize value
+                                fx->value = static_cast<uint8_t>(random.nextInt(256));
+                            }
+                        }
+                    }
+                }
+            }
+
+            repaint();
+            return true;
+        }
+    }
+
+    // Alt+Up/Down in Visual mode: batch edit all populated values in selection
+    if (modeManager_.getMode() == input::Mode::Visual && hasSelection_ &&
+        key.getModifiers().isAltDown() &&
+        (keyCode == juce::KeyPress::upKey || keyCode == juce::KeyPress::downKey))
+    {
+        auto* pattern = project_.getPattern(currentPattern_);
+        if (pattern)
+        {
+            int direction = (keyCode == juce::KeyPress::upKey) ? 1 : -1;
+            int minT = selection_.minTrack();
+            int maxT = selection_.maxTrack();
+            int minR = selection_.minRow();
+            int maxR = std::min(selection_.maxRow(), pattern->getLength() - 1);
+
+            bool shiftHeld = key.getModifiers().isShiftDown();
+
+            for (int track = minT; track <= maxT; ++track)
+            {
+                for (int row = minR; row <= maxR; ++row)
+                {
+                    auto& step = pattern->getStep(track, row);
+
+                    if (cursorColumn_ == 0)
+                    {
+                        // Note column: transpose in scale (or by octave with Shift)
+                        if (step.note > 0 && step.note <= 127)
+                        {
+                            if (shiftHeld)
+                            {
+                                // Octave jump
+                                int newNote = step.note + direction * 12;
+                                if (newNote >= 0 && newNote <= 127)
+                                    step.note = static_cast<int8_t>(newNote);
+                            }
+                            else
+                            {
+                                // Scale-aware movement
+                                std::string scaleLock = getScaleLockForPattern(currentPattern_);
+                                step.note = static_cast<int8_t>(moveNoteInScale(step.note, direction, scaleLock));
+                            }
+                        }
+                    }
+                    else if (cursorColumn_ == 1)
+                    {
+                        // Instrument column: cycle through instruments
+                        int numInstruments = project_.getInstrumentCount();
+                        if (numInstruments > 0 && step.instrument >= 0)
+                        {
+                            step.instrument = static_cast<int8_t>((step.instrument + direction + numInstruments) % numInstruments);
+                        }
+                    }
+                    else if (cursorColumn_ == 2)
+                    {
+                        // Volume column: adjust volume
+                        if (step.volume != 0xFF)  // Only adjust if volume is set
+                        {
+                            int delta = direction * 16;  // Coarse adjustment
+                            step.volume = static_cast<uint8_t>(std::clamp(static_cast<int>(step.volume) + delta, 0, 0xFE));
+                        }
+                    }
+                    else
+                    {
+                        // FX columns: cycle FX type
+                        model::FXCommand* fx = nullptr;
+                        if (cursorColumn_ == 3) fx = &step.fx1;
+                        else if (cursorColumn_ == 4) fx = &step.fx2;
+                        else if (cursorColumn_ == 5) fx = &step.fx3;
+
+                        if (fx && fx->type != model::FXType::None)
+                        {
+                            int currentType = static_cast<int>(fx->type);
+                            int numTypes = 7;  // None + 6 types
+                            int newType = (currentType + direction + numTypes) % numTypes;
+                            if (newType == 0) newType = (direction > 0) ? 1 : numTypes - 1;  // Skip None
+                            fx->type = static_cast<model::FXType>(newType);
+                        }
+                    }
+                }
+            }
+            repaint();
+            return true;
+        }
+    }
+
     // '[' and ']' switch patterns quickly from anywhere
     if (textChar == '[')
     {
@@ -214,6 +537,33 @@ bool PatternScreen::handleEditKey(const juce::KeyPress& key)
             currentPattern_ = (currentPattern_ + 1) % numPatterns;
         repaint();
         return true;  // Consumed
+    }
+
+    // +/= : Add row to pattern (extend length)
+    if (textChar == '+' || textChar == '=')
+    {
+        auto* pat = project_.getPattern(currentPattern_);
+        if (pat && pat->getLength() < model::Pattern::MAX_LENGTH)
+        {
+            pat->setLength(pat->getLength() + 1);
+            repaint();
+        }
+        return true;
+    }
+
+    // - : Remove row from pattern (shrink length)
+    if (textChar == '-' || textChar == '_')
+    {
+        auto* pat = project_.getPattern(currentPattern_);
+        if (pat && pat->getLength() > 1)
+        {
+            pat->setLength(pat->getLength() - 1);
+            // Adjust cursor if it's now out of bounds
+            if (cursorRow_ >= pat->getLength())
+                cursorRow_ = pat->getLength() - 1;
+            repaint();
+        }
+        return true;
     }
 
     // Shift+N creates new pattern and enters edit mode
@@ -361,21 +711,6 @@ bool PatternScreen::handleEditKey(const juce::KeyPress& key)
             return false;
         }
 
-        // +/- change octave
-        if (textChar == '+' || textChar == '=')
-        {
-            if (step.note >= 0 && step.note < 120) step.note += 12;
-            if (step.note > 0 && onNotePreview) onNotePreview(step.note, step.instrument >= 0 ? step.instrument : 0);
-            repaint();
-            return false;
-        }
-        if (textChar == '-')
-        {
-            if (step.note >= 12) step.note -= 12;
-            if (step.note > 0 && onNotePreview) onNotePreview(step.note, step.instrument >= 0 ? step.instrument : 0);
-            repaint();
-            return false;
-        }
     }
     else if (cursorColumn_ == 1)
     {
@@ -455,7 +790,7 @@ bool PatternScreen::handleEditKey(const juce::KeyPress& key)
     }
     else
     {
-        // FX COLUMNS (3-5): Alt+Up/Down cycles FX type, hex input sets value
+        // FX COLUMNS (3-5): Alt+Up/Down cycles FX type, Alt+Left/Right adjusts value
 
         // Get the appropriate FX command
         model::FXCommand* fx = nullptr;
@@ -473,6 +808,19 @@ bool PatternScreen::handleEditKey(const juce::KeyPress& key)
                 int numTypes = 7;  // None + 6 types
                 int newType = (currentType + delta + numTypes) % numTypes;
                 fx->type = static_cast<model::FXType>(newType);
+                repaint();
+                return true;  // Consumed
+            }
+
+            // Alt+Left/Right adjusts FX value
+            if (altHeld && (keyCode == juce::KeyPress::leftKey || keyCode == juce::KeyPress::rightKey))
+            {
+                int delta = (keyCode == juce::KeyPress::rightKey) ? 1 : -1;
+                if (shiftHeld) delta *= 16;  // Coarse adjustment with Shift
+                int newVal = static_cast<int>(fx->value) + delta;
+                fx->value = static_cast<uint8_t>(std::clamp(newVal, 0, 255));
+                // Default to ARP if no type set
+                if (fx->type == model::FXType::None) fx->type = model::FXType::ARP;
                 repaint();
                 return true;  // Consumed
             }
@@ -1060,6 +1408,48 @@ int PatternScreen::getInstrumentAtCursor() const
 
     const auto& step = pattern->getStep(cursorTrack_, cursorRow_);
     return step.instrument;
+}
+
+std::vector<HelpSection> PatternScreen::getHelpContent() const
+{
+    return {
+        {"Navigation", {
+            {"Up/Down", "Move cursor vertically"},
+            {"Left/Right", "Move between columns"},
+            {"Tab / Shift+Tab", "Next/previous track"},
+            {"[  ]", "Previous/Next pattern"},
+            {"Enter", "Jump to instrument at cursor"},
+        }},
+        {"Note Column", {
+            {"n", "Add note (copy from row above)"},
+            {"Alt+Up/Down", "Create note / move in scale"},
+            {"Shift+Up/Down", "Move note by octave"},
+            {".", "Note off"},
+            {"Delete/d", "Clear note"},
+        }},
+        {"Inst/Vol/FX Columns", {
+            {"Alt+Up/Down", "Adjust value / cycle type"},
+            {"0-9, a-f", "Hex input for value"},
+            {"Alt+L/R", "Adjust FX value (FX columns)"},
+            {"n", "Create new instrument (inst column)"},
+            {"Delete/d", "Clear column"},
+        }},
+        {"Pattern Length", {
+            {"+", "Add row to pattern"},
+            {"-", "Remove row from pattern"},
+            {"Shift+N", "Create new pattern"},
+            {"r", "Rename pattern"},
+        }},
+        {"Selection (v = Visual)", {
+            {"v", "Start selection"},
+            {"y", "Yank (copy)"},
+            {"d", "Delete"},
+            {"p", "Paste"},
+            {"f", "Fill following pattern"},
+            {"s", "Randomize populated values"},
+            {"Alt+Up/Down", "Batch edit selection"},
+        }},
+    };
 }
 
 } // namespace ui

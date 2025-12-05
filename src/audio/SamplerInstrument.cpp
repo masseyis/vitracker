@@ -1,11 +1,24 @@
 #include "SamplerInstrument.h"
 #include "../dsp/AudioAnalysis.h"
 #include <cmath>
+#include <algorithm>
 
 namespace audio {
 
+// Map 0-1 to milliseconds for attack (1ms to 2000ms, exponential)
+static float mapAttackMs(float normalized) {
+    return 1.0f + std::pow(normalized, 2.0f) * 1999.0f;
+}
+
+// Map 0-1 to milliseconds for decay (1ms to 10000ms, exponential)
+static float mapDecayMs(float normalized) {
+    return 1.0f + std::pow(normalized, 2.0f) * 9999.0f;
+}
+
 SamplerInstrument::SamplerInstrument() {
     formatManager_.registerBasicFormats();
+    tempBufferL_.fill(0.0f);
+    tempBufferR_.fill(0.0f);
 }
 
 void SamplerInstrument::init(double sampleRate) {
@@ -13,6 +26,8 @@ void SamplerInstrument::init(double sampleRate) {
     for (auto& voice : voices_) {
         voice.setSampleRate(sampleRate);
     }
+    modMatrix_.init();
+    modMatrix_.setTempo(tempo_);
 }
 
 void SamplerInstrument::setSampleRate(double sampleRate) {
@@ -29,23 +44,57 @@ void SamplerInstrument::process(float* outL, float* outR, int numSamples) {
 
     if (!hasSample() || !instrument_) return;
 
-    // Temp buffers for voice mixing
-    std::vector<float> tempL(numSamples, 0.0f);
-    std::vector<float> tempR(numSamples, 0.0f);
+    // Process in chunks to avoid buffer overflow
+    int samplesRemaining = numSamples;
+    int offset = 0;
 
-    for (auto& voice : voices_) {
-        if (voice.isActive()) {
-            voice.render(tempL.data(), tempR.data(), numSamples);
+    while (samplesRemaining > 0) {
+        int blockSize = std::min(samplesRemaining, kMaxBlockSize);
 
-            for (int i = 0; i < numSamples; ++i) {
-                outL[i] += tempL[i];
-                outR[i] += tempR[i];
+        // Clear temp buffers
+        std::fill_n(tempBufferL_.begin(), blockSize, 0.0f);
+        std::fill_n(tempBufferR_.begin(), blockSize, 0.0f);
+
+        // Update modulation (once per block)
+        updateModulationParams();
+        modMatrix_.process(static_cast<float>(sampleRate_), blockSize);
+
+        // Render all voices into temp buffers
+        std::vector<float> voiceTempL(blockSize, 0.0f);
+        std::vector<float> voiceTempR(blockSize, 0.0f);
+
+        for (auto& voice : voices_) {
+            if (voice.isActive()) {
+                voice.render(voiceTempL.data(), voiceTempR.data(), blockSize);
+
+                for (int i = 0; i < blockSize; ++i) {
+                    tempBufferL_[i] += voiceTempL[i];
+                    tempBufferR_[i] += voiceTempR[i];
+                }
+
+                // Clear voice temp for next voice
+                std::fill(voiceTempL.begin(), voiceTempL.end(), 0.0f);
+                std::fill(voiceTempR.begin(), voiceTempR.end(), 0.0f);
             }
-
-            // Clear temp for next voice
-            std::fill(tempL.begin(), tempL.end(), 0.0f);
-            std::fill(tempR.begin(), tempR.end(), 0.0f);
         }
+
+        // Apply modulation (volume, pan, etc.)
+        applyModulation(tempBufferL_.data(), tempBufferR_.data(), blockSize);
+
+        // Copy to output
+        for (int i = 0; i < blockSize; ++i) {
+            outL[offset + i] = tempBufferL_[i];
+            outR[offset + i] = tempBufferR_[i];
+        }
+
+        offset += blockSize;
+        samplesRemaining -= blockSize;
+    }
+
+    // Update active voice count
+    activeVoiceCount_ = 0;
+    for (const auto& voice : voices_) {
+        if (voice.isActive()) activeVoiceCount_++;
     }
 }
 
@@ -71,6 +120,16 @@ void SamplerInstrument::noteOn(int midiNote, float velocity) {
             loadedSampleRate_
         );
         voice->trigger(midiNote, velocity, params);
+
+        // Trigger modulation envelopes on first note after silence
+        int newActiveCount = 0;
+        for (const auto& v : voices_) {
+            if (v.isActive()) newActiveCount++;
+        }
+        if (activeVoiceCount_ == 0 && newActiveCount > 0) {
+            modMatrix_.triggerEnvelopes();
+        }
+        activeVoiceCount_ = newActiveCount;
     }
 }
 
@@ -100,6 +159,16 @@ SamplerVoice* SamplerInstrument::findFreeVoice() {
 SamplerVoice* SamplerInstrument::findVoiceToSteal() {
     // Simple voice stealing: return first voice
     return &voices_[0];
+}
+
+int64_t SamplerInstrument::getPlayheadPosition() const {
+    // Return the position of the first active voice
+    for (const auto& voice : voices_) {
+        if (voice.isActive()) {
+            return static_cast<int64_t>(voice.getPlayPosition());
+        }
+    }
+    return -1;  // No active voice
 }
 
 bool SamplerInstrument::loadSample(const juce::File& file) {
@@ -186,6 +255,78 @@ bool SamplerInstrument::loadSample(const juce::File& file) {
         << numSamples << " samples)");
 
     return true;
+}
+
+void SamplerInstrument::setTempo(double bpm) {
+    tempo_ = bpm;
+    modMatrix_.setTempo(bpm);
+}
+
+void SamplerInstrument::updateModulationParams() {
+    if (!instrument_) return;
+
+    const auto& mod = instrument_->getSamplerParams().modulation;
+
+    // Update LFO1
+    modMatrix_.getLfo1().SetRate(static_cast<plaits::LfoRateDivision>(mod.lfo1.rateIndex));
+    modMatrix_.getLfo1().SetShape(static_cast<plaits::LfoShape>(mod.lfo1.shapeIndex));
+    modMatrix_.setDestination(0, mod.lfo1.destIndex);
+    modMatrix_.setAmount(0, mod.lfo1.amount);
+
+    // Update LFO2
+    modMatrix_.getLfo2().SetRate(static_cast<plaits::LfoRateDivision>(mod.lfo2.rateIndex));
+    modMatrix_.getLfo2().SetShape(static_cast<plaits::LfoShape>(mod.lfo2.shapeIndex));
+    modMatrix_.setDestination(1, mod.lfo2.destIndex);
+    modMatrix_.setAmount(1, mod.lfo2.amount);
+
+    // Update ENV1
+    modMatrix_.getEnv1().SetAttack(static_cast<uint16_t>(mapAttackMs(mod.env1.attack)));
+    modMatrix_.getEnv1().SetDecay(static_cast<uint16_t>(mapDecayMs(mod.env1.decay)));
+    modMatrix_.setDestination(2, mod.env1.destIndex);
+    modMatrix_.setAmount(2, mod.env1.amount);
+
+    // Update ENV2
+    modMatrix_.getEnv2().SetAttack(static_cast<uint16_t>(mapAttackMs(mod.env2.attack)));
+    modMatrix_.getEnv2().SetDecay(static_cast<uint16_t>(mapDecayMs(mod.env2.decay)));
+    modMatrix_.setDestination(3, mod.env2.destIndex);
+    modMatrix_.setAmount(3, mod.env2.amount);
+
+    modMatrix_.setTempo(tempo_);
+}
+
+void SamplerInstrument::applyModulation(float* outL, float* outR, int numSamples) {
+    // SamplerModDest indices: Volume=0, Pitch=1, Cutoff=2, Resonance=3, Pan=4
+    // Get modulated volume (base 1.0)
+    float volumeMod = modMatrix_.getModulation(0);  // Volume
+    float volume = std::clamp(1.0f + volumeMod, 0.0f, 2.0f);
+
+    // Get modulated pan (-1 to +1 becomes left/right balance)
+    float panMod = modMatrix_.getModulation(4);  // Pan
+    float panL = std::clamp(1.0f - panMod, 0.0f, 1.0f);
+    float panR = std::clamp(1.0f + panMod, 0.0f, 1.0f);
+
+    // Apply volume and pan
+    for (int i = 0; i < numSamples; ++i) {
+        outL[i] *= volume * panL;
+        outR[i] *= volume * panR;
+    }
+}
+
+float SamplerInstrument::getModulatedVolume() const {
+    float volumeMod = modMatrix_.getModulation(0);  // Volume
+    return std::clamp(1.0f + volumeMod, 0.0f, 2.0f);
+}
+
+float SamplerInstrument::getModulatedCutoff() const {
+    if (!instrument_) return 1.0f;
+    float baseCutoff = instrument_->getSamplerParams().filter.cutoff;
+    return modMatrix_.getModulatedValue(2, baseCutoff);  // Cutoff
+}
+
+float SamplerInstrument::getModulatedResonance() const {
+    if (!instrument_) return 0.0f;
+    float baseRes = instrument_->getSamplerParams().filter.resonance;
+    return modMatrix_.getModulatedValue(3, baseRes);  // Resonance
 }
 
 } // namespace audio

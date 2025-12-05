@@ -14,6 +14,7 @@ AudioEngine::AudioEngine()
         instrumentProcessors_[i] = std::make_unique<PlaitsInstrument>();
         samplerProcessors_[i] = std::make_unique<SamplerInstrument>();
         slicerProcessors_[i] = std::make_unique<SlicerInstrument>();
+        vaSynthProcessors_[i] = std::make_unique<VASynthInstrument>();
     }
 }
 
@@ -21,40 +22,22 @@ AudioEngine::~AudioEngine() = default;
 
 void AudioEngine::play()
 {
-    std::lock_guard<std::recursive_mutex> lock(mutex_);
-    if (!playing_)
+    // Lock-free: signal to audio thread to start playback
+    // The audio thread will handle state reset to avoid mutex contention
+    if (!playing_.load(std::memory_order_relaxed))
     {
-        playing_ = true;
-        currentRow_ = 0;
-        samplesUntilNextRow_ = 0.0;
-
-        // Reset song playback state
-        currentSongRow_ = 0;
-        currentChainPosition_ = 0;
-        trackChainPositions_.fill(0);
+        pendingPlay_.store(true, std::memory_order_release);
     }
 }
 
 void AudioEngine::stop()
 {
-    std::lock_guard<std::recursive_mutex> lock(mutex_);
-    playing_ = false;
-
-    // Release all notes on all instrument processors
-    for (auto& processor : instrumentProcessors_)
+    // Lock-free: signal to audio thread to stop playback
+    // The audio thread will handle cleanup to avoid mutex contention
+    if (playing_.load(std::memory_order_relaxed))
     {
-        if (processor)
-            processor->allNotesOff();
+        pendingStop_.store(true, std::memory_order_release);
     }
-
-    // Legacy: Release all voices
-    for (auto& voice : voices_)
-    {
-        if (voice.isActive())
-            voice.noteOff();
-    }
-    trackVoices_.fill(nullptr);
-    trackInstruments_.fill(-1);
 }
 
 void AudioEngine::triggerNote(int track, int note, int instrumentIndex, float velocity)
@@ -84,12 +67,6 @@ void AudioEngine::triggerNote(int track, int note, int instrumentIndex, float ve
         }
 
         trackInstruments_[track] = instrumentIndex;
-
-        // Trigger sidechain if this instrument has high sidechainDuck
-        if (instrument->getSends().sidechainDuck > 0.5f)
-        {
-            effects_.sidechain.trigger();
-        }
         return;
     }
 
@@ -103,12 +80,19 @@ void AudioEngine::triggerNote(int track, int note, int instrumentIndex, float ve
         }
 
         trackInstruments_[track] = instrumentIndex;
+        return;
+    }
 
-        // Trigger sidechain if this instrument has high sidechainDuck
-        if (instrument->getSends().sidechainDuck > 0.5f)
+    if (instrument->getType() == model::InstrumentType::VASynth)
+    {
+        // Handle VASynth instrument
+        if (auto* vaSynth = getVASynthProcessor(instrumentIndex))
         {
-            effects_.sidechain.trigger();
+            vaSynth->setInstrument(instrument);
+            vaSynth->noteOn(note, velocity);
         }
+
+        trackInstruments_[track] = instrumentIndex;
         return;
     }
 
@@ -135,12 +119,6 @@ void AudioEngine::triggerNote(int track, int note, int instrumentIndex, float ve
 
     // Legacy voice for FX processing (optional - can be removed later)
     juce::ignoreUnused(step);
-
-    // Trigger sidechain if this instrument has high sidechainDuck
-    if (instrument->getSends().sidechainDuck > 0.5f)
-    {
-        effects_.sidechain.trigger();
-    }
 }
 
 void AudioEngine::releaseNote(int track)
@@ -173,6 +151,18 @@ void AudioEngine::releaseNote(int track)
                 if (auto* slicer = getSlicerProcessor(instrumentIndex))
                 {
                     slicer->allNotesOff();
+                }
+                trackInstruments_[track] = -1;
+                trackVoices_[track] = nullptr;
+                return;
+            }
+
+            if (instrument && instrument->getType() == model::InstrumentType::VASynth)
+            {
+                // Handle VASynth instrument
+                if (auto* vaSynth = getVASynthProcessor(instrumentIndex))
+                {
+                    vaSynth->allNotesOff();
                 }
                 trackInstruments_[track] = -1;
                 trackVoices_[track] = nullptr;
@@ -256,6 +246,16 @@ void AudioEngine::prepareToPlay(int samplesPerBlockExpected, double sampleRate)
         }
     }
 
+    // Initialize all VA synth processors
+    for (auto& vaSynth : vaSynthProcessors_)
+    {
+        if (vaSynth)
+        {
+            vaSynth->init(sampleRate);
+            vaSynth->setTempo(tempo);
+        }
+    }
+
     // Initialize legacy voices (can be removed later)
     for (auto& voice : voices_)
     {
@@ -276,6 +276,63 @@ void AudioEngine::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferTo
 {
     bufferToFill.clearActiveBufferRegion();
 
+    // Handle pending transport commands (lock-free from UI thread)
+    if (pendingStop_.load(std::memory_order_acquire))
+    {
+        pendingStop_.store(false, std::memory_order_relaxed);
+        playing_.store(false, std::memory_order_relaxed);
+
+        // Release all notes on all instrument processors
+        for (auto& processor : instrumentProcessors_)
+        {
+            if (processor)
+                processor->allNotesOff();
+        }
+
+        // Release all sampler processors
+        for (auto& sampler : samplerProcessors_)
+        {
+            if (sampler)
+                sampler->allNotesOff();
+        }
+
+        // Release all slicer processors
+        for (auto& slicer : slicerProcessors_)
+        {
+            if (slicer)
+                slicer->allNotesOff();
+        }
+
+        // Release all VA synth processors
+        for (auto& vaSynth : vaSynthProcessors_)
+        {
+            if (vaSynth)
+                vaSynth->allNotesOff();
+        }
+
+        // Legacy: Release all voices
+        for (auto& voice : voices_)
+        {
+            if (voice.isActive())
+                voice.noteOff();
+        }
+        trackVoices_.fill(nullptr);
+        trackInstruments_.fill(-1);
+    }
+
+    if (pendingPlay_.load(std::memory_order_acquire))
+    {
+        pendingPlay_.store(false, std::memory_order_relaxed);
+        playing_.store(true, std::memory_order_relaxed);
+        currentRow_ = 0;
+        samplesUntilNextRow_ = 0.0;
+
+        // Reset song playback state
+        currentSongRow_ = 0;
+        currentChainPosition_ = 0;
+        trackChainPositions_.fill(0);
+    }
+
     std::lock_guard<std::recursive_mutex> lock(mutex_);
 
     float* outL = bufferToFill.buffer->getWritePointer(0, bufferToFill.startSample);
@@ -288,7 +345,7 @@ void AudioEngine::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferTo
         effects_.setTempo(project_->getTempo());
 
     // If playing, process pattern(s)
-    if (playing_ && project_)
+    if (playing_.load(std::memory_order_relaxed) && project_)
     {
         double samplesPerBeat = sampleRate_ * 60.0 / project_->getTempo();
         double samplesPerRow = samplesPerBeat / 4.0;  // 4 rows per beat
@@ -423,10 +480,17 @@ void AudioEngine::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferTo
                 grooveOffset = groove.timings[static_cast<size_t>(currentRow_ % 16)];
 
                 samplesUntilNextRow_ = samplesPerRow * (1.0 + static_cast<double>(grooveOffset));
+
+                // Ensure samplesUntilNextRow_ is always positive to prevent infinite loop
+                // This guards against extreme groove offsets near -1.0
+                if (samplesUntilNextRow_ < 1.0)
+                    samplesUntilNextRow_ = 1.0;
             }
 
+            // Ensure we always advance by at least 1 sample to avoid infinite loop
+            // This can happen at high BPM when samplesUntilNextRow_ < 1.0
             int blockSamples = std::min(numSamples - processed,
-                                        static_cast<int>(samplesUntilNextRow_));
+                                        std::max(1, static_cast<int>(samplesUntilNextRow_)));
 
             samplesUntilNextRow_ -= blockSamples;
             processed += blockSamples;
@@ -453,9 +517,17 @@ void AudioEngine::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferTo
     // Temporary buffers for per-instrument rendering
     std::array<float, 512> tempL{}, tempR{};
 
+    // Buffers for sidechain source capture
+    std::array<float, 512> sidechainSourceL{}, sidechainSourceR{};
+    std::fill(sidechainSourceL.begin(), sidechainSourceL.begin() + numSamples, 0.0f);
+    std::fill(sidechainSourceR.begin(), sidechainSourceR.begin() + numSamples, 0.0f);
+
+    // Get sidechain source instrument from mixer settings
+    int sidechainSourceInst = project_ ? project_->getMixer().sidechainSource : -1;
+
     // Render all instrument processors with per-instrument mixing
     float avgReverb = 0.0f, avgDelay = 0.0f, avgChorus = 0.0f;
-    float avgDrive = 0.0f, avgSidechain = 0.0f;
+    float avgDrive = 0.0f;
     int activeCount = 0;
 
     for (int instIdx = 0; instIdx < NUM_INSTRUMENTS; ++instIdx)
@@ -514,6 +586,13 @@ void AudioEngine::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferTo
             float monoSample = (tempL[i] + tempR[i]) * 0.5f;
             outL[i] += monoSample * leftGain * 2.0f;  // *2 to compensate for mono sum
             outR[i] += monoSample * rightGain * 2.0f;
+
+            // Capture sidechain source audio
+            if (instIdx == sidechainSourceInst)
+            {
+                sidechainSourceL[i] += monoSample * leftGain * 2.0f;
+                sidechainSourceR[i] += monoSample * rightGain * 2.0f;
+            }
         }
 
         // Accumulate send levels from active instruments
@@ -524,7 +603,6 @@ void AudioEngine::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferTo
             avgDelay += sends.delay * volume;
             avgChorus += sends.chorus * volume;
             avgDrive += sends.drive * volume;
-            avgSidechain += sends.sidechainDuck * volume;
             activeCount++;
         }
     }
@@ -581,6 +659,13 @@ void AudioEngine::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferTo
             float monoSample = (tempL[i] + tempR[i]) * 0.5f;
             outL[i] += monoSample * leftGain * 2.0f;
             outR[i] += monoSample * rightGain * 2.0f;
+
+            // Capture sidechain source audio
+            if (instIdx == sidechainSourceInst)
+            {
+                sidechainSourceL[i] += monoSample * leftGain * 2.0f;
+                sidechainSourceR[i] += monoSample * rightGain * 2.0f;
+            }
         }
 
         // Accumulate send levels
@@ -589,7 +674,6 @@ void AudioEngine::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferTo
         avgDelay += sends.delay * volume;
         avgChorus += sends.chorus * volume;
         avgDrive += sends.drive * volume;
-        avgSidechain += sends.sidechainDuck * volume;
         activeCount++;
     }
 
@@ -645,6 +729,13 @@ void AudioEngine::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferTo
             float monoSample = (tempL[i] + tempR[i]) * 0.5f;
             outL[i] += monoSample * leftGain * 2.0f;
             outR[i] += monoSample * rightGain * 2.0f;
+
+            // Capture sidechain source audio
+            if (instIdx == sidechainSourceInst)
+            {
+                sidechainSourceL[i] += monoSample * leftGain * 2.0f;
+                sidechainSourceR[i] += monoSample * rightGain * 2.0f;
+            }
         }
 
         // Accumulate send levels
@@ -653,7 +744,76 @@ void AudioEngine::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferTo
         avgDelay += sends.delay * volume;
         avgChorus += sends.chorus * volume;
         avgDrive += sends.drive * volume;
-        avgSidechain += sends.sidechainDuck * volume;
+        activeCount++;
+    }
+
+    // Process VA synth instruments
+    for (int instIdx = 0; instIdx < NUM_INSTRUMENTS; ++instIdx)
+    {
+        auto& vaSynth = vaSynthProcessors_[instIdx];
+        if (!vaSynth) continue;
+
+        // Get instrument model for mixer settings
+        model::Instrument* instrument = project_ ? project_->getInstrument(instIdx) : nullptr;
+
+        // Only process if this is a VASynth type instrument
+        if (!instrument || instrument->getType() != model::InstrumentType::VASynth)
+            continue;
+
+        // Determine if this instrument should play
+        bool shouldPlay = true;
+        float volume = 1.0f;
+        float pan = 0.0f;
+
+        // Check mute/solo
+        if (anySoloed)
+        {
+            shouldPlay = instrument->isSoloed();
+        }
+        else
+        {
+            shouldPlay = !instrument->isMuted();
+        }
+
+        if (!shouldPlay)
+        {
+            continue;
+        }
+
+        volume = instrument->getVolume();
+        pan = instrument->getPan();
+
+        // Clear temp buffers
+        std::fill(tempL.begin(), tempL.begin() + numSamples, 0.0f);
+        std::fill(tempR.begin(), tempR.begin() + numSamples, 0.0f);
+
+        // Render VA synth to temp buffers
+        vaSynth->process(tempL.data(), tempR.data(), numSamples);
+
+        // Apply volume and pan, mix into output
+        float leftGain = volume * std::sqrt((1.0f - pan) / 2.0f);
+        float rightGain = volume * std::sqrt((1.0f + pan) / 2.0f);
+
+        for (int i = 0; i < numSamples; ++i)
+        {
+            float monoSample = (tempL[i] + tempR[i]) * 0.5f;
+            outL[i] += monoSample * leftGain * 2.0f;
+            outR[i] += monoSample * rightGain * 2.0f;
+
+            // Capture sidechain source audio
+            if (instIdx == sidechainSourceInst)
+            {
+                sidechainSourceL[i] += monoSample * leftGain * 2.0f;
+                sidechainSourceR[i] += monoSample * rightGain * 2.0f;
+            }
+        }
+
+        // Accumulate send levels
+        const auto& sends = instrument->getSends();
+        avgReverb += sends.reverb * volume;
+        avgDelay += sends.delay * volume;
+        avgChorus += sends.chorus * volume;
+        avgDrive += sends.drive * volume;
         activeCount++;
     }
 
@@ -663,27 +823,55 @@ void AudioEngine::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferTo
         avgDelay /= static_cast<float>(activeCount);
         avgChorus /= static_cast<float>(activeCount);
         avgDrive /= static_cast<float>(activeCount);
-        avgSidechain /= static_cast<float>(activeCount);
+    }
+
+    // Update effect parameters from project settings
+    if (project_)
+    {
+        const auto& mixer = project_->getMixer();
+        effects_.reverb.setParams(mixer.reverbSize, mixer.reverbDamping, 1.0f);
+        effects_.delay.setParams(mixer.delayTime, mixer.delayFeedback, 1.0f);
+        effects_.chorus.setParams(mixer.chorusRate, mixer.chorusDepth, 1.0f);
+        effects_.drive.setParams(mixer.driveGain, mixer.driveTone);
+        effects_.sidechain.setParams(mixer.sidechainAttack, mixer.sidechainRelease, mixer.sidechainRatio);
+        effects_.djFilter.setPosition(mixer.djFilterPosition);
+        effects_.limiter.setParams(mixer.limiterThreshold, mixer.limiterRelease);
     }
 
     // Apply effects per sample
     for (int i = 0; i < numSamples; ++i)
     {
-        effects_.process(outL[i], outR[i], avgReverb, avgDelay, avgChorus, avgDrive, avgSidechain);
+        // Feed sidechain envelope follower with source audio level
+        if (sidechainSourceInst >= 0)
+        {
+            float sourceLevel = (sidechainSourceL[i] + sidechainSourceR[i]) * 0.5f;
+            effects_.sidechain.feedSource(sourceLevel);
+        }
+
+        // Apply reverb, delay, chorus, drive
+        effects_.process(outL[i], outR[i], avgReverb, avgDelay, avgChorus, avgDrive);
+
+        // Apply sidechain ducking to entire output (all instruments except source are ducked)
+        // The source instrument is NOT ducked - it triggers the ducking
+        if (sidechainSourceInst >= 0)
+        {
+            effects_.sidechain.process(outL[i], outR[i]);
+        }
     }
 
-    // Apply master volume from mixer
+    // Apply master volume and master bus effects (DJ filter + limiter)
     if (project_)
     {
         float masterVol = project_->getMixer().masterVolume;
         for (int i = 0; i < numSamples; ++i)
         {
+            // Apply master volume
             outL[i] *= masterVol;
             outR[i] *= masterVol;
 
-            // Clip to prevent distortion
-            outL[i] = std::clamp(outL[i], -1.0f, 1.0f);
-            outR[i] = std::clamp(outR[i], -1.0f, 1.0f);
+            // Apply master bus effects (DJ filter then limiter)
+            // Limiter replaces hard clipping for transparent peak control
+            effects_.processMaster(outL[i], outR[i]);
         }
     }
 }
@@ -746,7 +934,7 @@ int AudioEngine::getPatternIndexForColumn(int songColumn) const
     if (playMode_ == PlayMode::Pattern)
     {
         // In pattern mode, only column 0 plays
-        return (songColumn == 0) ? currentPattern_ : -1;
+        return (songColumn == 0) ? currentPattern_.load(std::memory_order_relaxed) : -1;
     }
 
     if (!project_) return -1;
@@ -1082,6 +1270,13 @@ SlicerInstrument* AudioEngine::getSlicerProcessor(int index)
 {
     if (index >= 0 && index < NUM_INSTRUMENTS)
         return slicerProcessors_[index].get();
+    return nullptr;
+}
+
+VASynthInstrument* AudioEngine::getVASynthProcessor(int index)
+{
+    if (index >= 0 && index < NUM_INSTRUMENTS)
+        return vaSynthProcessors_[index].get();
     return nullptr;
 }
 

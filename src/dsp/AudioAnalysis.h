@@ -29,6 +29,11 @@ public:
     // Get the nearest C note (C1=24, C2=36, C3=48, C4=60, etc.)
     static int getNearestC(int midiNote);
 
+    // Transient detection - returns sample positions of detected transients
+    // sensitivity: 0.0 = less sensitive (fewer transients), 1.0 = more sensitive (more transients)
+    static std::vector<size_t> detectTransients(const float* data, size_t numSamples,
+                                                 int sampleRate, float sensitivity = 0.5f);
+
 private:
     // Internal helpers for BPM detection
     static std::vector<float> computeOnsetEnvelope(const float* data, size_t numSamples, int hopSize);

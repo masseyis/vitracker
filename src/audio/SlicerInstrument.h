@@ -3,8 +3,10 @@
 #include "InstrumentProcessor.h"
 #include "SlicerVoice.h"
 #include "../model/Instrument.h"
+#include "../dsp/sampler_modulation.h"
 #include <JuceHeader.h>
 #include <array>
+#include <atomic>
 
 namespace audio {
 
@@ -12,6 +14,7 @@ class SlicerInstrument : public InstrumentProcessor {
 public:
     static constexpr int NUM_VOICES = 8;
     static constexpr int BASE_NOTE = 12;  // C-1 (tracker notation) = slice 0
+    static constexpr int kMaxBlockSize = 512;
 
     SlicerInstrument();
     ~SlicerInstrument() override = default;
@@ -42,7 +45,8 @@ public:
 
     // Slice management
     void chopIntoDivisions(int numDivisions);
-    void addSliceAtPosition(size_t samplePosition);
+    void chopByTransients(float sensitivity);  // Auto-detect transients and create slices
+    int addSliceAtPosition(size_t samplePosition);  // Returns index of new slice
     void removeSlice(int sliceIndex);
     void clearSlices();
     int getNumSlices() const;
@@ -54,6 +58,11 @@ public:
     const juce::AudioBuffer<float>& getSampleBuffer() const { return sampleBuffer_; }
     int getSampleRate() const { return loadedSampleRate_; }
 
+    // Time-stretched buffer (when repitch=false)
+    const juce::AudioBuffer<float>& getStretchedBuffer() const { return stretchedBuffer_; }
+    bool hasStretchedBuffer() const { return stretchedBuffer_.getNumSamples() > 0; }
+    void regenerateStretchedBuffer();  // Call when speed changes and repitch=false
+
     // Three-way dependency editing (Original BPM/Bars, Target BPM, Speed/Pitch)
     // Call these when user edits a value - they handle dependency recalculation
     void editOriginalBars(int newBars);
@@ -63,7 +72,28 @@ public:
     void editPitch(int newSemitones);  // Only works when repitch=true
     void setRepitch(bool enabled);
 
+    // Lazy chop preview - plays entire sample and tracks position
+    void startLazyChopPreview();
+    void stopLazyChopPreview();
+    bool isLazyChopPlaying() const { return lazyChopPlaying_; }
+    size_t getLazyChopPlayhead() const { return lazyChopPlayhead_; }
+    void addSliceAtPlayhead();  // Adds slice at current playhead position
+
+    // Playhead position for UI display (-1 if no voice active)
+    int64_t getPlayheadPosition() const;
+
+    // Modulation matrix access
+    const dsp::SamplerModulationMatrix& getModMatrix() const { return modMatrix_; }
+    float getModulatedVolume() const;
+    float getModulatedCutoff() const;
+    float getModulatedResonance() const;
+
+    // Tempo for LFO sync
+    void setTempo(double bpm);
+
 private:
+    void updateModulationParams();
+    void applyModulation(float* outL, float* outR, int numSamples);
     // Three-way dependency helpers
     void markEdited(model::SlicerLastEdited which);
     void recalculateDependencies();
@@ -80,7 +110,23 @@ private:
     juce::AudioBuffer<float> sampleBuffer_;
     int loadedSampleRate_ = 44100;
 
+    // Time-stretched buffer (pre-rendered when repitch=false)
+    juce::AudioBuffer<float> stretchedBuffer_;
+    float lastStretchSpeed_ = 1.0f;  // Track when regeneration is needed
+    std::atomic<bool> stretchedBufferReady_{false};
+
     juce::AudioFormatManager formatManager_;
+
+    // Lazy chop preview state
+    bool lazyChopPlaying_ = false;
+    size_t lazyChopPlayhead_ = 0;
+
+    // Modulation
+    dsp::SamplerModulationMatrix modMatrix_;
+    double tempo_ = 120.0;
+    int activeVoiceCount_ = 0;
+    std::array<float, kMaxBlockSize> tempBufferL_;
+    std::array<float, kMaxBlockSize> tempBufferR_;
 };
 
 } // namespace audio

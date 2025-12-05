@@ -7,6 +7,7 @@
 #include "input/KeyHandler.h"
 #include "audio/AudioEngine.h"
 #include "ui/Screen.h"
+#include "ui/HelpPopup.h"
 #include <memory>
 #include <array>
 
@@ -49,6 +50,15 @@ private:
     int currentScreen_ = 3;
     int autosaveCounter_ = 0;
     int previewNoteCounter_ = 0;  // Countdown to release preview note
+
+    // Help popup overlay
+    ui::HelpPopup helpPopup_;
+    void showHelp();
+    void hideHelp();
+    void toggleHelp();
+
+    // Tip Me button
+    juce::TextButton tipMeButton_{"Tip Me"};
 
     static constexpr int STATUS_BAR_HEIGHT = 28;
     static constexpr int PREVIEW_NOTE_FRAMES = 6;  // ~200ms at 30fps

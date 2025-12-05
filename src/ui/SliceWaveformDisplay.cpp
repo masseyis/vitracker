@@ -123,6 +123,15 @@ void SliceWaveformDisplay::paint(juce::Graphics& g) {
 
         // Draw slice markers on top
         paintSliceMarkers(g, bounds);
+
+        // Draw playhead if active
+        if (playheadPosition_ >= 0 && playheadPosition_ < numSamples) {
+            if (playheadPosition_ >= startSample && playheadPosition_ < startSample + visibleSamples) {
+                const float playheadX = static_cast<float>(playheadPosition_ - startSample) / visibleSamples * bounds.getWidth();
+                g.setColour(playheadColour_);
+                g.drawVerticalLine(static_cast<int>(playheadX), 0.0f, static_cast<float>(bounds.getHeight()));
+            }
+        }
     } else {
         g.setColour(juce::Colour(0xffeaeaea).withAlpha(0.5f));  // fgColor dimmed
         g.drawText("No sample loaded", bounds, juce::Justification::centred);

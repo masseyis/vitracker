@@ -17,6 +17,7 @@ public:
     bool handleEditKey(const juce::KeyPress& key);
 
     std::string getTitle() const override { return "PROJECT"; }
+    std::vector<HelpSection> getHelpContent() const override;
 
     std::function<void()> onTempoChanged;
 

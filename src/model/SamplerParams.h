@@ -4,6 +4,7 @@
 #include <vector>
 #include <cstdint>
 #include "FilterParams.h"
+#include "ModulationParams.h"
 
 namespace model {
 
@@ -37,6 +38,9 @@ struct SamplerParams {
     AdsrParams ampEnvelope;
     float filterEnvAmount = 0.0f;       // -1.0 to +1.0
     AdsrParams filterEnvelope;
+
+    // Modulation matrix (LFOs, mod envelopes, FX sends)
+    SamplerModulationParams modulation;
 };
 
 } // namespace model

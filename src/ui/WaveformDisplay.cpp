@@ -74,6 +74,16 @@ void WaveformDisplay::paint(juce::Graphics& g) {
 
     g.strokePath(waveformPath, juce::PathStrokeType(1.0f));
 
+    // Draw playhead if active
+    if (playheadPosition_ >= 0 && playheadPosition_ < numSamples) {
+        // Convert sample position to x coordinate
+        if (playheadPosition_ >= startSample && playheadPosition_ < startSample + visibleSamples) {
+            const float playheadX = static_cast<float>(playheadPosition_ - startSample) / visibleSamples * width;
+            g.setColour(playheadColour_);
+            g.drawVerticalLine(static_cast<int>(playheadX), 0.0f, static_cast<float>(bounds.getHeight()));
+        }
+    }
+
     // Draw time info
     g.setColour(juce::Colours::white.withAlpha(0.7f));
     g.setFont(12.0f);
@@ -111,6 +121,13 @@ void WaveformDisplay::scrollLeft() {
 
 void WaveformDisplay::scrollRight() {
     setScrollPosition(scrollPosition_ + 0.1f / zoom_);
+}
+
+void WaveformDisplay::setPlayheadPosition(int64_t samplePosition) {
+    if (playheadPosition_ != samplePosition) {
+        playheadPosition_ = samplePosition;
+        repaint();
+    }
 }
 
 } // namespace ui

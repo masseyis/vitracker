@@ -72,6 +72,36 @@ public:
         std::array<float, 5> busLevels;  // reverb, delay, chorus, drive, sidechain
         float masterVolume = 1.0f;
 
+        // Effect parameters
+        // Reverb
+        float reverbSize = 0.7f;      // Room size (0-1)
+        float reverbDamping = 0.3f;   // High frequency damping (0-1)
+
+        // Delay
+        float delayTime = 0.65f;      // Time (maps to note divisions, 0.65 = dotted crotchet)
+        float delayFeedback = 0.55f;  // Feedback amount (0-1)
+
+        // Chorus
+        float chorusRate = 0.4f;      // LFO rate (0-1)
+        float chorusDepth = 0.6f;     // Modulation depth (0-1)
+
+        // Drive
+        float driveGain = 0.3f;       // Saturation amount (0-1)
+        float driveTone = 0.6f;       // Brightness (0-1)
+
+        // Sidechain compressor
+        int sidechainSource = -1;     // Instrument index (-1 = none)
+        float sidechainAttack = 0.005f;   // Attack time (0.001-0.05)
+        float sidechainRelease = 0.2f;    // Release time (0.05-1.0)
+        float sidechainRatio = 0.7f;      // Compression amount (0-1, 0=off, 1=full duck)
+
+        // DJ Filter (master bus) - bipolar: -1 = full LP, 0 = bypass, +1 = full HP
+        float djFilterPosition = 0.0f;
+
+        // Limiter (master bus)
+        float limiterThreshold = 0.95f;   // 0.1-1.0, threshold level
+        float limiterRelease = 0.1f;      // 0.01-1.0, release time
+
         MixerState();
     };
 

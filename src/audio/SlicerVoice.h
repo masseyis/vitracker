@@ -1,8 +1,6 @@
 #pragma once
 
 #include "../model/SlicerParams.h"
-#include "../dsp/adsr_envelope.h"
-#include "../dsp/moog_filter.h"
 
 namespace audio {
 
@@ -12,6 +10,7 @@ public:
 
     void setSampleRate(double sampleRate);
     void setSampleData(const float* leftData, const float* rightData, size_t numSamples, int originalSampleRate);
+    void setPlaybackSpeed(float speed) { speed_ = speed; }
 
     // Trigger a specific slice (sliceIndex maps from MIDI note)
     void trigger(int sliceIndex, float velocity, const model::SlicerParams& params);
@@ -21,6 +20,7 @@ public:
 
     bool isActive() const { return active_; }
     int getSliceIndex() const { return currentSlice_; }
+    size_t getPlayPosition() const { return static_cast<size_t>(playPosition_); }
 
 private:
     double sampleRate_ = 48000.0;
@@ -40,14 +40,7 @@ private:
 
     // Playback rate for sample rate conversion only (no pitch shift)
     double playbackRate_ = 1.0;
-
-    dsp::AdsrEnvelope ampEnvelope_;
-    dsp::AdsrEnvelope filterEnvelope_;
-    plaits::MoogFilter filterL_;
-    plaits::MoogFilter filterR_;
-
-    float baseCutoff_ = 1.0f;
-    float filterEnvAmount_ = 0.0f;
+    float speed_ = 1.0f;  // Speed multiplier from time-stretch params
 };
 
 } // namespace audio
