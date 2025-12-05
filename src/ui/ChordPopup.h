@@ -3,6 +3,7 @@
 #include <JuceHeader.h>
 #include <string>
 #include <vector>
+#include <functional>
 
 namespace ui {
 
@@ -73,6 +74,72 @@ static const std::vector<ScaleDegree> kMinorScaleDegrees = {
     {"v",    7,  true},
     {"VI",   8,  false},
     {"VII",  10, false},
+};
+
+class ChordPopup : public juce::Component,
+                   public juce::Timer
+{
+public:
+    ChordPopup();
+    ~ChordPopup() override = default;
+
+    void paint(juce::Graphics& g) override;
+    void resized() override;
+    bool keyPressed(const juce::KeyPress& key, juce::Component* originatingComponent) override;
+    void timerCallback() override;
+
+    // Show popup with context
+    void show(int rootNote, int instrument, const std::string& scaleLock);
+    void showAtCell(int cursorTrack, int cursorRow, int existingNote, int instrument,
+                    const std::string& scaleLock);
+    void hide();
+    bool isShowing() const { return isVisible(); }
+
+    // Result callback: vector of MIDI notes to place on adjacent tracks
+    std::function<void(const std::vector<int>& notes)> onChordConfirmed;
+
+    // Preview callback: trigger chord preview
+    std::function<void(const std::vector<int>& notes, int instrument)> onChordPreview;
+
+private:
+    void updateChordNotes();
+    void applyInversion();
+    void triggerPreview();
+    int calculateRootFromDegree() const;
+    std::string getChordDisplayName() const;
+
+    void drawPianoKeyboard(juce::Graphics& g, juce::Rectangle<int> area);
+    void drawColumnSelector(juce::Graphics& g, juce::Rectangle<int> area);
+
+    ChordSelection selection_;
+    std::string scaleLock_;
+    int scaleRoot_ = 0;        // 0=C, 1=C#, etc.
+    bool isMinorScale_ = false;
+    int instrumentIndex_ = 0;
+    int cursorTrack_ = 0;
+
+    int currentColumn_ = 0;    // 0=degree, 1=type, 2=inversion
+    int previewDebounce_ = 0;  // Countdown for debounced preview
+
+    static constexpr int kPopupWidth = 500;
+    static constexpr int kPopupHeight = 400;
+    static constexpr int kPianoHeight = 80;
+    static constexpr int kPreviewDebounceMs = 200;
+
+    // Colors (matching app theme)
+    static inline const juce::Colour bgColor{0xff1a1a2e};
+    static inline const juce::Colour panelColor{0xff2a2a4e};
+    static inline const juce::Colour borderColor{0xff4a4a6e};
+    static inline const juce::Colour titleColor{0xff7c7cff};
+    static inline const juce::Colour highlightColor{0xffffcc66};
+    static inline const juce::Colour textColor{0xffeaeaea};
+    static inline const juce::Colour dimColor{0xff888888};
+    static inline const juce::Colour selectedColor{0xff4a7cff};
+    static inline const juce::Colour whiteKeyColor{0xfff0f0f0};
+    static inline const juce::Colour blackKeyColor{0xff2a2a2a};
+    static inline const juce::Colour chordNoteColor{0xffff6666};
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ChordPopup)
 };
 
 } // namespace ui
