@@ -47,7 +47,7 @@ private:
     juce::AudioDeviceManager deviceManager_;
     juce::AudioSourcePlayer audioSourcePlayer_;
 
-    std::array<std::unique_ptr<ui::Screen>, 5> screens_;
+    std::array<std::unique_ptr<ui::Screen>, 6> screens_;
     int currentScreen_ = 2;  // Pattern screen (was 3, now 2 after removing Project)
     int autosaveCounter_ = 0;
     int previewNoteCounter_ = 0;  // Countdown to release preview note

@@ -45,7 +45,6 @@ enum class VASynthRowType {
     Reverb,         // FX sends
     Delay,
     Chorus,
-    Drive,
     Sidechain,
     Volume,
     Pan,
@@ -70,7 +69,6 @@ enum class SamplerRowType {
     Reverb,         // FX sends
     Delay,
     Chorus,
-    Drive,
     Sidechain,
     Volume,
     Pan,
@@ -94,7 +92,6 @@ enum class SlicerRowType {
     Reverb,         // FX sends
     Delay,
     Chorus,
-    Drive,
     Sidechain,
     Volume,
     Pan,
@@ -122,7 +119,6 @@ enum class InstrumentRowType {
     Reverb,
     Delay,
     Chorus,
-    Drive,
     Sidechain,
     NumRows
 };

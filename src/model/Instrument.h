@@ -57,8 +57,40 @@ struct SendLevels
     float reverb = 0.0f;
     float delay = 0.0f;
     float chorus = 0.0f;
-    float drive = 0.0f;
     float sidechainDuck = 0.0f;
+};
+
+// Channel strip parameters (per-instrument insert processing)
+struct ChannelStripParams {
+    // HPF (High-Pass Filter / Low Cut)
+    float hpfFreq = 20.0f;      // 20-500 Hz
+    int hpfSlope = 0;           // 0=off, 1=12dB/oct, 2=24dB/oct
+
+    // Low Shelf EQ
+    float lowShelfGain = 0.0f;  // -12 to +12 dB
+    float lowShelfFreq = 200.0f; // 50-500 Hz
+
+    // Mid Parametric EQ
+    float midFreq = 1000.0f;    // 200-8000 Hz
+    float midGain = 0.0f;       // -12 to +12 dB
+    float midQ = 1.0f;          // 0.5-8.0
+
+    // High Shelf EQ
+    float highShelfGain = 0.0f; // -12 to +12 dB
+    float highShelfFreq = 8000.0f; // 2000-16000 Hz
+
+    // Drive (moved from master bus send)
+    float driveAmount = 0.0f;   // 0-1 (0 = bypass)
+    float driveTone = 0.5f;     // 0-1 (dark to bright)
+
+    // Punch (transient shaper)
+    float punchAmount = 0.0f;   // 0-1 (0 = bypass)
+
+    // OTT (3-band multiband dynamics)
+    float ottLowDepth = 0.0f;   // 0-1 low band depth (0 = bypass)
+    float ottMidDepth = 0.0f;   // 0-1 mid band depth (0 = bypass)
+    float ottHighDepth = 0.0f;  // 0-1 high band depth (0 = bypass)
+    float ottMix = 1.0f;        // 0-1 wet/dry
 };
 
 class Instrument
@@ -85,6 +117,9 @@ public:
     VAParams& getVAParams() { return vaParams_; }
     const VAParams& getVAParams() const { return vaParams_; }
 
+    ChannelStripParams& getChannelStrip() { return channelStrip_; }
+    const ChannelStripParams& getChannelStrip() const { return channelStrip_; }
+
     // Mixer controls (per-instrument)
     float getVolume() const { return volume_; }
     void setVolume(float v) { volume_ = std::max(0.0f, std::min(1.0f, v)); }
@@ -108,6 +143,7 @@ private:
     SamplerParams samplerParams_;
     SlicerParams slicerParams_;
     VAParams vaParams_;
+    ChannelStripParams channelStrip_;
 
     // Mixer state
     float volume_ = 1.0f;    // 0.0-1.0
