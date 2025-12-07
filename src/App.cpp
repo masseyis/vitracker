@@ -593,15 +593,17 @@ bool App::keyPressed(const juce::KeyPress& key, juce::Component* originatingComp
             return true;
     }
 
-    // Global tempo shortcut (t)
-    if (key.getTextCharacter() == 't' && modeManager_.getMode() == input::Mode::Normal)
+    // Global tempo shortcut (t) - skip if screen is in text edit mode
+    bool screenInTextEdit = screens_[currentScreen_] &&
+        screens_[currentScreen_]->getInputContext() == input::InputContext::TextEdit;
+    if (key.getTextCharacter() == 't' && modeManager_.getMode() == input::Mode::Normal && !screenInTextEdit)
     {
         enterTempoAdjustMode();
         return true;
     }
 
-    // Global groove cycling (g/G)
-    if (modeManager_.getMode() == input::Mode::Normal)
+    // Global groove cycling (g/G) - skip if screen is in text edit mode
+    if (modeManager_.getMode() == input::Mode::Normal && !screenInTextEdit)
     {
         if (key.getTextCharacter() == 'g')
         {

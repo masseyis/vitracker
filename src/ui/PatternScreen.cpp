@@ -1,6 +1,7 @@
 #include "PatternScreen.h"
 #include "HelpPopup.h"
 #include "../audio/AudioEngine.h"
+#include "../input/KeyHandler.h"
 #include <algorithm>
 
 namespace ui {
@@ -145,9 +146,39 @@ bool PatternScreen::handleEdit(const juce::KeyPress& key)
 
 bool PatternScreen::handleEditKey(const juce::KeyPress& key)
 {
-    auto keyCode = key.getKeyCode();
-    auto textChar = key.getTextCharacter();
+    auto textChar = key.getTextCharacter();  // Still used for hex input (0-9, a-f)
     bool shiftHeld = key.getModifiers().isShiftDown();
+
+    // Use translateKey to detect Alt+hjkl for edit operations (macOS Alt produces special chars)
+    // Use TextEdit context when in name editing mode so text actions work
+    auto context = editingName_ ? input::InputContext::TextEdit : input::InputContext::Grid;
+    auto action = input::KeyHandler::translateKey(key, context,
+                                                   modeManager_.getMode() == input::Mode::Visual);
+    // Edit actions from translateKey - direction-based (Edit1=vertical, Edit2=horizontal)
+    bool isEdit1Inc = (action.action == input::KeyAction::Edit1Inc ||
+                       action.action == input::KeyAction::ShiftEdit1Inc);
+    bool isEdit1Dec = (action.action == input::KeyAction::Edit1Dec ||
+                       action.action == input::KeyAction::ShiftEdit1Dec);
+    bool isEdit2Inc = (action.action == input::KeyAction::Edit2Inc ||
+                       action.action == input::KeyAction::ShiftEdit2Inc);
+    bool isEdit2Dec = (action.action == input::KeyAction::Edit2Dec ||
+                       action.action == input::KeyAction::ShiftEdit2Dec);
+
+    // Combined edit flags (for code that doesn't care about direction)
+    bool isEditInc = isEdit1Inc || isEdit2Inc;
+    bool isEditDec = isEdit1Dec || isEdit2Dec;
+
+    // For FX columns: Edit1 = vertical (type cycling), Edit2 = horizontal (value adjust)
+    bool isVerticalEditInc = isEdit1Inc;
+    bool isVerticalEditDec = isEdit1Dec;
+    bool isHorizontalEditInc = isEdit2Inc;
+    bool isHorizontalEditDec = isEdit2Dec;
+
+    // Coarse adjustment detection (Shift variants)
+    bool isCoarseEdit = (action.action == input::KeyAction::ShiftEdit1Inc ||
+                         action.action == input::KeyAction::ShiftEdit1Dec ||
+                         action.action == input::KeyAction::ShiftEdit2Inc ||
+                         action.action == input::KeyAction::ShiftEdit2Dec);
 
     // Handle name editing mode first
     if (editingName_)
@@ -160,51 +191,51 @@ bool PatternScreen::handleEditKey(const juce::KeyPress& key)
             return true;  // Consumed
         }
 
-        if (keyCode == juce::KeyPress::returnKey || keyCode == juce::KeyPress::escapeKey)
+        switch (action.action)
         {
-            if (keyCode == juce::KeyPress::returnKey)
+            case input::KeyAction::TextAccept:
                 pattern->setName(nameBuffer_);
-            editingName_ = false;
-            repaint();
-            return true;  // Consumed - important for Enter/Escape
+                editingName_ = false;
+                repaint();
+                return true;
+            case input::KeyAction::TextReject:
+                editingName_ = false;
+                repaint();
+                return true;
+            case input::KeyAction::TextBackspace:
+                if (!nameBuffer_.empty())
+                    nameBuffer_.pop_back();
+                repaint();
+                return true;
+            case input::KeyAction::TextChar:
+                if (nameBuffer_.length() < 16)
+                    nameBuffer_ += action.charData;
+                repaint();
+                return true;
+            default:
+                return true;  // In name editing mode, consume all keys
         }
-        if (keyCode == juce::KeyPress::backspaceKey && !nameBuffer_.empty())
-        {
-            nameBuffer_.pop_back();
-            repaint();
-            return true;  // Consumed
-        }
-        if (textChar >= ' ' && textChar <= '~' && nameBuffer_.length() < 16)
-        {
-            nameBuffer_ += static_cast<char>(textChar);
-            repaint();
-            return true;  // Consumed
-        }
-        return true;  // In name editing mode, consume all keys
     }
 
     // Tab: move to next track (stay on same column type)
     // Shift+Tab: move to previous track
-    if (keyCode == juce::KeyPress::tabKey) {
-        if (shiftHeld) {
-            // Move to previous track
-            if (cursorTrack_ > 0) {
-                cursorTrack_--;
-            }
-        } else {
-            // Move to next track
-            if (cursorTrack_ < 15) {
-                cursorTrack_++;
-            }
-        }
+    if (action.action == input::KeyAction::TabNext)
+    {
+        if (cursorTrack_ < 15) cursorTrack_++;
         repaint();
-        return true;  // Consumed
+        return true;
+    }
+    if (action.action == input::KeyAction::TabPrev)
+    {
+        if (cursorTrack_ > 0) cursorTrack_--;
+        repaint();
+        return true;
     }
 
-    // Visual mode special keys: 'f' for fill, 's' for randomize
+    // Visual mode special keys: 'f' for fill, 's' for shuffle
     // Must be in Visual mode, not just have a selection
     if (modeManager_.getMode() == input::Mode::Visual && hasSelection_ &&
-        (textChar == 'f' || textChar == 's'))
+        (action.action == input::KeyAction::Fill || action.action == input::KeyAction::Shuffle))
     {
         auto* pattern = project_.getPattern(currentPattern_);
         if (pattern)
@@ -214,7 +245,7 @@ bool PatternScreen::handleEditKey(const juce::KeyPress& key)
             int minR = selection_.minRow();
             int maxR = std::min(selection_.maxRow(), pattern->getLength() - 1);
 
-            if (textChar == 'f')
+            if (action.action == input::KeyAction::Fill)
             {
                 // Fill following established pattern
                 // For each track, collect populated values and repeat the sequence
@@ -340,7 +371,7 @@ bool PatternScreen::handleEditKey(const juce::KeyPress& key)
                     }
                 }
             }
-            else if (textChar == 's')
+            else if (action.action == input::KeyAction::Shuffle)
             {
                 // Randomize populated values with valid random values
                 std::string scaleLock = getScaleLockForPattern(currentPattern_);
@@ -439,15 +470,14 @@ bool PatternScreen::handleEditKey(const juce::KeyPress& key)
         }
     }
 
-    // Alt+Up/Down in Visual mode: batch edit all populated values in selection
+    // Alt+Up/Down (or Alt+j/k) in Visual mode: batch edit all populated values in selection
     if (modeManager_.getMode() == input::Mode::Visual && hasSelection_ &&
-        key.getModifiers().isAltDown() &&
-        (keyCode == juce::KeyPress::upKey || keyCode == juce::KeyPress::downKey))
+        (isEditInc || isEditDec))
     {
         auto* pattern = project_.getPattern(currentPattern_);
         if (pattern)
         {
-            int direction = (keyCode == juce::KeyPress::upKey) ? 1 : -1;
+            int direction = isEditInc ? 1 : -1;
             int minT = selection_.minTrack();
             int maxT = selection_.maxTrack();
             int minR = selection_.minRow();
@@ -523,33 +553,33 @@ bool PatternScreen::handleEditKey(const juce::KeyPress& key)
         }
     }
 
-    // '[' and ']' switch patterns quickly from anywhere
-    if (textChar == '[')
+    // Pattern switching
+    if (action.action == input::KeyAction::PatternPrev)
     {
         int numPatterns = project_.getPatternCount();
         if (numPatterns > 0)
             currentPattern_ = (currentPattern_ - 1 + numPatterns) % numPatterns;
         repaint();
-        return true;  // Consumed
+        return true;
     }
-    if (textChar == ']')
+    if (action.action == input::KeyAction::PatternNext)
     {
         int numPatterns = project_.getPatternCount();
         if (numPatterns > 0)
             currentPattern_ = (currentPattern_ + 1) % numPatterns;
         repaint();
-        return true;  // Consumed
+        return true;
     }
 
-    // Chord popup
-    if (textChar == 'c' && !shiftHeld)
+    // Chord popup ('c' returns Jump action in Grid context)
+    if (action.action == input::KeyAction::Jump && action.charData == 'c' && !shiftHeld)
     {
         showChordPopup();
         return true;
     }
 
-    // +/= : Add row to pattern (extend length)
-    if (textChar == '+' || textChar == '=')
+    // Zoom actions for pattern length
+    if (action.action == input::KeyAction::ZoomIn)
     {
         auto* pat = project_.getPattern(currentPattern_);
         if (pat && pat->getLength() < model::Pattern::MAX_LENGTH)
@@ -559,15 +589,12 @@ bool PatternScreen::handleEditKey(const juce::KeyPress& key)
         }
         return true;
     }
-
-    // - : Remove row from pattern (shrink length)
-    if (textChar == '-' || textChar == '_')
+    if (action.action == input::KeyAction::ZoomOut)
     {
         auto* pat = project_.getPattern(currentPattern_);
         if (pat && pat->getLength() > 1)
         {
             pat->setLength(pat->getLength() - 1);
-            // Adjust cursor if it's now out of bounds
             if (cursorRow_ >= pat->getLength())
                 cursorRow_ = pat->getLength() - 1;
             repaint();
@@ -576,7 +603,7 @@ bool PatternScreen::handleEditKey(const juce::KeyPress& key)
     }
 
     // Shift+N creates new pattern and enters edit mode
-    if (shiftHeld && textChar == 'N')
+    if (action.action == input::KeyAction::NewItem)
     {
         currentPattern_ = project_.addPattern("Pattern " + std::to_string(project_.getPatternCount() + 1));
         auto* pattern = project_.getPattern(currentPattern_);
@@ -586,11 +613,11 @@ bool PatternScreen::handleEditKey(const juce::KeyPress& key)
             nameBuffer_ = pattern->getName();
         }
         repaint();
-        return false;  // Let other handlers run too
+        return false;
     }
 
     // 'r' starts renaming current pattern
-    if (textChar == 'r' || textChar == 'R')
+    if (action.action == input::KeyAction::Rename)
     {
         auto* pattern = project_.getPattern(currentPattern_);
         if (pattern)
@@ -598,7 +625,7 @@ bool PatternScreen::handleEditKey(const juce::KeyPress& key)
             editingName_ = true;
             nameBuffer_ = pattern->getName();
             repaint();
-            return true;  // Consumed - starting rename mode
+            return true;
         }
         return false;
     }
@@ -617,16 +644,16 @@ bool PatternScreen::handleEditKey(const juce::KeyPress& key)
     // Column-specific edit behavior
     // Column 0 = Note, 1 = Instrument, 2 = Volume, 3-5 = FX
 
-    bool altHeld = key.getModifiers().isAltDown();
-
     if (cursorColumn_ == 0)
     {
         // NOTE COLUMN: Alt+Up/Down creates note or moves in scale, plain arrows navigate
 
-        // Shift+Up/Down: octave stepping (also works with Alt)
-        if (shiftHeld && (keyCode == juce::KeyPress::upKey || keyCode == juce::KeyPress::downKey))
+        // Shift+Up/Down or Alt+Shift+j/k: octave stepping (ShiftEdit1 = coarse vertical)
+        bool isOctaveUp = (action.action == input::KeyAction::ShiftEdit1Inc);
+        bool isOctaveDown = (action.action == input::KeyAction::ShiftEdit1Dec);
+        if (isOctaveUp || isOctaveDown)
         {
-            int direction = (keyCode == juce::KeyPress::upKey) ? 12 : -12;
+            int direction = isOctaveUp ? 12 : -12;
 
             // Create note if empty, copying from last non-empty row
             if (step.note <= 0 || step.note > 127)
@@ -656,10 +683,12 @@ bool PatternScreen::handleEditKey(const juce::KeyPress& key)
             return true;  // Consumed
         }
 
-        // Alt+Up/Down: create note if empty, then move in scale
-        if (altHeld && (keyCode == juce::KeyPress::upKey || keyCode == juce::KeyPress::downKey))
+        // Alt+Up/Down or Alt+j/k: create note if empty, then move in scale
+        bool isScaleUp = (action.action == input::KeyAction::Edit1Inc);
+        bool isScaleDown = (action.action == input::KeyAction::Edit1Dec);
+        if (isScaleUp || isScaleDown)
         {
-            int direction = (keyCode == juce::KeyPress::upKey) ? 1 : -1;
+            int direction = isScaleUp ? 1 : -1;
 
             // Create note if empty, copying from last non-empty row
             if (step.note <= 0 || step.note > 127)
@@ -691,8 +720,8 @@ bool PatternScreen::handleEditKey(const juce::KeyPress& key)
         // Plain Left/Right not consumed - let navigation handle
         // (handleEditKey is called before navigation for Left/Right)
 
-        // 'n' adds note, copying from last non-empty row above
-        if (textChar == 'n')
+        // 'n' (NewSelection) adds note, copying from last non-empty row above
+        if (action.action == input::KeyAction::NewSelection)
         {
             const model::Step* prevStep = findLastNonEmptyRowAbove(cursorTrack_, cursorRow_);
             if (prevStep && prevStep->note >= 0)
@@ -711,8 +740,8 @@ bool PatternScreen::handleEditKey(const juce::KeyPress& key)
             return true;
         }
 
-        // Period for note off
-        if (textChar == '.')
+        // Period (SecondaryNext = '.') for note off
+        if (action.action == input::KeyAction::SecondaryNext)
         {
             step.note = model::Step::NOTE_OFF;
             cursorRow_ = std::min(cursorRow_ + 1, pattern->getLength() - 1);
@@ -723,11 +752,11 @@ bool PatternScreen::handleEditKey(const juce::KeyPress& key)
     }
     else if (cursorColumn_ == 1)
     {
-        // INSTRUMENT COLUMN: Alt+Up/Down cycles instruments, 'n' creates new
+        // INSTRUMENT COLUMN: Alt+Up/Down or Alt+j/k cycles instruments, 'n' creates new
 
-        if (altHeld && (keyCode == juce::KeyPress::upKey || keyCode == juce::KeyPress::downKey))
+        if (isEditInc || isEditDec)
         {
-            int delta = (keyCode == juce::KeyPress::downKey) ? 1 : -1;
+            int delta = isEditDec ? 1 : -1;
             int numInstruments = project_.getInstrumentCount();
 
             if (numInstruments == 0)
@@ -751,8 +780,8 @@ bool PatternScreen::handleEditKey(const juce::KeyPress& key)
             return true;  // Consumed
         }
 
-        // 'n' creates new instrument
-        if (textChar == 'n')
+        // 'n' (NewSelection) creates new instrument
+        if (action.action == input::KeyAction::NewSelection)
         {
             int newInst = project_.addInstrument("Inst " + std::to_string(project_.getInstrumentCount() + 1));
             step.instrument = static_cast<int8_t>(newInst);
@@ -776,11 +805,11 @@ bool PatternScreen::handleEditKey(const juce::KeyPress& key)
     }
     else if (cursorColumn_ == 2)
     {
-        // VOLUME COLUMN: Alt+Up/Down adjusts volume
+        // VOLUME COLUMN: Alt+Up/Down or Alt+j/k adjusts volume
 
-        if (altHeld && (keyCode == juce::KeyPress::upKey || keyCode == juce::KeyPress::downKey))
+        if (isEditInc || isEditDec)
         {
-            int delta = (keyCode == juce::KeyPress::downKey) ? -16 : 16;  // Coarse adjustment
+            int delta = isEditDec ? -16 : 16;  // Coarse adjustment
             if (step.volume == 0xFF) step.volume = 0x80;  // Default to mid if empty
             step.volume = static_cast<uint8_t>(std::clamp(static_cast<int>(step.volume) + delta, 0, 0xFE));
             repaint();
@@ -799,7 +828,7 @@ bool PatternScreen::handleEditKey(const juce::KeyPress& key)
     }
     else
     {
-        // FX COLUMNS (3-5): Alt+Up/Down cycles FX type, Alt+Left/Right adjusts value
+        // FX COLUMNS (3-5): Alt+Up/Down or Alt+j/k cycles FX type, Alt+Left/Right or Alt+h/l adjusts value
 
         // Get the appropriate FX command
         model::FXCommand* fx = nullptr;
@@ -809,10 +838,10 @@ bool PatternScreen::handleEditKey(const juce::KeyPress& key)
 
         if (fx)
         {
-            // Alt+Up/Down cycles through FX types
-            if (altHeld && (keyCode == juce::KeyPress::upKey || keyCode == juce::KeyPress::downKey))
+            // Alt+Up/Down or Alt+j/k cycles through FX types (vertical)
+            if (isVerticalEditInc || isVerticalEditDec)
             {
-                int delta = (keyCode == juce::KeyPress::upKey) ? 1 : -1;
+                int delta = isVerticalEditInc ? 1 : -1;
                 int currentType = static_cast<int>(fx->type);
                 int numTypes = 7;  // None + 6 types
                 int newType = (currentType + delta + numTypes) % numTypes;
@@ -821,11 +850,11 @@ bool PatternScreen::handleEditKey(const juce::KeyPress& key)
                 return true;  // Consumed
             }
 
-            // Alt+Left/Right adjusts FX value
-            if (altHeld && (keyCode == juce::KeyPress::leftKey || keyCode == juce::KeyPress::rightKey))
+            // Alt+Left/Right or Alt+h/l adjusts FX value (horizontal = Edit2)
+            if (isHorizontalEditInc || isHorizontalEditDec)
             {
-                int delta = (keyCode == juce::KeyPress::rightKey) ? 1 : -1;
-                if (shiftHeld) delta *= 16;  // Coarse adjustment with Shift
+                int delta = isHorizontalEditInc ? 1 : -1;
+                if (isCoarseEdit) delta *= 16;  // Coarse adjustment with Shift
                 int newVal = static_cast<int>(fx->value) + delta;
                 fx->value = static_cast<uint8_t>(std::clamp(newVal, 0, 255));
                 // Default to ARP if no type set
@@ -848,8 +877,8 @@ bool PatternScreen::handleEditKey(const juce::KeyPress& key)
         }
     }
 
-    // Common: Backspace/Delete/d clears based on column
-    if (keyCode == juce::KeyPress::backspaceKey || keyCode == juce::KeyPress::deleteKey || textChar == 'd')
+    // Common: Delete action (Backspace/Delete/d) clears based on column
+    if (action.action == input::KeyAction::Delete)
     {
         if (cursorColumn_ == 0) step.note = model::Step::NOTE_EMPTY;
         else if (cursorColumn_ == 1) step.instrument = -1;

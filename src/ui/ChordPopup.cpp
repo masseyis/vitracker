@@ -1,4 +1,5 @@
 #include "ChordPopup.h"
+#include "../input/KeyHandler.h"
 #include <algorithm>
 
 namespace ui {
@@ -253,18 +254,19 @@ void ChordPopup::paint(juce::Graphics& g)
 
 bool ChordPopup::keyPressed(const juce::KeyPress& key)
 {
-    int keyCode = key.getKeyCode();
+    // Use centralized key translation (ColumnParams context for horizontal column selection)
+    auto action = input::KeyHandler::translateKey(key, input::InputContext::ColumnParams, false);
 
     const auto& degrees = isMinorScale_ ? kMinorScaleDegrees : kMajorScaleDegrees;
     int maxInversions = static_cast<int>(kChordTypes[selection_.typeIndex].intervals.size());
 
-    if (keyCode == juce::KeyPress::escapeKey)
+    if (action.action == input::KeyAction::Cancel)
     {
         hide();
         return true;
     }
 
-    if (keyCode == juce::KeyPress::returnKey)
+    if (action.action == input::KeyAction::Confirm)
     {
         // Check if we have enough tracks
         int numNotesNeeded = static_cast<int>(selection_.notes.size());
@@ -284,27 +286,30 @@ bool ChordPopup::keyPressed(const juce::KeyPress& key)
         return true;
     }
 
-    if (keyCode == juce::KeyPress::spaceKey)
+    if (action.action == input::KeyAction::PlayPause)
     {
         triggerPreview();
         return true;
     }
 
-    if (keyCode == juce::KeyPress::leftKey)
+    // In ColumnParams context, Left/Right navigate columns
+    if (action.action == input::KeyAction::NavLeft)
     {
         currentColumn_ = std::max(0, currentColumn_ - 1);
         repaint();
         return true;
     }
 
-    if (keyCode == juce::KeyPress::rightKey)
+    if (action.action == input::KeyAction::NavRight)
     {
         currentColumn_ = std::min(2, currentColumn_ + 1);
         repaint();
         return true;
     }
 
-    if (keyCode == juce::KeyPress::upKey)
+    // In ColumnParams context, Up/Down (or Edit1Inc/Dec) adjust values in current column
+    if (action.action == input::KeyAction::NavUp ||
+        action.action == input::KeyAction::Edit1Inc)
     {
         if (currentColumn_ == 0)
         {
@@ -329,7 +334,8 @@ bool ChordPopup::keyPressed(const juce::KeyPress& key)
         return true;
     }
 
-    if (keyCode == juce::KeyPress::downKey)
+    if (action.action == input::KeyAction::NavDown ||
+        action.action == input::KeyAction::Edit1Dec)
     {
         if (currentColumn_ == 0)
         {

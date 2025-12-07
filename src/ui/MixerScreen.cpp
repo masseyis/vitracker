@@ -1,5 +1,6 @@
 #include "MixerScreen.h"
 #include "HelpPopup.h"
+#include "../input/KeyHandler.h"
 
 namespace ui {
 
@@ -555,16 +556,46 @@ bool MixerScreen::handleEdit(const juce::KeyPress& key)
 
 bool MixerScreen::handleEditKey(const juce::KeyPress& key)
 {
-    auto keyCode = key.getKeyCode();
-    auto textChar = key.getTextCharacter();
-    bool shiftHeld = key.getModifiers().isShiftDown();
-    bool altHeld = key.getModifiers().isAltDown();
+    // Use centralized key translation
+    auto action = input::KeyHandler::translateKey(key, getInputContext());
 
-    // Handle FX section with Alt+Left/Right for value adjustment
+    // Determine value adjustment direction and coarseness from actions
+    int valueDelta = 0;
+    bool isCoarse = false;
+
+    switch (action.action)
+    {
+        case input::KeyAction::Edit1Inc:
+        case input::KeyAction::Edit2Inc:
+        case input::KeyAction::ZoomIn:
+            valueDelta = 1;
+            break;
+        case input::KeyAction::Edit1Dec:
+        case input::KeyAction::Edit2Dec:
+        case input::KeyAction::ZoomOut:
+            valueDelta = -1;
+            break;
+        case input::KeyAction::ShiftEdit1Inc:
+        case input::KeyAction::ShiftEdit2Inc:
+            valueDelta = 1;
+            isCoarse = true;
+            break;
+        case input::KeyAction::ShiftEdit1Dec:
+        case input::KeyAction::ShiftEdit2Dec:
+            valueDelta = -1;
+            isCoarse = true;
+            break;
+        default:
+            break;
+    }
+
+    float delta = isCoarse ? 0.01f : 0.05f;
+
+    // Handle FX section
     if (inFxSection_)
     {
-        // Alt+Left/Right adjusts values (horizontal sliders)
-        if (altHeld && (keyCode == juce::KeyPress::leftKey || keyCode == juce::KeyPress::rightKey))
+        // Value adjustment in FX section
+        if (valueDelta != 0)
         {
             auto& mixer = project_.getMixer();
 
@@ -572,254 +603,150 @@ bool MixerScreen::handleEditKey(const juce::KeyPress& key)
             if (cursorFx_ == 4 && cursorFxParam_ == 0)
             {
                 int numInst = project_.getInstrumentCount();
-                int delta = (keyCode == juce::KeyPress::rightKey) ? 1 : -1;
-                mixer.sidechainSource = std::clamp(mixer.sidechainSource + delta, -1, numInst - 1);
+                mixer.sidechainSource = std::clamp(mixer.sidechainSource + valueDelta, -1, numInst - 1);
                 repaint();
                 return false;
             }
 
-            float delta = shiftHeld ? 0.01f : 0.05f;
-            if (keyCode == juce::KeyPress::leftKey)
-                delta = -delta;
+            float fDelta = delta * valueDelta;
 
             // Adjust the selected FX parameter
             switch (cursorFx_)
             {
                 case 0:  // Reverb
                     if (cursorFxParam_ == 0)
-                        mixer.reverbSize = std::clamp(mixer.reverbSize + delta, 0.0f, 1.0f);
+                        mixer.reverbSize = std::clamp(mixer.reverbSize + fDelta, 0.0f, 1.0f);
                     else
-                        mixer.reverbDamping = std::clamp(mixer.reverbDamping + delta, 0.0f, 1.0f);
+                        mixer.reverbDamping = std::clamp(mixer.reverbDamping + fDelta, 0.0f, 1.0f);
                     break;
                 case 1:  // Delay
                     if (cursorFxParam_ == 0)
-                        mixer.delayTime = std::clamp(mixer.delayTime + delta, 0.0f, 1.0f);
+                        mixer.delayTime = std::clamp(mixer.delayTime + fDelta, 0.0f, 1.0f);
                     else
-                        mixer.delayFeedback = std::clamp(mixer.delayFeedback + delta, 0.0f, 0.95f);
+                        mixer.delayFeedback = std::clamp(mixer.delayFeedback + fDelta, 0.0f, 0.95f);
                     break;
                 case 2:  // Chorus
                     if (cursorFxParam_ == 0)
-                        mixer.chorusRate = std::clamp(mixer.chorusRate + delta, 0.0f, 1.0f);
+                        mixer.chorusRate = std::clamp(mixer.chorusRate + fDelta, 0.0f, 1.0f);
                     else
-                        mixer.chorusDepth = std::clamp(mixer.chorusDepth + delta, 0.0f, 1.0f);
+                        mixer.chorusDepth = std::clamp(mixer.chorusDepth + fDelta, 0.0f, 1.0f);
                     break;
                 case 3:  // Drive
                     if (cursorFxParam_ == 0)
-                        mixer.driveGain = std::clamp(mixer.driveGain + delta, 0.0f, 1.0f);
+                        mixer.driveGain = std::clamp(mixer.driveGain + fDelta, 0.0f, 1.0f);
                     else
-                        mixer.driveTone = std::clamp(mixer.driveTone + delta, 0.0f, 1.0f);
+                        mixer.driveTone = std::clamp(mixer.driveTone + fDelta, 0.0f, 1.0f);
                     break;
                 case 4:  // Sidechain - only ratio uses slider (param 1)
                     if (cursorFxParam_ == 1)
-                        mixer.sidechainRatio = std::clamp(mixer.sidechainRatio + delta, 0.0f, 1.0f);
+                        mixer.sidechainRatio = std::clamp(mixer.sidechainRatio + fDelta, 0.0f, 1.0f);
                     break;
                 case 5:  // DJ Filter - bipolar position (single param)
-                    mixer.djFilterPosition = std::clamp(mixer.djFilterPosition + delta, -1.0f, 1.0f);
+                    mixer.djFilterPosition = std::clamp(mixer.djFilterPosition + fDelta, -1.0f, 1.0f);
                     break;
                 case 6:  // Limiter
                     if (cursorFxParam_ == 0)
-                        mixer.limiterThreshold = std::clamp(mixer.limiterThreshold + delta, 0.1f, 1.0f);
+                        mixer.limiterThreshold = std::clamp(mixer.limiterThreshold + fDelta, 0.1f, 1.0f);
                     else
-                        mixer.limiterRelease = std::clamp(mixer.limiterRelease + delta, 0.01f, 1.0f);
+                        mixer.limiterRelease = std::clamp(mixer.limiterRelease + fDelta, 0.01f, 1.0f);
                     break;
             }
             repaint();
             return false;
         }
 
-        // +/- also adjusts values
-        if (textChar == '+' || textChar == '=' || textChar == '-')
+        // Navigation in FX section
+        switch (action.action)
         {
-            auto& mixer = project_.getMixer();
-
-            // Sidechain source is special - increment/decrement instrument index
-            if (cursorFx_ == 4 && cursorFxParam_ == 0)
-            {
-                int numInst = project_.getInstrumentCount();
-                int delta = (textChar == '-') ? -1 : 1;
-                mixer.sidechainSource = std::clamp(mixer.sidechainSource + delta, -1, numInst - 1);
+            case input::KeyAction::NavLeft:
+                navigate(-1, 0);
+                return true;
+            case input::KeyAction::NavRight:
+                navigate(1, 0);
+                return true;
+            case input::KeyAction::NavUp:
+                navigate(0, -1);
+                return true;
+            case input::KeyAction::NavDown:
+                navigate(0, 1);
+                return true;
+            case input::KeyAction::TabNext:
+            case input::KeyAction::TabPrev:
+                cursorFxParam_ = (cursorFxParam_ + 1) % 2;
                 repaint();
                 return false;
-            }
-
-            float delta = shiftHeld ? 0.01f : 0.05f;
-            if (textChar == '-')
-                delta = -delta;
-
-            switch (cursorFx_)
-            {
-                case 0:  // Reverb
-                    if (cursorFxParam_ == 0)
-                        mixer.reverbSize = std::clamp(mixer.reverbSize + delta, 0.0f, 1.0f);
-                    else
-                        mixer.reverbDamping = std::clamp(mixer.reverbDamping + delta, 0.0f, 1.0f);
-                    break;
-                case 1:  // Delay
-                    if (cursorFxParam_ == 0)
-                        mixer.delayTime = std::clamp(mixer.delayTime + delta, 0.0f, 1.0f);
-                    else
-                        mixer.delayFeedback = std::clamp(mixer.delayFeedback + delta, 0.0f, 0.95f);
-                    break;
-                case 2:  // Chorus
-                    if (cursorFxParam_ == 0)
-                        mixer.chorusRate = std::clamp(mixer.chorusRate + delta, 0.0f, 1.0f);
-                    else
-                        mixer.chorusDepth = std::clamp(mixer.chorusDepth + delta, 0.0f, 1.0f);
-                    break;
-                case 3:  // Drive
-                    if (cursorFxParam_ == 0)
-                        mixer.driveGain = std::clamp(mixer.driveGain + delta, 0.0f, 1.0f);
-                    else
-                        mixer.driveTone = std::clamp(mixer.driveTone + delta, 0.0f, 1.0f);
-                    break;
-                case 4:  // Sidechain - only ratio uses slider (param 1)
-                    if (cursorFxParam_ == 1)
-                        mixer.sidechainRatio = std::clamp(mixer.sidechainRatio + delta, 0.0f, 1.0f);
-                    break;
-                case 5:  // DJ Filter - bipolar position (single param)
-                    mixer.djFilterPosition = std::clamp(mixer.djFilterPosition + delta, -1.0f, 1.0f);
-                    break;
-                case 6:  // Limiter
-                    if (cursorFxParam_ == 0)
-                        mixer.limiterThreshold = std::clamp(mixer.limiterThreshold + delta, 0.1f, 1.0f);
-                    else
-                        mixer.limiterRelease = std::clamp(mixer.limiterRelease + delta, 0.01f, 1.0f);
-                    break;
-            }
-            repaint();
-            return false;
+            default:
+                break;
         }
 
-        // Regular Left/Right navigates between FX panels
-        if (keyCode == juce::KeyPress::leftKey)
-        {
+        return false;
+    }
+
+    // Handle actions for mixer strips (not FX section)
+    switch (action.action)
+    {
+        case input::KeyAction::NavLeft:
             navigate(-1, 0);
-            return true;  // Consumed - don't let KeyHandler also navigate
-        }
-        if (keyCode == juce::KeyPress::rightKey)
-        {
+            return true;
+        case input::KeyAction::NavRight:
             navigate(1, 0);
-            return true;  // Consumed - don't let KeyHandler also navigate
-        }
-
-        // Up/Down navigates between parameters or exits FX section
-        if (keyCode == juce::KeyPress::upKey || keyCode == juce::KeyPress::downKey)
-        {
-            navigate(0, keyCode == juce::KeyPress::downKey ? 1 : -1);
-            return true;  // Consumed - don't let KeyHandler also navigate
-        }
-
-        // Tab cycles between param 0 and param 1
-        if (keyCode == juce::KeyPress::tabKey)
-        {
-            cursorFxParam_ = (cursorFxParam_ + 1) % 2;
+            return true;
+        case input::KeyAction::TabNext:
+            if (cursorInstrument_ < 0)
+                cursorRow_ = 0;  // Master only has volume
+            else
+                cursorRow_ = (cursorRow_ + 1) % 4;
             repaint();
             return false;
-        }
-
-        return false;
-    }
-
-    // Left/Right navigate between instruments/master
-    if (keyCode == juce::KeyPress::leftKey)
-    {
-        navigate(-1, 0);
-        return true;  // Consumed - prevent KeyHandler double navigation
-    }
-    if (keyCode == juce::KeyPress::rightKey)
-    {
-        navigate(1, 0);
-        return true;  // Consumed - prevent KeyHandler double navigation
-    }
-
-    // Tab cycles through parameters
-    if (keyCode == juce::KeyPress::tabKey)
-    {
-        if (cursorInstrument_ < 0)
-        {
-            // Master only has volume
-            cursorRow_ = 0;
-        }
-        else
-        {
-            cursorRow_ = (cursorRow_ + 1) % 4;
-        }
-        repaint();
-        return false;
-    }
-
-    // Delta for value adjustments (smaller with shift)
-    float delta = shiftHeld ? 0.01f : 0.05f;
-    bool isAdjust = false;
-
-    // Up/Down adjust values for volume/pan rows, or toggle mute/solo
-    if (keyCode == juce::KeyPress::upKey)
-    {
-        if (cursorRow_ <= 1)  // Volume or Pan
-        {
-            isAdjust = true;
-        }
-        else if (cursorRow_ == 2)  // Mute - toggle
-        {
-            auto* instrument = project_.getInstrument(cursorInstrument_);
-            if (instrument) instrument->setMuted(!instrument->isMuted());
+        case input::KeyAction::TabPrev:
+            if (cursorInstrument_ < 0)
+                cursorRow_ = 0;
+            else
+                cursorRow_ = (cursorRow_ + 3) % 4;
             repaint();
             return false;
-        }
-        else if (cursorRow_ == 3)  // Solo - toggle
-        {
-            auto* instrument = project_.getInstrument(cursorInstrument_);
-            if (instrument) instrument->setSoloed(!instrument->isSoloed());
-            repaint();
-            return false;
-        }
-    }
-    else if (keyCode == juce::KeyPress::downKey)
-    {
-        if (cursorRow_ <= 1)  // Volume or Pan
-        {
-            delta = -delta;
-            isAdjust = true;
-        }
-        else if (cursorRow_ == 2)  // Mute - toggle
-        {
-            auto* instrument = project_.getInstrument(cursorInstrument_);
-            if (instrument) instrument->setMuted(!instrument->isMuted());
-            repaint();
-            return false;
-        }
-        else if (cursorRow_ == 3)  // Solo - toggle
-        {
-            auto* instrument = project_.getInstrument(cursorInstrument_);
-            if (instrument) instrument->setSoloed(!instrument->isSoloed());
-            repaint();
-            return false;
-        }
+        case input::KeyAction::ToggleMute:
+            if (cursorInstrument_ >= 0)
+            {
+                auto* instrument = project_.getInstrument(cursorInstrument_);
+                if (instrument) instrument->setMuted(!instrument->isMuted());
+                repaint();
+            }
+            return true;
+        case input::KeyAction::ToggleSolo:
+            if (cursorInstrument_ >= 0)
+            {
+                auto* instrument = project_.getInstrument(cursorInstrument_);
+                if (instrument) instrument->setSoloed(!instrument->isSoloed());
+                repaint();
+            }
+            return true;
+        default:
+            break;
     }
 
-    if (textChar == '+' || textChar == '=')
-    {
-        isAdjust = true;
-    }
-    else if (textChar == '-')
-    {
-        delta = -delta;
-        isAdjust = true;
-    }
-
-    // Handle master
+    // Handle master channel
     if (cursorInstrument_ < 0)
     {
-        if (isAdjust)
+        // Value adjustment on master
+        if (valueDelta != 0)
         {
             auto& mixer = project_.getMixer();
-            mixer.masterVolume = std::clamp(mixer.masterVolume + delta, 0.0f, 1.0f);
+            mixer.masterVolume = std::clamp(mixer.masterVolume + delta * valueDelta, 0.0f, 1.0f);
+            repaint();
         }
-        repaint();
+        // NavDown goes to FX section
+        if (action.action == input::KeyAction::NavDown)
+        {
+            inFxSection_ = true;
+            cursorFxParam_ = 0;
+            repaint();
+            return true;
+        }
         return false;
     }
 
-    // Handle instrument
+    // Handle instrument strips
     auto* instrument = project_.getInstrument(cursorInstrument_);
     if (!instrument)
     {
@@ -827,27 +754,65 @@ bool MixerScreen::handleEditKey(const juce::KeyPress& key)
         return false;
     }
 
-    switch (cursorRow_)
+    // NavUp/NavDown behavior depends on current row
+    if (action.action == input::KeyAction::NavUp || action.action == input::KeyAction::NavDown)
     {
-        case 0:  // Volume
-            if (isAdjust)
-                instrument->setVolume(instrument->getVolume() + delta);
-            break;
+        bool isUp = (action.action == input::KeyAction::NavUp);
 
-        case 1:  // Pan
-            if (isAdjust)
-                instrument->setPan(instrument->getPan() + delta);
-            break;
-
-        case 2:  // Mute
-            if (keyCode == juce::KeyPress::returnKey || textChar == ' ' || textChar == 'm' || textChar == 'M')
-                instrument->setMuted(!instrument->isMuted());
-            break;
-
-        case 3:  // Solo
-            if (keyCode == juce::KeyPress::returnKey || textChar == ' ' || textChar == 's' || textChar == 'S')
+        if (cursorRow_ <= 1)  // Volume or Pan - adjust value
+        {
+            float adjustDelta = isUp ? delta : -delta;
+            if (cursorRow_ == 0)
+                instrument->setVolume(instrument->getVolume() + adjustDelta);
+            else
+                instrument->setPan(instrument->getPan() + adjustDelta);
+            repaint();
+            return false;
+        }
+        else if (cursorRow_ == 2)  // Mute row - toggle
+        {
+            instrument->setMuted(!instrument->isMuted());
+            repaint();
+            return false;
+        }
+        else if (cursorRow_ == 3)  // Solo row
+        {
+            if (isUp)
+            {
                 instrument->setSoloed(!instrument->isSoloed());
-            break;
+            }
+            else
+            {
+                // NavDown from Solo goes to FX section
+                inFxSection_ = true;
+                cursorFxParam_ = 0;
+            }
+            repaint();
+            return !isUp;  // Consume NavDown to FX
+        }
+    }
+
+    // Value adjustment for volume/pan
+    if (valueDelta != 0 && cursorRow_ <= 1)
+    {
+        float adjustDelta = delta * valueDelta;
+        if (cursorRow_ == 0)
+            instrument->setVolume(instrument->getVolume() + adjustDelta);
+        else
+            instrument->setPan(instrument->getPan() + adjustDelta);
+        repaint();
+        return false;
+    }
+
+    // Confirm action on mute/solo rows toggles
+    if (action.action == input::KeyAction::Confirm)
+    {
+        if (cursorRow_ == 2)
+            instrument->setMuted(!instrument->isMuted());
+        else if (cursorRow_ == 3)
+            instrument->setSoloed(!instrument->isSoloed());
+        repaint();
+        return false;
     }
 
     repaint();

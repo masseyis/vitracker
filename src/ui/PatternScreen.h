@@ -21,6 +21,11 @@ public:
     std::string getTitle() const override { return "PATTERN"; }
     std::vector<HelpSection> getHelpContent() const override;
 
+    // Return TextEdit context when editing pattern name
+    input::InputContext getInputContext() const override {
+        return editingName_ ? input::InputContext::TextEdit : input::InputContext::Grid;
+    }
+
     // For external triggering
     std::function<void(int note, int instrument)> onNotePreview;
     std::function<void(int instrumentIndex)> onJumpToInstrument;

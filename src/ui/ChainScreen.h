@@ -16,6 +16,9 @@ public:
     bool handleEditKey(const juce::KeyPress& key);
 
     std::string getTitle() const override { return "CHAIN"; }
+
+    // Key context for centralized key handling
+    input::InputContext getInputContext() const override;
     std::vector<HelpSection> getHelpContent() const override;
 
     void setCurrentChain(int chainIndex) { currentChain_ = chainIndex; }
