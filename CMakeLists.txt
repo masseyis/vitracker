@@ -66,6 +66,7 @@ target_sources(Vitracker PRIVATE
     src/ui/ProjectScreen.cpp
     src/ui/InstrumentScreen.cpp
     src/ui/MixerScreen.cpp
+    src/ui/ChannelScreen.cpp
     src/ui/SongScreen.cpp
     src/ui/ChainScreen.cpp
     src/ui/WaveformDisplay.cpp
