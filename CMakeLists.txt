@@ -78,6 +78,7 @@ target_sources(Vitracker PRIVATE
     src/audio/BiquadFilter.cpp
     src/audio/TransientShaper.cpp
     src/audio/MultibandOTT.cpp
+    src/audio/ChannelStrip.cpp
     src/audio/PlaitsInstrument.cpp
     src/audio/SamplerVoice.cpp
     src/audio/SamplerInstrument.cpp
