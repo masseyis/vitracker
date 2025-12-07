@@ -1,6 +1,7 @@
 #include "ChainScreen.h"
 #include "HelpPopup.h"
 #include "../audio/AudioEngine.h"
+#include "../input/KeyHandler.h"
 
 namespace ui {
 
@@ -308,6 +309,18 @@ void ChainScreen::navigate(int dx, int dy)
     repaint();
 }
 
+input::InputContext ChainScreen::getInputContext() const
+{
+    // Text editing mode takes priority
+    if (editingName_)
+        return input::InputContext::TextEdit;
+    // Scale lock row uses horizontal params (left/right to adjust)
+    if (cursorRow_ == 0)
+        return input::InputContext::RowParams;
+    // Pattern rows use grid context
+    return input::InputContext::Grid;
+}
+
 bool ChainScreen::handleEdit(const juce::KeyPress& key)
 {
     return handleEditKey(key);
@@ -315,9 +328,8 @@ bool ChainScreen::handleEdit(const juce::KeyPress& key)
 
 bool ChainScreen::handleEditKey(const juce::KeyPress& key)
 {
-    auto keyCode = key.getKeyCode();
-    auto textChar = key.getTextCharacter();
-    bool shiftHeld = key.getModifiers().isShiftDown();
+    // Use centralized key translation
+    auto action = input::KeyHandler::translateKey(key, getInputContext(), false);
 
     // Handle name editing mode first
     if (editingName_)
@@ -330,94 +342,145 @@ bool ChainScreen::handleEditKey(const juce::KeyPress& key)
             return true;  // Consumed
         }
 
-        if (keyCode == juce::KeyPress::returnKey || keyCode == juce::KeyPress::escapeKey)
+        switch (action.action)
         {
-            if (keyCode == juce::KeyPress::returnKey)
+            case input::KeyAction::TextAccept:
                 chain->setName(nameBuffer_);
-            editingName_ = false;
-            repaint();
-            return true;  // Consumed - important for Enter/Escape
+                editingName_ = false;
+                repaint();
+                return true;
+
+            case input::KeyAction::TextReject:
+                editingName_ = false;
+                repaint();
+                return true;
+
+            case input::KeyAction::TextBackspace:
+                if (!nameBuffer_.empty())
+                    nameBuffer_.pop_back();
+                repaint();
+                return true;
+
+            case input::KeyAction::TextChar:
+                if (nameBuffer_.length() < 16)
+                    nameBuffer_ += action.charData;
+                repaint();
+                return true;
+
+            default:
+                return true;  // In name editing mode, consume all keys
         }
-        if (keyCode == juce::KeyPress::backspaceKey && !nameBuffer_.empty())
-        {
-            nameBuffer_.pop_back();
-            repaint();
-            return true;  // Consumed
-        }
-        if (textChar >= ' ' && textChar <= '~' && nameBuffer_.length() < 16)
-        {
-            nameBuffer_ += static_cast<char>(textChar);
-            repaint();
-            return true;  // Consumed
-        }
-        return true;  // In name editing mode, consume all keys
     }
 
-    // '[' and ']' switch chains quickly
-    if (textChar == '[')
+    // Handle actions from translateKey()
+    switch (action.action)
     {
-        int numChains = project_.getChainCount();
-        if (numChains > 0)
-            currentChain_ = (currentChain_ - 1 + numChains) % numChains;
-        repaint();
-        return true;  // Consumed
-    }
-    if (textChar == ']')
-    {
-        int numChains = project_.getChainCount();
-        if (numChains > 0)
-            currentChain_ = (currentChain_ + 1) % numChains;
-        repaint();
-        return true;  // Consumed
-    }
+        case input::KeyAction::PatternPrev:
+            // '[' switch to previous chain
+            {
+                int numChains = project_.getChainCount();
+                if (numChains > 0)
+                    currentChain_ = (currentChain_ - 1 + numChains) % numChains;
+                repaint();
+            }
+            return true;
 
-    // Shift+N creates new chain and enters edit mode
-    if (shiftHeld && textChar == 'N')
-    {
-        int newChain = project_.addChain("Chain " + std::to_string(project_.getChainCount() + 1));
-        currentChain_ = newChain;
-        auto* chain = project_.getChain(currentChain_);
-        if (chain)
-        {
-            editingName_ = true;
-            nameBuffer_ = chain->getName();
-        }
-        cursorRow_ = 0;  // Go to scale lock row
-        repaint();
-        return true;  // Consumed
-    }
+        case input::KeyAction::PatternNext:
+            // ']' switch to next chain
+            {
+                int numChains = project_.getChainCount();
+                if (numChains > 0)
+                    currentChain_ = (currentChain_ + 1) % numChains;
+                repaint();
+            }
+            return true;
 
-    // 'r' starts renaming current chain
-    if (textChar == 'r' || textChar == 'R')
-    {
-        auto* chain = project_.getChain(currentChain_);
-        if (chain)
-        {
-            editingName_ = true;
-            nameBuffer_ = chain->getName();
-            repaint();
-            return true;  // Consumed - starting rename mode
-        }
-        return false;
-    }
+        case input::KeyAction::NewItem:
+            // Shift+N creates new chain and enters edit mode
+            {
+                int newChain = project_.addChain("Chain " + std::to_string(project_.getChainCount() + 1));
+                currentChain_ = newChain;
+                auto* chain = project_.getChain(currentChain_);
+                if (chain)
+                {
+                    editingName_ = true;
+                    nameBuffer_ = chain->getName();
+                }
+                cursorRow_ = 0;
+                repaint();
+            }
+            return true;
 
-    // Check if Alt is held - means we're adjusting values, not navigating
-    bool altHeld = key.getModifiers().isAltDown();
+        case input::KeyAction::Rename:
+            // 'r' starts renaming current chain
+            {
+                auto* chain = project_.getChain(currentChain_);
+                if (chain)
+                {
+                    editingName_ = true;
+                    nameBuffer_ = chain->getName();
+                    repaint();
+                    return true;
+                }
+            }
+            return false;
+
+        case input::KeyAction::NewSelection:
+            // 'n' creates a new pattern and adds it to chain
+            {
+                auto* chain = project_.getChain(currentChain_);
+                if (chain && cursorRow_ >= 1)
+                {
+                    int newPat = project_.addPattern("Pattern " + std::to_string(project_.getPatternCount() + 1));
+                    chain->addPattern(newPat);
+                    cursorRow_ = chain->getPatternCount();
+                    cursorColumn_ = 0;
+                    repaint();
+                    return true;
+                }
+            }
+            break;
+
+        default:
+            break;
+    }
 
     auto* chain = project_.getChain(currentChain_);
     if (!chain) return false;
 
-    // Scale lock (row 0) - Left/Right adjust scale, Up/Down navigate to pattern rows
+    // Scale lock (row 0) - h/l or left/right adjust scale
     if (cursorRow_ == 0)
     {
         int currentScale = getScaleIndex(chain->getScaleLock());
-        if (textChar == '+' || textChar == '=' || keyCode == juce::KeyPress::rightKey)
+        // In RowParams context, h/l/left/right = Edit1Inc/Dec (Shift = coarse, skip 3)
+        bool isEdit1Inc = (action.action == input::KeyAction::Edit1Inc ||
+                           action.action == input::KeyAction::ShiftEdit1Inc);
+        bool isEdit1Dec = (action.action == input::KeyAction::Edit1Dec ||
+                           action.action == input::KeyAction::ShiftEdit1Dec);
+        bool isCoarse = (action.action == input::KeyAction::ShiftEdit1Inc ||
+                         action.action == input::KeyAction::ShiftEdit1Dec);
+        int scaleDelta = isCoarse ? 3 : 1;
+
+        if (isEdit1Inc)
+        {
+            chain->setScaleLock(getScaleName((currentScale + scaleDelta) % NUM_SCALES));
+            repaint();
+            return true;
+        }
+        else if (isEdit1Dec)
+        {
+            chain->setScaleLock(getScaleName((currentScale - scaleDelta + NUM_SCALES) % NUM_SCALES));
+            repaint();
+            return true;
+        }
+        // +/= (ZoomIn) and - (ZoomOut) for scale adjustment
+        else if (action.action == input::KeyAction::ZoomIn)
         {
             chain->setScaleLock(getScaleName((currentScale + 1) % NUM_SCALES));
             repaint();
             return true;
         }
-        else if (textChar == '-' || keyCode == juce::KeyPress::leftKey)
+        else if (action.action == input::KeyAction::ZoomOut)
         {
             chain->setScaleLock(getScaleName((currentScale - 1 + NUM_SCALES) % NUM_SCALES));
             repaint();
@@ -432,8 +495,8 @@ bool ChainScreen::handleEditKey(const juce::KeyPress& key)
         int patternCount = chain->getPatternCount();
         int numPatterns = project_.getPatternCount();
 
-        // Enter jumps to the pattern screen (only from pattern column)
-        if (keyCode == juce::KeyPress::returnKey && cursorColumn_ == 0)
+        // Enter (Confirm) jumps to the pattern screen (only from pattern column)
+        if (action.action == input::KeyAction::Confirm && cursorColumn_ == 0)
         {
             int patternIdx = getPatternAtCursor();
             if (patternIdx >= 0 && onJumpToPattern)
@@ -449,57 +512,75 @@ bool ChainScreen::handleEditKey(const juce::KeyPress& key)
         // Transpose column (cursorColumn_ == 1)
         if (cursorColumn_ == 1 && slotIdx < patternCount)
         {
-            // Alt+Up/Down adjusts transpose
-            if (altHeld && (keyCode == juce::KeyPress::upKey || keyCode == juce::KeyPress::downKey))
+            // Alt+Up/Down (via translateKey actions) adjusts transpose
+            // Shift variant = coarse (octave = 12 semitones)
+            bool isTransposeInc = (action.action == input::KeyAction::Edit1Inc ||
+                                   action.action == input::KeyAction::ShiftEdit1Inc);
+            bool isTransposeDec = (action.action == input::KeyAction::Edit1Dec ||
+                                   action.action == input::KeyAction::ShiftEdit1Dec);
+            bool isCoarseTranspose = (action.action == input::KeyAction::ShiftEdit1Inc ||
+                                      action.action == input::KeyAction::ShiftEdit1Dec);
+
+            if (isTransposeInc || isTransposeDec)
             {
-                int delta = (keyCode == juce::KeyPress::upKey) ? 1 : -1;
+                int delta = isTransposeInc ? 1 : -1;
+                if (isCoarseTranspose) delta *= 12;  // Octave jump
                 int currentTranspose = chain->getTranspose(slotIdx);
-                // Limit transpose to reasonable range (-12 to +12 scale degrees)
                 chain->setTranspose(slotIdx, std::clamp(currentTranspose + delta, -12, 12));
                 repaint();
-                return true;  // Consumed
+                return true;
             }
 
-            // +/- for larger transpose jumps
-            if (textChar == '+' || textChar == '=')
+            // +/- (ZoomIn/ZoomOut) for transpose adjustment
+            if (action.action == input::KeyAction::ZoomIn)
             {
                 int currentTranspose = chain->getTranspose(slotIdx);
                 chain->setTranspose(slotIdx, std::clamp(currentTranspose + 1, -12, 12));
                 repaint();
-                return true;  // Consumed
+                return true;
             }
-            if (textChar == '-')
+            if (action.action == input::KeyAction::ZoomOut)
             {
                 int currentTranspose = chain->getTranspose(slotIdx);
                 chain->setTranspose(slotIdx, std::clamp(currentTranspose - 1, -12, 12));
                 repaint();
-                return true;  // Consumed
+                return true;
             }
 
-            // '0' resets transpose to zero
-            if (textChar == '0')
+            // '0' resets transpose to zero (via TextChar action)
+            if ((action.action == input::KeyAction::TextChar || action.action == input::KeyAction::Jump) &&
+                action.charData == '0')
             {
                 chain->setTranspose(slotIdx, 0);
                 repaint();
-                return true;  // Consumed
+                return true;
             }
 
             // Delete resets transpose
-            if (textChar == 'd' || keyCode == juce::KeyPress::deleteKey ||
-                keyCode == juce::KeyPress::backspaceKey)
+            if (action.action == input::KeyAction::Delete)
             {
                 chain->setTranspose(slotIdx, 0);
                 repaint();
-                return true;  // Consumed
+                return true;
             }
             return false;
         }
 
         // Pattern column (cursorColumn_ == 0)
-        // Alt+Up/Down cycles through available patterns
-        if (altHeld && (keyCode == juce::KeyPress::upKey || keyCode == juce::KeyPress::downKey))
+        // Alt+Up/Down (via translateKey actions) cycles through available patterns
+        // Shift variant = coarse (skip 4 patterns)
+        bool isPatternInc = (action.action == input::KeyAction::Edit1Inc ||
+                             action.action == input::KeyAction::ShiftEdit1Inc);
+        bool isPatternDec = (action.action == input::KeyAction::Edit1Dec ||
+                             action.action == input::KeyAction::ShiftEdit1Dec);
+        bool isCoarsePattern = (action.action == input::KeyAction::ShiftEdit1Inc ||
+                                action.action == input::KeyAction::ShiftEdit1Dec);
+
+        if (isPatternInc || isPatternDec)
         {
-            int delta = (keyCode == juce::KeyPress::downKey) ? 1 : -1;
+            // In Grid context, Edit1Inc = up, Edit1Dec = down
+            int delta = isPatternDec ? 1 : -1;
+            if (isCoarsePattern) delta *= 4;  // Jump 4 patterns
 
             if (slotIdx < patternCount)
             {
@@ -528,23 +609,11 @@ bool ChainScreen::handleEditKey(const juce::KeyPress& key)
                 }
             }
             repaint();
-            return true;  // Consumed
-        }
-
-        // 'n' creates a new pattern and adds it to chain
-        if (textChar == 'n')
-        {
-            int newPat = project_.addPattern("Pattern " + std::to_string(project_.getPatternCount() + 1));
-            chain->addPattern(newPat);
-            cursorRow_ = chain->getPatternCount();  // Move to the new slot (row 0 is scale lock)
-            cursorColumn_ = 0;
-            repaint();
-            return true;  // Consumed
+            return true;
         }
 
         // Delete/clear (pattern column only)
-        if (textChar == 'd' || keyCode == juce::KeyPress::deleteKey ||
-            keyCode == juce::KeyPress::backspaceKey)
+        if (action.action == input::KeyAction::Delete)
         {
             if (slotIdx < patternCount)
             {
@@ -557,18 +626,22 @@ bool ChainScreen::handleEditKey(const juce::KeyPress& key)
         }
 
         // Number keys for quick pattern selection
-        if (textChar >= '0' && textChar <= '9')
+        if (action.action == input::KeyAction::TextChar || action.action == input::KeyAction::Jump)
         {
-            int patIdx = textChar - '0';
-            if (patIdx < numPatterns)
+            char c = action.charData;
+            if (c >= '0' && c <= '9')
             {
-                if (slotIdx < patternCount)
-                    chain->setPattern(slotIdx, patIdx);
-                else
-                    chain->addPattern(patIdx);
+                int patIdx = c - '0';
+                if (patIdx < numPatterns)
+                {
+                    if (slotIdx < patternCount)
+                        chain->setPattern(slotIdx, patIdx);
+                    else
+                        chain->addPattern(patIdx);
+                }
+                repaint();
+                return true;  // Consumed
             }
-            repaint();
-            return true;  // Consumed
         }
     }
 

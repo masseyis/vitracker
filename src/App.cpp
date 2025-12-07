@@ -126,6 +126,12 @@ App::App()
             audioEngine_.triggerNote(0, note, instrument, 1.0f);
             previewNoteCounter_ = PREVIEW_NOTE_FRAMES;  // Start countdown to release
         };
+
+        patternScreen->onChordPreview = [this](const std::vector<int>& notes, int instrument) {
+            if (audioEngine_.isPlaying()) return;
+            audioEngine_.previewChord(notes, instrument);
+            previewNoteCounter_ = PREVIEW_NOTE_FRAMES;
+        };
     }
 
     // Wire up note preview and preset manager for InstrumentScreen (now index 3)
@@ -448,13 +454,18 @@ void App::timerCallback()
             screens_[currentScreen_]->repaint();
     }
 
-    // Release preview note after timeout
+    // Release preview notes after timeout (release all tracks used for chord preview)
     if (previewNoteCounter_ > 0)
     {
         previewNoteCounter_--;
         if (previewNoteCounter_ == 0)
         {
-            audioEngine_.releaseNote(0);  // Release on track 0 (preview track)
+            // Release all tracks that could have been used for chord preview
+            // Chords can use up to 7 notes (13th chord), so release tracks 0-6
+            for (int track = 0; track < 7; ++track)
+            {
+                audioEngine_.releaseNote(track);
+            }
         }
     }
 
@@ -588,15 +599,17 @@ bool App::keyPressed(const juce::KeyPress& key, juce::Component* originatingComp
             return true;
     }
 
-    // Global tempo shortcut (t)
-    if (key.getTextCharacter() == 't' && modeManager_.getMode() == input::Mode::Normal)
+    // Global tempo shortcut (t) - skip if screen is in text edit mode
+    bool screenInTextEdit = screens_[currentScreen_] &&
+        screens_[currentScreen_]->getInputContext() == input::InputContext::TextEdit;
+    if (key.getTextCharacter() == 't' && modeManager_.getMode() == input::Mode::Normal && !screenInTextEdit)
     {
         enterTempoAdjustMode();
         return true;
     }
 
-    // Global groove cycling (g/G)
-    if (modeManager_.getMode() == input::Mode::Normal)
+    // Global groove cycling (g/G) - skip if screen is in text edit mode
+    if (modeManager_.getMode() == input::Mode::Normal && !screenInTextEdit)
     {
         if (key.getTextCharacter() == 'g')
         {

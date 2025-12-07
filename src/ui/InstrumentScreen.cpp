@@ -2,6 +2,8 @@
 #include "HelpPopup.h"
 #include "../audio/AudioEngine.h"
 #include "../audio/SlicerInstrument.h"
+#include "../input/KeyHandler.h"
+#include <cstring>
 
 namespace ui {
 
@@ -35,6 +37,126 @@ const char* InstrumentScreen::engineParamLabels_[16][3] = {
 static const char* kLfoRateNames[] = {"1/16", "1/16T", "1/8", "1/8T", "1/4", "1/4T", "1/2", "1BAR", "2BAR", "4BAR"};
 static const char* kLfoShapeNames[] = {"TRI", "SAW", "SQR", "S&H"};
 static const char* kModDestNames[] = {"HARM", "TIMB", "MRPH", "CUTF", "RESO", "LFO1R", "LFO1A", "LFO2R", "LFO2A"};
+
+// Jump key mappings per engine type
+// Available keys: a,b,c,d,e,f,i,m,o,p,q,s,u,w,x,y,z (17 keys - r/v reserved)
+// Sequential alphabetical, mod matrix = ONE jump point
+// Navigation keys excluded: g,h,j,k,l,n,t
+
+// Plaits: 21 rows, mod matrix (rows 10-13) = 1 jump point
+// Jump points: 0-9 individual, 10=mod, 14-20 individual = 18 logical (17 keys covers 0-19)
+static const std::pair<char, int> kPlaitsJumpMap[] = {
+    {'a', 0},  {'b', 1},  {'c', 2},  {'d', 3},  {'e', 4},   // Preset, Engine, Harmonics, Timbre, Morph
+    {'f', 5},  {'i', 6},  {'m', 7},  {'o', 8},  {'p', 9},   // Attack, Decay, Polyphony, Cutoff, Resonance
+    {'q', 10},                                               // Mod matrix (LFO1/2, ENV1/2)
+    {'s', 14}, {'u', 15}, {'w', 16}, {'x', 17}, {'y', 18}, {'z', 19},  // Volume, Pan, Reverb, Delay, Chorus, Drive
+};
+
+// Sampler: 20 rows, mod matrix (rows 9-12) = 1 jump point
+// Jump points: 0-8 individual, 9=mod, 13-19 individual = 17 logical
+static const std::pair<char, int> kSamplerJumpMap[] = {
+    {'a', 0},  {'b', 1},  {'c', 2},  {'d', 3},  {'e', 4},   // RootNote, TargetNote, AutoRepitch, Attack, Decay
+    {'f', 5},  {'i', 6},  {'m', 7},  {'o', 8},              // Sustain, Release, Cutoff, Resonance
+    {'p', 9},                                               // Mod matrix (LFO1/2, ENV1/2)
+    {'q', 13}, {'s', 14}, {'u', 15}, {'w', 16}, {'x', 17}, {'y', 18}, {'z', 19},  // Reverb, Delay, Chorus, Drive, Sidechain, Volume, Pan
+};
+
+// Slicer: 19 rows, mod matrix (rows 8-11) = 1 jump point
+// Jump points: 0-7 individual, 8=mod, 12-18 individual = 16 logical
+static const std::pair<char, int> kSlicerJumpMap[] = {
+    {'a', 0},  {'b', 1},  {'c', 2},  {'d', 3},  {'e', 4},   // ChopMode, OrigBars, OrigBPM, TargetBPM, Speed
+    {'f', 5},  {'i', 6},  {'m', 7},                         // Pitch, Repitch, Polyphony
+    {'o', 8},                                               // Mod matrix (LFO1/2, ENV1/2)
+    {'p', 12}, {'q', 13}, {'s', 14}, {'u', 15}, {'w', 16}, {'x', 17}, {'y', 18},  // Reverb, Delay, Chorus, Drive, Sidechain, Volume, Pan
+};
+
+// VA Synth: 36 rows, osc groups (3), envelope groups (2), mod matrix = grouped
+// Jump points: Osc1(0), Osc2(3), Osc3(7), Noise(11), Cutoff(12), Reso(13), EnvAmt(14),
+//              AmpAtk(15), FiltAtk(19), Glide(23), Poly(24), Mod(25), Reverb-Drive(29-32), Sidechain(33)
+static const std::pair<char, int> kVASynthJumpMap[] = {
+    {'a', 0},  {'b', 3},  {'c', 7},                         // Osc1, Osc2, Osc3 groups
+    {'d', 11}, {'e', 12}, {'f', 13}, {'i', 14},             // Noise, Cutoff, Resonance, FilterEnvAmt
+    {'m', 15}, {'o', 19},                                   // AmpAttack (amp env group), FilterAttack (filter env group)
+    {'p', 23}, {'q', 24},                                   // Glide, Polyphony
+    {'s', 25},                                              // Mod matrix (LFO1/2, ENV1/2)
+    {'u', 29}, {'w', 30}, {'x', 31}, {'y', 32}, {'z', 33},  // Reverb, Delay, Chorus, Drive, Sidechain
+};
+
+// Helper: Check if a character is a valid jump key for ANY engine
+static bool isJumpKey(char c)
+{
+    // Available: a,b,c,d,e,f,i,m,o,p,q,s,u,w,x,y,z
+    // Excluded: g,h,j,k,l,n,r,t,v (nav + reserved)
+    return (c >= 'a' && c <= 'z') &&
+           c != 'g' && c != 'h' && c != 'j' && c != 'k' && c != 'l' &&
+           c != 'n' && c != 'r' && c != 't' && c != 'v';
+}
+
+char InstrumentScreen::getJumpKeyForRow(model::InstrumentType type, int row)
+{
+    const std::pair<char, int>* map = nullptr;
+    size_t mapSize = 0;
+
+    switch (type) {
+        case model::InstrumentType::Plaits:
+            map = kPlaitsJumpMap;
+            mapSize = sizeof(kPlaitsJumpMap) / sizeof(kPlaitsJumpMap[0]);
+            break;
+        case model::InstrumentType::Sampler:
+            map = kSamplerJumpMap;
+            mapSize = sizeof(kSamplerJumpMap) / sizeof(kSamplerJumpMap[0]);
+            break;
+        case model::InstrumentType::Slicer:
+            map = kSlicerJumpMap;
+            mapSize = sizeof(kSlicerJumpMap) / sizeof(kSlicerJumpMap[0]);
+            break;
+        case model::InstrumentType::VASynth:
+            map = kVASynthJumpMap;
+            mapSize = sizeof(kVASynthJumpMap) / sizeof(kVASynthJumpMap[0]);
+            break;
+    }
+
+    if (map) {
+        for (size_t i = 0; i < mapSize; ++i) {
+            if (map[i].second == row)
+                return map[i].first;
+        }
+    }
+    return '\0';
+}
+
+int InstrumentScreen::getRowForJumpKey(model::InstrumentType type, char key)
+{
+    const std::pair<char, int>* map = nullptr;
+    size_t mapSize = 0;
+
+    switch (type) {
+        case model::InstrumentType::Plaits:
+            map = kPlaitsJumpMap;
+            mapSize = sizeof(kPlaitsJumpMap) / sizeof(kPlaitsJumpMap[0]);
+            break;
+        case model::InstrumentType::Sampler:
+            map = kSamplerJumpMap;
+            mapSize = sizeof(kSamplerJumpMap) / sizeof(kSamplerJumpMap[0]);
+            break;
+        case model::InstrumentType::Slicer:
+            map = kSlicerJumpMap;
+            mapSize = sizeof(kSlicerJumpMap) / sizeof(kSlicerJumpMap[0]);
+            break;
+        case model::InstrumentType::VASynth:
+            map = kVASynthJumpMap;
+            mapSize = sizeof(kVASynthJumpMap) / sizeof(kVASynthJumpMap[0]);
+            break;
+    }
+
+    if (map) {
+        for (size_t i = 0; i < mapSize; ++i) {
+            if (map[i].first == key)
+                return map[i].second;
+        }
+    }
+    return -1;
+}
 
 InstrumentScreen::InstrumentScreen(model::Project& project, input::ModeManager& modeManager)
     : Screen(project, modeManager)
@@ -347,9 +469,21 @@ void InstrumentScreen::drawRow(juce::Graphics& g, juce::Rectangle<int> area, int
                 valueText = "[" + juce::String(engineNames_[engine]) + "] --";
             }
 
+            // Draw shortcut key hint
+            char shortcutKey = getJumpKeyForRow(model::InstrumentType::Plaits, row);
+            if (shortcutKey != '\0')
+            {
+                g.setColour(fgColor.withAlpha(0.4f));
+                g.setFont(11.0f);
+                g.drawText(juce::String::charToString(shortcutKey), area.getX(), area.getY(), kShortcutWidth, kRowHeight, juce::Justification::centred);
+                g.setFont(14.0f);
+                g.setColour(selected ? cursorColor : fgColor);
+            }
+
             // Draw preset row without slider bar
-            g.drawText(label, area.getX(), area.getY(), kLabelWidth, kRowHeight, juce::Justification::centredLeft);
-            g.drawText(valueText, area.getX() + kLabelWidth, area.getY(), area.getWidth() - kLabelWidth, kRowHeight, juce::Justification::centredLeft);
+            int labelX = area.getX() + kShortcutWidth;
+            g.drawText(label, labelX, area.getY(), kLabelWidth, kRowHeight, juce::Justification::centredLeft);
+            g.drawText(valueText, labelX + kLabelWidth, area.getY(), area.getWidth() - kLabelWidth - kShortcutWidth, kRowHeight, juce::Justification::centredLeft);
             return;  // Early return - no slider bar for preset row
         }
 
@@ -477,11 +611,23 @@ void InstrumentScreen::drawRow(juce::Graphics& g, juce::Rectangle<int> area, int
             break;
     }
 
-    // Draw label
-    g.drawText(label, area.getX(), area.getY(), kLabelWidth, kRowHeight, juce::Justification::centredLeft);
+    // Draw shortcut key hint
+    char shortcutKey = getJumpKeyForRow(model::InstrumentType::Plaits, row);
+    if (shortcutKey != '\0')
+    {
+        g.setColour(fgColor.withAlpha(0.4f));
+        g.setFont(11.0f);
+        g.drawText(juce::String::charToString(shortcutKey), area.getX(), area.getY(), kShortcutWidth, kRowHeight, juce::Justification::centred);
+        g.setFont(14.0f);
+        g.setColour(selected ? cursorColor : fgColor);
+    }
+
+    // Draw label (offset by shortcut width)
+    int labelX = area.getX() + kShortcutWidth;
+    g.drawText(label, labelX, area.getY(), kLabelWidth, kRowHeight, juce::Justification::centredLeft);
 
     // Draw slider bar
-    int barX = area.getX() + kLabelWidth;
+    int barX = labelX + kLabelWidth;
     int barY = area.getY() + (kRowHeight - 10) / 2;
 
     // Background bar
@@ -554,12 +700,23 @@ void InstrumentScreen::drawModRow(juce::Graphics& g, juce::Rectangle<int> area, 
             break;
     }
 
-    // Draw label
+    // Draw shortcut key hint
+    char shortcutKey = getJumpKeyForRow(model::InstrumentType::Plaits, row);
+    if (shortcutKey != '\0')
+    {
+        g.setColour(fgColor.withAlpha(0.4f));
+        g.setFont(11.0f);
+        g.drawText(juce::String::charToString(shortcutKey), area.getX(), area.getY(), kShortcutWidth, kRowHeight, juce::Justification::centred);
+        g.setFont(14.0f);
+    }
+
+    // Draw label (offset by shortcut width)
+    int labelX = area.getX() + kShortcutWidth;
     g.setColour(selected ? cursorColor : fgColor);
-    g.drawText(label, area.getX(), area.getY(), kLabelWidth, kRowHeight, juce::Justification::centredLeft);
+    g.drawText(label, labelX, area.getY(), kLabelWidth, kRowHeight, juce::Justification::centredLeft);
 
     // Draw 4 fields: rate/attack, shape/decay, dest, amount
-    int fieldX = area.getX() + kLabelWidth;
+    int fieldX = labelX + kLabelWidth;
     int fieldWidth = 50;
     int fieldGap = 8;
 
@@ -717,6 +874,61 @@ void InstrumentScreen::navigate(int dx, int dy)
     repaint();
 }
 
+input::InputContext InstrumentScreen::getInputContext() const
+{
+    // Text editing mode takes priority
+    if (editingName_)
+        return input::InputContext::TextEdit;
+
+    // Check instrument type for different UI layouts
+    auto* instrument = project_.getInstrument(currentInstrument_);
+    if (!instrument)
+        return input::InputContext::RowParams;
+
+    // VA Synth has a two-column grid layout
+    if (instrument->getType() == model::InstrumentType::VASynth)
+    {
+        // Mod rows (LFO/ENV) are multi-field grids
+        auto rowType = static_cast<VASynthRowType>(vaSynthCursorRow_);
+        if (rowType == VASynthRowType::Lfo1 || rowType == VASynthRowType::Lfo2 ||
+            rowType == VASynthRowType::Env1 || rowType == VASynthRowType::Env2)
+        {
+            return input::InputContext::Grid;
+        }
+        // Non-mod rows are vertical params with horizontal editing
+        return input::InputContext::RowParams;
+    }
+
+    // Sampler/Slicer/Plaits are vertical param lists with potential multi-field mod rows
+    if (instrument->getType() == model::InstrumentType::Sampler)
+    {
+        auto rowType = static_cast<SamplerRowType>(samplerCursorRow_);
+        if (rowType == SamplerRowType::Lfo1 || rowType == SamplerRowType::Lfo2 ||
+            rowType == SamplerRowType::Env1 || rowType == SamplerRowType::Env2)
+        {
+            return input::InputContext::Grid;  // Mod rows are grids
+        }
+    }
+    else if (instrument->getType() == model::InstrumentType::Slicer)
+    {
+        auto rowType = static_cast<SlicerRowType>(slicerCursorRow_);
+        if (rowType == SlicerRowType::Lfo1 || rowType == SlicerRowType::Lfo2 ||
+            rowType == SlicerRowType::Env1 || rowType == SlicerRowType::Env2)
+        {
+            return input::InputContext::Grid;  // Mod rows are grids
+        }
+    }
+    else // Plaits (default)
+    {
+        // Check if on mod row
+        if (isModRow(cursorRow_))
+            return input::InputContext::Grid;
+    }
+
+    // Default: vertical param list with horizontal editing
+    return input::InputContext::RowParams;
+}
+
 bool InstrumentScreen::handleEdit(const juce::KeyPress& key)
 {
     return handleEditKey(key);
@@ -724,13 +936,106 @@ bool InstrumentScreen::handleEdit(const juce::KeyPress& key)
 
 bool InstrumentScreen::handleEditKey(const juce::KeyPress& key)
 {
-    auto keyCode = key.getKeyCode();
+    // Use centralized key translation for consistent hjkl/arrow handling
+    auto action = input::KeyHandler::translateKey(key, getInputContext());
+    bool shiftHeld = key.getModifiers().isShiftDown();
+    auto textChar = key.getTextCharacter();
 
-    // Tab key cycles through instrument types (works for all instrument types)
-    // Shift+Tab cycles backwards
-    if (keyCode == juce::KeyPress::tabKey) {
-        bool reverse = key.getModifiers().isShiftDown();
-        cycleInstrumentType(reverse);
+    // Skip jump key handling if we're in name editing mode (let text input work)
+    // Also check for jump keys DIRECTLY from raw keypress (before translateKey filters them)
+    // This allows keys like d,f,m,o,p,s,u,y to work as jump keys on instrument screens
+    if (!editingName_ && !key.getModifiers().isAltDown() && !key.getModifiers().isCtrlDown() &&
+        !key.getModifiers().isCommandDown() && isJumpKey(static_cast<char>(textChar)))
+    {
+        auto* inst = project_.getInstrument(currentInstrument_);
+        if (inst)
+        {
+            int targetRow = getRowForJumpKey(inst->getType(), static_cast<char>(textChar));
+            if (targetRow >= 0)
+            {
+                // Delegate to appropriate handler based on instrument type
+                if (inst->getType() == model::InstrumentType::Plaits && targetRow < kNumRows)
+                {
+                    cursorRow_ = targetRow;
+                    cursorField_ = 0;
+                    repaint();
+                    return true;
+                }
+                else if (inst->getType() == model::InstrumentType::Sampler && targetRow < kNumSamplerRows)
+                {
+                    samplerCursorRow_ = targetRow;
+                    samplerCursorField_ = 0;
+                    repaint();
+                    return true;
+                }
+                else if (inst->getType() == model::InstrumentType::Slicer && targetRow < kNumSlicerRows)
+                {
+                    slicerCursorRow_ = targetRow;
+                    slicerCursorField_ = 0;
+                    repaint();
+                    return true;
+                }
+                else if (inst->getType() == model::InstrumentType::VASynth && targetRow < kNumVASynthRows)
+                {
+                    vaSynthCursorRow_ = targetRow;
+                    vaSynthCursorField_ = 0;
+                    repaint();
+                    return true;
+                }
+            }
+        }
+    }
+
+    // Handle text editing mode via KeyAction
+    if (editingName_)
+    {
+        auto* instrument = project_.getInstrument(currentInstrument_);
+        if (!instrument)
+        {
+            editingName_ = false;
+            repaint();
+            return true;
+        }
+
+        switch (action.action)
+        {
+            case input::KeyAction::TextAccept:
+                instrument->setName(nameBuffer_);
+                editingName_ = false;
+                repaint();
+                return true;
+            case input::KeyAction::TextReject:
+                editingName_ = false;
+                repaint();
+                return true;
+            case input::KeyAction::TextBackspace:
+                if (!nameBuffer_.empty())
+                {
+                    nameBuffer_.pop_back();
+                    repaint();
+                }
+                return true;
+            case input::KeyAction::TextChar:
+                if (nameBuffer_.length() < 16)
+                {
+                    nameBuffer_ += action.charData;
+                    repaint();
+                }
+                return true;
+            default:
+                return true;  // Consume all keys in name editing mode
+        }
+    }
+
+    // Tab cycles instrument types (handle before instrument-type delegation)
+    if (action.action == input::KeyAction::TabNext)
+    {
+        cycleInstrumentType(false);
+        return true;
+    }
+    if (action.action == input::KeyAction::TabPrev)
+    {
+        cycleInstrumentType(true);
         return true;
     }
 
@@ -750,188 +1055,192 @@ bool InstrumentScreen::handleEditKey(const juce::KeyPress& key)
         return handleVASynthKey(key, true);
     }
 
-    auto textChar = key.getTextCharacter();
-    bool shiftHeld = key.getModifiers().isShiftDown();
-
-    // Handle name editing mode
-    if (editingName_)
+    // Handle standard actions via KeyAction
+    switch (action.action)
     {
-        auto* instrument = project_.getInstrument(currentInstrument_);
-        if (!instrument)
+        case input::KeyAction::NewItem:  // Shift+N
         {
-            editingName_ = false;
+            currentInstrument_ = project_.addInstrument("Inst " + std::to_string(project_.getInstrumentCount() + 1));
+            auto* newInst = project_.getInstrument(currentInstrument_);
+            if (newInst)
+            {
+                editingName_ = true;
+                nameBuffer_ = newInst->getName();
+            }
             repaint();
-            return true;  // Consumed
+            return false;  // Let other handlers run too
         }
 
-        if (keyCode == juce::KeyPress::returnKey || keyCode == juce::KeyPress::escapeKey)
+        case input::KeyAction::Rename:  // 'r'
         {
-            if (keyCode == juce::KeyPress::returnKey)
-                instrument->setName(nameBuffer_);
-            editingName_ = false;
-            repaint();
-            return true;  // Consumed - important for Enter/Escape
+            auto* inst = project_.getInstrument(currentInstrument_);
+            if (inst)
+            {
+                editingName_ = true;
+                nameBuffer_ = inst->getName();
+                repaint();
+                return true;
+            }
+            return false;
         }
-        if (keyCode == juce::KeyPress::backspaceKey && !nameBuffer_.empty())
+
+        case input::KeyAction::PatternPrev:  // '[' - switch instruments
         {
-            nameBuffer_.pop_back();
+            int numInstruments = project_.getInstrumentCount();
+            if (numInstruments > 0)
+                currentInstrument_ = (currentInstrument_ - 1 + numInstruments) % numInstruments;
             repaint();
-            return true;  // Consumed
+            return true;
         }
-        if (textChar >= ' ' && textChar <= '~' && nameBuffer_.length() < 16)
+
+        case input::KeyAction::PatternNext:  // ']' - switch instruments
         {
-            nameBuffer_ += static_cast<char>(textChar);
+            int numInstruments = project_.getInstrumentCount();
+            if (numInstruments > 0)
+                currentInstrument_ = (currentInstrument_ + 1) % numInstruments;
             repaint();
-            return true;  // Consumed
+            return true;
         }
-        return true;  // In name editing mode, consume all keys
+
+        case input::KeyAction::Jump:
+        {
+            // Use engine-aware jump key mapping for Plaits
+            int targetRow = getRowForJumpKey(model::InstrumentType::Plaits, action.charData);
+            if (targetRow >= 0 && targetRow < kNumRows)
+            {
+                cursorRow_ = targetRow;
+                cursorField_ = 0;
+                repaint();
+                return true;
+            }
+            break;
+        }
+
+        default:
+            break;
     }
 
-    // Shift+N creates new instrument and enters edit mode
-    if (shiftHeld && textChar == 'N')
-    {
-        currentInstrument_ = project_.addInstrument("Inst " + std::to_string(project_.getInstrumentCount() + 1));
-        auto* instrument = project_.getInstrument(currentInstrument_);
-        if (instrument)
-        {
-            editingName_ = true;
-            nameBuffer_ = instrument->getName();
-        }
-        repaint();
-        return false;  // Let other handlers run too
-    }
-
-    // 'r' starts renaming current instrument
-    if (textChar == 'r' || textChar == 'R')
-    {
-        auto* instrument = project_.getInstrument(currentInstrument_);
-        if (instrument)
-        {
-            editingName_ = true;
-            nameBuffer_ = instrument->getName();
-            repaint();
-            return true;  // Consumed - starting rename mode
-        }
-        return false;
-    }
-
-    // '[' and ']' switch instruments quickly
-    if (textChar == '[')
-    {
-        int numInstruments = project_.getInstrumentCount();
-        if (numInstruments > 0)
-            currentInstrument_ = (currentInstrument_ - 1 + numInstruments) % numInstruments;
-        repaint();
-        return true;  // Consumed
-    }
-    if (textChar == ']')
-    {
-        int numInstruments = project_.getInstrumentCount();
-        if (numInstruments > 0)
-            currentInstrument_ = (currentInstrument_ + 1) % numInstruments;
-        repaint();
-        return true;  // Consumed
-    }
-
-    // For mod rows (grid), require Alt for editing, plain arrows navigate
+    // For mod rows (grid context), handle edit actions
+    // Edit2 = horizontal (h/l), Edit1 = vertical (j/k with Alt)
+    // ShiftEdit* = coarse adjustment
     if (isModRow(cursorRow_))
     {
-        bool altHeld = key.getModifiers().isAltDown();
-
-        // Alt+Left/Right adjusts field value at edges, otherwise navigates fields
-        if (altHeld && (keyCode == juce::KeyPress::leftKey || keyCode == juce::KeyPress::rightKey))
+        switch (action.action)
         {
-            int delta = (keyCode == juce::KeyPress::rightKey) ? 1 : -1;
-            adjustModField(cursorRow_, cursorField_, delta);
-            presetModified_ = true;
-            if (onNotePreview) onNotePreview(60, currentInstrument_);
-            repaint();
-            return true;  // Consumed
+            case input::KeyAction::Edit2Inc:  // h/l or Alt+h/l - fine horizontal
+            case input::KeyAction::Edit1Inc:  // Alt+j/k - fine vertical
+                adjustModField(cursorRow_, cursorField_, 1, false);
+                presetModified_ = true;
+                if (onNotePreview) onNotePreview(60, currentInstrument_);
+                repaint();
+                return true;
+            case input::KeyAction::Edit2Dec:
+            case input::KeyAction::Edit1Dec:
+                adjustModField(cursorRow_, cursorField_, -1, false);
+                presetModified_ = true;
+                if (onNotePreview) onNotePreview(60, currentInstrument_);
+                repaint();
+                return true;
+            case input::KeyAction::ShiftEdit2Inc:  // Shift+Alt+h/l - coarse horizontal
+            case input::KeyAction::ShiftEdit1Inc:  // Shift+Alt+j/k - coarse vertical
+                adjustModField(cursorRow_, cursorField_, 1, true);
+                presetModified_ = true;
+                if (onNotePreview) onNotePreview(60, currentInstrument_);
+                repaint();
+                return true;
+            case input::KeyAction::ShiftEdit2Dec:
+            case input::KeyAction::ShiftEdit1Dec:
+                adjustModField(cursorRow_, cursorField_, -1, true);
+                presetModified_ = true;
+                if (onNotePreview) onNotePreview(60, currentInstrument_);
+                repaint();
+                return true;
+            case input::KeyAction::ZoomIn:  // +/= without Alt
+                adjustModField(cursorRow_, cursorField_, 1, shiftHeld);
+                presetModified_ = true;
+                if (onNotePreview) onNotePreview(60, currentInstrument_);
+                repaint();
+                return true;
+            case input::KeyAction::ZoomOut:  // - without Alt
+                adjustModField(cursorRow_, cursorField_, -1, shiftHeld);
+                presetModified_ = true;
+                if (onNotePreview) onNotePreview(60, currentInstrument_);
+                repaint();
+                return true;
+            default:
+                break;
         }
-        // Alt+Up/Down adjusts current field value
-        if (altHeld && keyCode == juce::KeyPress::upKey)
-        {
-            adjustModField(cursorRow_, cursorField_, 1, shiftHeld);
-            presetModified_ = true;
-            if (onNotePreview) onNotePreview(60, currentInstrument_);
-            repaint();
-            return true;  // Consumed
-        }
-        if (altHeld && keyCode == juce::KeyPress::downKey)
-        {
-            adjustModField(cursorRow_, cursorField_, -1, shiftHeld);
-            presetModified_ = true;
-            if (onNotePreview) onNotePreview(60, currentInstrument_);
-            repaint();
-            return true;  // Consumed
-        }
-        // +/- always adjusts (no Alt needed)
-        int modDelta = shiftHeld ? 1 : 1;  // Mod fields use int steps
-        if (textChar == '+' || textChar == '=')
-        {
-            adjustModField(cursorRow_, cursorField_, modDelta, shiftHeld);
-            presetModified_ = true;
-            if (onNotePreview) onNotePreview(60, currentInstrument_);
-            repaint();
-            return true;  // Consumed
-        }
-        if (textChar == '-')
-        {
-            adjustModField(cursorRow_, cursorField_, -modDelta, shiftHeld);
-            presetModified_ = true;
-            if (onNotePreview) onNotePreview(60, currentInstrument_);
-            repaint();
-            return true;  // Consumed
-        }
-        // Plain arrows not consumed - let navigation handle field movement
+        // Navigation actions not consumed - let navigate() handle field movement
         return false;
     }
 
-    // Handle Preset row specially - Left/Right cycles presets
+    // Handle Preset row specially - edit actions cycle presets
     if (static_cast<InstrumentRowType>(cursorRow_) == InstrumentRowType::Preset)
     {
-        if (presetManager_ && (keyCode == juce::KeyPress::leftKey || keyCode == juce::KeyPress::rightKey))
+        if (presetManager_ && action.isEdit())
         {
-            auto* instrument = project_.getInstrument(currentInstrument_);
-            if (instrument)
+            auto* inst = project_.getInstrument(currentInstrument_);
+            if (inst)
             {
-                int engine = instrument->getParams().engine;
+                int engine = inst->getParams().engine;
                 int presetCount = presetManager_->getPresetCount(engine);
                 if (presetCount > 0)
                 {
                     int newIndex = currentPresetIndex_;
-                    if (keyCode == juce::KeyPress::rightKey)
+                    if (action.action == input::KeyAction::Edit1Inc || action.action == input::KeyAction::Edit2Inc ||
+                        action.action == input::KeyAction::ShiftEdit1Inc || action.action == input::KeyAction::ShiftEdit2Inc)
                         newIndex = (currentPresetIndex_ + 1) % presetCount;
                     else
                         newIndex = (currentPresetIndex_ - 1 + presetCount) % presetCount;
                     loadPreset(newIndex);
                 }
             }
-            return true;  // Consumed
+            return true;
         }
-        return false;  // Let other keys pass through
+        return false;
     }
 
-    // Standard (non-grid) value adjustment
-    // Left/Right adjust values directly, Up/Down are for navigation (not consumed)
-    float baseDelta = shiftHeld ? 0.01f : 0.05f;
+    // Standard (non-grid) value adjustment via edit actions
+    // Edit2 = horizontal (primary for RowParams), Edit1 = vertical (Alt+j/k)
+    // ShiftEdit* = coarse adjustment
+    float fineDelta = 0.05f;
+    float coarseDelta = 0.01f;  // Smaller for precision control
     float delta = 0.0f;
 
-    if (textChar == '+' || textChar == '=' || keyCode == juce::KeyPress::rightKey)
-        delta = baseDelta;
-    else if (textChar == '-' || keyCode == juce::KeyPress::leftKey)
-        delta = -baseDelta;
+    switch (action.action)
+    {
+        case input::KeyAction::Edit2Inc:  // h/l
+        case input::KeyAction::Edit1Inc:  // Alt+j/k
+        case input::KeyAction::ZoomIn:
+            delta = fineDelta;
+            break;
+        case input::KeyAction::Edit2Dec:
+        case input::KeyAction::Edit1Dec:
+        case input::KeyAction::ZoomOut:
+            delta = -fineDelta;
+            break;
+        case input::KeyAction::ShiftEdit2Inc:  // Shift+h/l
+        case input::KeyAction::ShiftEdit1Inc:  // Shift+Alt+j/k
+            delta = coarseDelta;
+            break;
+        case input::KeyAction::ShiftEdit2Dec:
+        case input::KeyAction::ShiftEdit1Dec:
+            delta = -coarseDelta;
+            break;
+        default:
+            break;
+    }
 
     if (delta != 0.0f)
     {
         setRowValue(cursorRow_, delta);
-        presetModified_ = true;  // Mark preset as modified
+        presetModified_ = true;
         if (onNotePreview) onNotePreview(60, currentInstrument_);
         repaint();
-        return true;  // Consumed
+        return true;
     }
 
-    return false;  // Key not consumed - let Up/Down navigate between rows
+    return false;  // Key not consumed - let navigation handle movement
 }
 
 void InstrumentScreen::setRowValue(int row, float delta)
@@ -1282,102 +1591,41 @@ void InstrumentScreen::loadPreset(int presetIndex)
 
 bool InstrumentScreen::handleSamplerKey(const juce::KeyPress& key, bool /*isEditMode*/)
 {
-    auto keyCode = key.getKeyCode();
-    auto textChar = key.getTextCharacter();
-    bool shiftHeld = key.getModifiers().isShiftDown();
+    // Use centralized key translation for consistent action handling
+    auto action = input::KeyHandler::translateKey(key, getInputContext());
 
     auto* instrument = project_.getInstrument(currentInstrument_);
     if (!instrument) return false;
 
     auto& params = instrument->getSamplerParams();
 
-    // Handle name editing mode
+    // Handle name editing mode via actions
     if (editingName_)
     {
-        if (keyCode == juce::KeyPress::returnKey || keyCode == juce::KeyPress::escapeKey)
+        switch (action.action)
         {
-            if (keyCode == juce::KeyPress::returnKey)
+            case input::KeyAction::TextAccept:
                 instrument->setName(nameBuffer_);
-            editingName_ = false;
-            repaint();
-            return true;
+                editingName_ = false;
+                repaint();
+                return true;
+            case input::KeyAction::TextReject:
+                editingName_ = false;
+                repaint();
+                return true;
+            case input::KeyAction::TextBackspace:
+                if (!nameBuffer_.empty())
+                    nameBuffer_.pop_back();
+                repaint();
+                return true;
+            case input::KeyAction::TextChar:
+                if (nameBuffer_.length() < 16)
+                    nameBuffer_ += action.charData;
+                repaint();
+                return true;
+            default:
+                return true;  // Consume all keys in name editing mode
         }
-        if (keyCode == juce::KeyPress::backspaceKey && !nameBuffer_.empty())
-        {
-            nameBuffer_.pop_back();
-            repaint();
-            return true;
-        }
-        if (textChar >= ' ' && textChar <= '~' && nameBuffer_.length() < 16)
-        {
-            nameBuffer_ += static_cast<char>(textChar);
-            repaint();
-            return true;
-        }
-        return true;
-    }
-
-    // Shift-N creates new instrument
-    if (shiftHeld && (textChar == 'N' || textChar == 'n'))
-    {
-        currentInstrument_ = project_.addInstrument("Inst " + std::to_string(project_.getInstrumentCount() + 1));
-        auto* newInst = project_.getInstrument(currentInstrument_);
-        if (newInst) {
-            editingName_ = true;
-            nameBuffer_ = newInst->getName();
-        }
-        repaint();
-        return true;
-    }
-
-    // 'r' starts renaming
-    if (textChar == 'r' || textChar == 'R')
-    {
-        editingName_ = true;
-        nameBuffer_ = instrument->getName();
-        repaint();
-        return true;
-    }
-
-    // '[' and ']' switch instruments
-    if (textChar == '[')
-    {
-        int numInstruments = project_.getInstrumentCount();
-        if (numInstruments > 0) {
-            currentInstrument_ = (currentInstrument_ - 1 + numInstruments) % numInstruments;
-            setCurrentInstrument(currentInstrument_);
-        }
-        return true;
-    }
-    if (textChar == ']')
-    {
-        int numInstruments = project_.getInstrumentCount();
-        if (numInstruments > 0) {
-            currentInstrument_ = (currentInstrument_ + 1) % numInstruments;
-            setCurrentInstrument(currentInstrument_);
-        }
-        return true;
-    }
-
-    // Enter: audition sample
-    if (keyCode == juce::KeyPress::returnKey)
-    {
-        if (onNotePreview) onNotePreview(60, currentInstrument_);  // Play C4
-        return true;
-    }
-
-    // Up/Down: navigate rows
-    if (keyCode == juce::KeyPress::upKey)
-    {
-        samplerCursorRow_ = std::max(0, samplerCursorRow_ - 1);
-        repaint();
-        return true;
-    }
-    if (keyCode == juce::KeyPress::downKey)
-    {
-        samplerCursorRow_ = std::min(kNumSamplerRows - 1, samplerCursorRow_ + 1);
-        repaint();
-        return true;
     }
 
     // Check if current row is a modulation row (has multiple fields)
@@ -1387,36 +1635,176 @@ bool InstrumentScreen::handleSamplerKey(const juce::KeyPress& key, bool /*isEdit
                type == SamplerRowType::Env1 || type == SamplerRowType::Env2;
     };
 
-    bool altHeld = key.getModifiers().isAltDown();
-
-    // Tab or Left/Right (without Alt): navigate fields on mod rows
-    if (isModRow(samplerCursorRow_) && !altHeld)
+    // Handle actions
+    switch (action.action)
     {
-        if (keyCode == juce::KeyPress::tabKey || keyCode == juce::KeyPress::rightKey)
-        {
-            samplerCursorField_ = (samplerCursorField_ + 1) % 4;
+        case input::KeyAction::NewItem:  // Shift+N
+            currentInstrument_ = project_.addInstrument("Inst " + std::to_string(project_.getInstrumentCount() + 1));
+            {
+                auto* newInst = project_.getInstrument(currentInstrument_);
+                if (newInst) {
+                    editingName_ = true;
+                    nameBuffer_ = newInst->getName();
+                }
+            }
             repaint();
             return true;
-        }
-        if (keyCode == juce::KeyPress::leftKey)
-        {
-            samplerCursorField_ = (samplerCursorField_ + 3) % 4;  // -1 with wrap
+
+        case input::KeyAction::Rename:  // 'r'
+            editingName_ = true;
+            nameBuffer_ = instrument->getName();
             repaint();
             return true;
+
+        case input::KeyAction::PatternPrev:  // '['
+        {
+            int numInstruments = project_.getInstrumentCount();
+            if (numInstruments > 0) {
+                currentInstrument_ = (currentInstrument_ - 1 + numInstruments) % numInstruments;
+                setCurrentInstrument(currentInstrument_);
+            }
+            return true;
         }
+
+        case input::KeyAction::PatternNext:  // ']'
+        {
+            int numInstruments = project_.getInstrumentCount();
+            if (numInstruments > 0) {
+                currentInstrument_ = (currentInstrument_ + 1) % numInstruments;
+                setCurrentInstrument(currentInstrument_);
+            }
+            return true;
+        }
+
+        case input::KeyAction::Jump:
+        {
+            // Use engine-aware jump key mapping for Sampler
+            int targetRow = getRowForJumpKey(model::InstrumentType::Sampler, action.charData);
+            if (targetRow >= 0 && targetRow < kNumSamplerRows)
+            {
+                samplerCursorRow_ = targetRow;
+                samplerCursorField_ = 0;
+                repaint();
+                return true;
+            }
+            break;
+        }
+
+        case input::KeyAction::Confirm:  // Enter: audition sample
+            if (onNotePreview) onNotePreview(60, currentInstrument_);
+            return true;
+
+        case input::KeyAction::NavUp:
+            samplerCursorRow_ = std::max(0, samplerCursorRow_ - 1);
+            repaint();
+            return true;
+
+        case input::KeyAction::NavDown:
+            samplerCursorRow_ = std::min(kNumSamplerRows - 1, samplerCursorRow_ + 1);
+            repaint();
+            return true;
+
+        case input::KeyAction::TabNext:
+            if (isModRow(samplerCursorRow_))
+            {
+                samplerCursorField_ = (samplerCursorField_ + 1) % 4;
+                repaint();
+                return true;
+            }
+            break;
+
+        case input::KeyAction::TabPrev:
+            if (isModRow(samplerCursorRow_))
+            {
+                samplerCursorField_ = (samplerCursorField_ + 3) % 4;
+                repaint();
+                return true;
+            }
+            break;
+
+        case input::KeyAction::NavLeft:
+            if (isModRow(samplerCursorRow_))
+            {
+                samplerCursorField_ = (samplerCursorField_ + 3) % 4;  // -1 with wrap
+                repaint();
+                return true;
+            }
+            break;
+
+        case input::KeyAction::NavRight:
+            if (isModRow(samplerCursorRow_))
+            {
+                samplerCursorField_ = (samplerCursorField_ + 1) % 4;
+                repaint();
+                return true;
+            }
+            break;
+
+        case input::KeyAction::Open:  // 'o'
+        {
+            auto chooser = std::make_shared<juce::FileChooser>(
+                "Load Sample",
+                juce::File::getSpecialLocation(juce::File::userHomeDirectory),
+                "*.wav;*.aiff;*.aif;*.mp3;*.flac;*.ogg"
+            );
+
+            chooser->launchAsync(
+                juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                [this, chooser](const juce::FileChooser& fc) {
+                    auto file = fc.getResult();
+                    if (file.existsAsFile() && audioEngine_)
+                    {
+                        if (auto* sampler = audioEngine_->getSamplerProcessor(currentInstrument_))
+                        {
+                            auto* inst = project_.getInstrument(currentInstrument_);
+                            sampler->setInstrument(inst);
+                            if (sampler->loadSample(file))
+                            {
+                                updateSamplerDisplay();
+                                repaint();
+                            }
+                        }
+                    }
+                }
+            );
+            return true;
+        }
+
+        default:
+            break;
     }
 
-    // Alt+Left/Right or +/-: adjust values
+    // Handle edit actions for value adjustment
     int delta = 0;
-    if (textChar == '+' || textChar == '=') delta = 1;
-    else if (textChar == '-') delta = -1;
-    // For mod rows, require Alt for arrow keys; for other rows, arrows work directly
-    if (isModRow(samplerCursorRow_)) {
-        if (altHeld && keyCode == juce::KeyPress::rightKey) delta = 1;
-        else if (altHeld && keyCode == juce::KeyPress::leftKey) delta = -1;
-    } else {
-        if (keyCode == juce::KeyPress::rightKey) delta = 1;
-        else if (keyCode == juce::KeyPress::leftKey) delta = -1;
+    bool isCoarse = false;
+    switch (action.action)
+    {
+        case input::KeyAction::Edit2Inc:
+        case input::KeyAction::Edit1Inc:
+            delta = 1;
+            break;
+        case input::KeyAction::Edit2Dec:
+        case input::KeyAction::Edit1Dec:
+            delta = -1;
+            break;
+        case input::KeyAction::ShiftEdit2Inc:
+        case input::KeyAction::ShiftEdit1Inc:
+            delta = 1;
+            isCoarse = true;
+            break;
+        case input::KeyAction::ShiftEdit2Dec:
+        case input::KeyAction::ShiftEdit1Dec:
+            delta = -1;
+            isCoarse = true;
+            break;
+        case input::KeyAction::ZoomIn:  // +/=
+            delta = 1;
+            break;
+        case input::KeyAction::ZoomOut:  // -
+            delta = -1;
+            break;
+        default:
+            break;
     }
 
     if (delta != 0)
@@ -1446,7 +1834,7 @@ bool InstrumentScreen::handleSamplerKey(const juce::KeyPress& key, bool /*isEdit
                     case 3: lfo->amount = static_cast<int8_t>(std::clamp(static_cast<int>(lfo->amount) + delta, -64, 63)); break;
                 }
             } else if (env) {
-                float envStep = shiftHeld ? 0.01f : 0.05f;
+                float envStep = isCoarse ? 0.01f : 0.05f;
                 switch (samplerCursorField_) {
                     case 0: env->attack = std::clamp(env->attack + delta * envStep, 0.001f, 2.0f); break;
                     case 1: env->decay = std::clamp(env->decay + delta * envStep, 0.001f, 10.0f); break;
@@ -1467,8 +1855,8 @@ bool InstrumentScreen::handleSamplerKey(const juce::KeyPress& key, bool /*isEdit
             }
         };
 
-        float step = shiftHeld ? 0.01f : 0.05f;
-        int noteStep = shiftHeld ? 12 : 1;  // octave with shift, semitone by default
+        float step = isCoarse ? 0.01f : 0.05f;
+        int noteStep = isCoarse ? 12 : 1;  // octave with shift, semitone by default
 
         switch (static_cast<SamplerRowType>(samplerCursorRow_))
         {
@@ -1532,37 +1920,6 @@ bool InstrumentScreen::handleSamplerKey(const juce::KeyPress& key, bool /*isEdit
         return true;
     }
 
-    // 'o' to open file chooser and load sample
-    if (textChar == 'o' || textChar == 'O')
-    {
-        auto chooser = std::make_shared<juce::FileChooser>(
-            "Load Sample",
-            juce::File::getSpecialLocation(juce::File::userHomeDirectory),
-            "*.wav;*.aiff;*.aif;*.mp3;*.flac;*.ogg"
-        );
-
-        chooser->launchAsync(
-            juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
-            [this, chooser](const juce::FileChooser& fc) {
-                auto file = fc.getResult();
-                if (file.existsAsFile() && audioEngine_)
-                {
-                    if (auto* sampler = audioEngine_->getSamplerProcessor(currentInstrument_))
-                    {
-                        auto* inst = project_.getInstrument(currentInstrument_);
-                        sampler->setInstrument(inst);
-                        if (sampler->loadSample(file))
-                        {
-                            updateSamplerDisplay();
-                            repaint();
-                        }
-                    }
-                }
-            }
-        );
-        return true;
-    }
-
     return false;
 }
 
@@ -1619,19 +1976,27 @@ void InstrumentScreen::paintSamplerUI(juce::Graphics& g) {
             g.fillRect(rowArea);
         }
 
+        // Shortcut key indicator
+        char shortcutKey = getJumpKeyForRow(model::InstrumentType::Sampler, rowIndex);
+        if (shortcutKey != '\0') {
+            g.setColour(selected ? cursorColor : fgColor.darker(0.5f));
+            g.setFont(10.0f);
+            g.drawText(juce::String::charToString(shortcutKey), rowArea.getX(), rowArea.getY(), kShortcutWidth, kRowHeight, juce::Justification::centred);
+        }
+
         g.setColour(selected ? cursorColor : fgColor);
         g.setFont(14.0f);
-        g.drawText(label, rowArea.getX(), rowArea.getY(), kLabelWidth, kRowHeight, juce::Justification::centredLeft);
+        g.drawText(label, rowArea.getX() + kShortcutWidth, rowArea.getY(), kLabelWidth, kRowHeight, juce::Justification::centredLeft);
 
         if (isToggle) {
             // Draw toggle button style
-            auto toggleArea = juce::Rectangle<int>(rowArea.getX() + kLabelWidth, rowArea.getY() + 4, 50, kRowHeight - 8);
+            auto toggleArea = juce::Rectangle<int>(rowArea.getX() + kShortcutWidth + kLabelWidth, rowArea.getY() + 4, 50, kRowHeight - 8);
             g.setColour(selected ? cursorColor : highlightColor);
             g.fillRoundedRectangle(toggleArea.toFloat(), 4.0f);
             g.setColour(selected ? juce::Colours::black : fgColor);
             g.drawText(value, toggleArea, juce::Justification::centred);
         } else {
-            g.drawText(value, rowArea.getX() + kLabelWidth, rowArea.getY(), 200, kRowHeight, juce::Justification::centredLeft);
+            g.drawText(value, rowArea.getX() + kShortcutWidth + kLabelWidth, rowArea.getY(), 200, kRowHeight, juce::Justification::centredLeft);
         }
     };
 
@@ -1645,12 +2010,20 @@ void InstrumentScreen::paintSamplerUI(juce::Graphics& g) {
             g.fillRect(rowArea);
         }
 
+        // Shortcut key indicator
+        char shortcutKey = getJumpKeyForRow(model::InstrumentType::Sampler, rowIndex);
+        if (shortcutKey != '\0') {
+            g.setColour(selected ? cursorColor : fgColor.darker(0.5f));
+            g.setFont(10.0f);
+            g.drawText(juce::String::charToString(shortcutKey), rowArea.getX(), rowArea.getY(), kShortcutWidth, kRowHeight, juce::Justification::centred);
+        }
+
         g.setColour(selected ? cursorColor : fgColor);
         g.setFont(14.0f);
-        g.drawText(label, rowArea.getX(), rowArea.getY(), kLabelWidth, kRowHeight, juce::Justification::centredLeft);
+        g.drawText(label, rowArea.getX() + kShortcutWidth, rowArea.getY(), kLabelWidth, kRowHeight, juce::Justification::centredLeft);
 
         // Slider bar (Plaits style)
-        int barX = rowArea.getX() + kLabelWidth;
+        int barX = rowArea.getX() + kShortcutWidth + kLabelWidth;
         int barY = rowArea.getY() + (kRowHeight - 10) / 2;
         g.setColour(juce::Colour(0xff303030));
         g.fillRect(barX, barY, kBarWidth, 10);
@@ -1879,14 +2252,22 @@ void InstrumentScreen::paintSlicerUI(juce::Graphics& g) {
             g.fillRect(rowArea);
         }
 
+        // Shortcut key indicator
+        char shortcutKey = getJumpKeyForRow(model::InstrumentType::Slicer, rowIndex);
+        if (shortcutKey != '\0') {
+            g.setColour(selected ? cursorColor : fgColor.darker(0.5f));
+            g.setFont(10.0f);
+            g.drawText(juce::String::charToString(shortcutKey), rowArea.getX(), rowArea.getY(), kShortcutWidth, kRowHeight, juce::Justification::centred);
+        }
+
         g.setColour(greyed ? fgColor.darker(0.6f) : (selected ? cursorColor : fgColor));
         g.setFont(14.0f);
-        g.drawText(label, rowArea.getX(), rowArea.getY(), kLabelWidth, kRowHeight, juce::Justification::centredLeft);
-        g.drawText(value, rowArea.getX() + kLabelWidth, rowArea.getY(), 120, kRowHeight, juce::Justification::centredLeft);
+        g.drawText(label, rowArea.getX() + kShortcutWidth, rowArea.getY(), kLabelWidth, kRowHeight, juce::Justification::centredLeft);
+        g.drawText(value, rowArea.getX() + kShortcutWidth + kLabelWidth, rowArea.getY(), 120, kRowHeight, juce::Justification::centredLeft);
 
         if (!extra.isEmpty()) {
             g.setColour(fgColor.darker(0.4f));
-            g.drawText(extra, rowArea.getX() + kLabelWidth + 120, rowArea.getY(), 200, kRowHeight, juce::Justification::centredLeft);
+            g.drawText(extra, rowArea.getX() + kShortcutWidth + kLabelWidth + 120, rowArea.getY(), 200, kRowHeight, juce::Justification::centredLeft);
         }
     };
 
@@ -1900,12 +2281,20 @@ void InstrumentScreen::paintSlicerUI(juce::Graphics& g) {
             g.fillRect(rowArea);
         }
 
+        // Shortcut key indicator
+        char shortcutKey = getJumpKeyForRow(model::InstrumentType::Slicer, rowIndex);
+        if (shortcutKey != '\0') {
+            g.setColour(selected ? cursorColor : fgColor.darker(0.5f));
+            g.setFont(10.0f);
+            g.drawText(juce::String::charToString(shortcutKey), rowArea.getX(), rowArea.getY(), kShortcutWidth, kRowHeight, juce::Justification::centred);
+        }
+
         g.setColour(selected ? cursorColor : fgColor);
         g.setFont(14.0f);
-        g.drawText(label, rowArea.getX(), rowArea.getY(), kLabelWidth, kRowHeight, juce::Justification::centredLeft);
+        g.drawText(label, rowArea.getX() + kShortcutWidth, rowArea.getY(), kLabelWidth, kRowHeight, juce::Justification::centredLeft);
 
         // Slider bar (Plaits style)
-        int barX = rowArea.getX() + kLabelWidth;
+        int barX = rowArea.getX() + kShortcutWidth + kLabelWidth;
         int barY = rowArea.getY() + (kRowHeight - 10) / 2;
         g.setColour(juce::Colour(0xff303030));
         g.fillRect(barX, barY, kBarWidth, 10);
@@ -2106,43 +2495,66 @@ void InstrumentScreen::paintSlicerUI(juce::Graphics& g) {
 }
 
 bool InstrumentScreen::handleSlicerKey(const juce::KeyPress& key, bool /*isEditMode*/) {
-    auto keyCode = key.getKeyCode();
-    auto textChar = key.getTextCharacter();
-    bool shiftHeld = key.getModifiers().isShiftDown();
+    // Use centralized key translation
+    auto action = input::KeyHandler::translateKey(key, getInputContext());
 
     auto* inst = project_.getInstrument(currentInstrument_);
     if (!inst) return false;
 
     auto& params = inst->getSlicerParams();
 
-    // Shift-N creates new instrument
-    if (shiftHeld && (textChar == 'N' || textChar == 'n')) {
-        currentInstrument_ = project_.addInstrument("Inst " + std::to_string(project_.getInstrumentCount() + 1));
-        auto* newInst = project_.getInstrument(currentInstrument_);
-        if (newInst) {
-            editingName_ = true;
-            nameBuffer_ = newInst->getName();
-        }
-        repaint();
-        return true;
-    }
+    // Handle actions from translateKey()
+    switch (action.action)
+    {
+        case input::KeyAction::NewItem:
+            // Shift+N creates new instrument
+            currentInstrument_ = project_.addInstrument("Inst " + std::to_string(project_.getInstrumentCount() + 1));
+            if (auto* newInst = project_.getInstrument(currentInstrument_)) {
+                editingName_ = true;
+                nameBuffer_ = newInst->getName();
+            }
+            repaint();
+            return true;
 
-    // '[' and ']' switch instruments
-    if (textChar == '[') {
-        int numInstruments = project_.getInstrumentCount();
-        if (numInstruments > 0) {
-            currentInstrument_ = (currentInstrument_ - 1 + numInstruments) % numInstruments;
-            setCurrentInstrument(currentInstrument_);
-        }
-        return true;
-    }
-    if (textChar == ']') {
-        int numInstruments = project_.getInstrumentCount();
-        if (numInstruments > 0) {
-            currentInstrument_ = (currentInstrument_ + 1) % numInstruments;
-            setCurrentInstrument(currentInstrument_);
-        }
-        return true;
+        case input::KeyAction::PatternPrev:
+            // '[' switch to previous instrument
+            {
+                int numInstruments = project_.getInstrumentCount();
+                if (numInstruments > 0) {
+                    currentInstrument_ = (currentInstrument_ - 1 + numInstruments) % numInstruments;
+                    setCurrentInstrument(currentInstrument_);
+                }
+            }
+            return true;
+
+        case input::KeyAction::PatternNext:
+            // ']' switch to next instrument
+            {
+                int numInstruments = project_.getInstrumentCount();
+                if (numInstruments > 0) {
+                    currentInstrument_ = (currentInstrument_ + 1) % numInstruments;
+                    setCurrentInstrument(currentInstrument_);
+                }
+            }
+            return true;
+
+        case input::KeyAction::Jump:
+            // Use engine-aware jump key mapping for Slicer
+            // Note: 'c' is handled separately for chop functionality
+            {
+                int targetRow = getRowForJumpKey(model::InstrumentType::Slicer, action.charData);
+                if (targetRow >= 0 && targetRow < kNumSlicerRows)
+                {
+                    slicerCursorRow_ = targetRow;
+                    slicerCursorField_ = 0;
+                    repaint();
+                    return true;
+                }
+            }
+            break;
+
+        default:
+            break;
     }
 
     // Get slicer processor for lazy chop operations
@@ -2151,8 +2563,11 @@ bool InstrumentScreen::handleSlicerKey(const juce::KeyPress& key, bool /*isEditM
         slicer = audioEngine_->getSlicerProcessor(currentInstrument_);
     }
 
-    // Enter: always play the current slice
-    if (keyCode == juce::KeyPress::returnKey) {
+    // Get textChar for slicer-specific keys not in the action system
+    auto textChar = key.getTextCharacter();
+
+    // Enter (Confirm action): always play the current slice
+    if (action.action == input::KeyAction::Confirm) {
         // Play the current slice note (mapped to MIDI note)
         // Slices are mapped starting at C-1 (MIDI note 12)
         if (onNotePreview) {
@@ -2164,6 +2579,7 @@ bool InstrumentScreen::handleSlicerKey(const juce::KeyPress& key, bool /*isEditM
     }
 
     // 'c' for chop: add slice at current playhead while a slice is playing
+    // (slicer-specific, not an action)
     if (textChar == 'c' || textChar == 'C') {
         if (slicer && params.chopMode == model::ChopMode::Lazy) {
             int64_t playhead = slicer->getPlayheadPosition();
@@ -2181,52 +2597,15 @@ bool InstrumentScreen::handleSlicerKey(const juce::KeyPress& key, bool /*isEditM
     }
 
     // 'x' to clear all slices (with confirmation via double-press - just clear for now)
+    // (slicer-specific, not an action)
     if (textChar == 'x' || textChar == 'X') {
+        bool shiftHeld = key.getModifiers().isShiftDown();
         if (slicer && shiftHeld) {
             // Shift+X clears all slices
             slicer->clearSlices();
             updateSlicerDisplay();
             repaint();
         }
-        return true;
-    }
-
-    // Alt+Up/Down: adjust sub-parameter for ChopMode row (divisions or sensitivity)
-    bool altHeld = key.getModifiers().isAltDown();
-    if (altHeld && (keyCode == juce::KeyPress::upKey || keyCode == juce::KeyPress::downKey)) {
-        int delta = (keyCode == juce::KeyPress::upKey) ? 1 : -1;
-        int step = shiftHeld ? 1 : 4;  // Fine vs coarse adjustment
-
-        if (slicerCursorRow_ == static_cast<int>(SlicerRowType::ChopMode)) {
-            if (params.chopMode == model::ChopMode::Divisions && slicer) {
-                params.numDivisions = std::clamp(params.numDivisions + delta * step, 2, 64);
-                slicer->chopIntoDivisions(params.numDivisions);
-                updateSlicerDisplay();
-                repaint();
-                return true;
-            } else if (params.chopMode == model::ChopMode::Transients && slicer) {
-                float sensStep = shiftHeld ? 0.02f : 0.1f;
-                params.transientSensitivity = std::clamp(params.transientSensitivity + delta * sensStep, 0.0f, 1.0f);
-                slicer->chopByTransients(params.transientSensitivity);
-                updateSlicerDisplay();
-                repaint();
-                return true;
-            }
-        }
-        // Alt+Up/Down not consumed - let navigation handle it
-        return false;
-    }
-
-    // Up/Down without Alt: navigate rows (handled by KeyHandler calling navigate())
-    // These won't normally be reached, but keep for safety
-    if (keyCode == juce::KeyPress::upKey) {
-        slicerCursorRow_ = std::max(0, slicerCursorRow_ - 1);
-        repaint();
-        return true;
-    }
-    if (keyCode == juce::KeyPress::downKey) {
-        slicerCursorRow_ = std::min(kNumSlicerRows - 1, slicerCursorRow_ + 1);
-        repaint();
         return true;
     }
 
@@ -2237,36 +2616,97 @@ bool InstrumentScreen::handleSlicerKey(const juce::KeyPress& key, bool /*isEditM
                type == SlicerRowType::Env1 || type == SlicerRowType::Env2;
     };
 
-    // Tab or Left/Right (without Alt): navigate fields on mod rows
-    if (isModRow(slicerCursorRow_) && !altHeld)
-    {
-        if (keyCode == juce::KeyPress::tabKey || keyCode == juce::KeyPress::rightKey)
-        {
-            slicerCursorField_ = (slicerCursorField_ + 1) % 4;
-            repaint();
-            return true;
-        }
-        if (keyCode == juce::KeyPress::leftKey)
-        {
-            slicerCursorField_ = (slicerCursorField_ + 3) % 4;  // -1 with wrap
-            repaint();
-            return true;
-        }
-    }
-
-    // Alt+Left/Right or +/-: adjust values for current row
+    // Handle edit actions for value adjustment and navigation
     int delta = 0;
-    if (textChar == '+' || textChar == '=') delta = 1;
-    else if (textChar == '-') delta = -1;
-    // For mod rows, require Alt for arrow keys; for other rows, arrows work directly
-    if (isModRow(slicerCursorRow_)) {
-        if (altHeld && keyCode == juce::KeyPress::rightKey) delta = 1;
-        else if (altHeld && keyCode == juce::KeyPress::leftKey) delta = -1;
-    } else {
-        if (keyCode == juce::KeyPress::rightKey) delta = 1;
-        else if (keyCode == juce::KeyPress::leftKey) delta = -1;
+    bool isCoarse = false;
+    switch (action.action)
+    {
+        case input::KeyAction::Edit1Inc:  // Alt+k/up - vertical increment
+            delta = 1;
+            break;
+        case input::KeyAction::Edit1Dec:  // Alt+j/down - vertical decrement
+            delta = -1;
+            break;
+        case input::KeyAction::ShiftEdit1Inc:  // Alt+Shift+k/up - coarse increment
+            delta = 1;
+            isCoarse = true;
+            break;
+        case input::KeyAction::ShiftEdit1Dec:  // Alt+Shift+j/down - coarse decrement
+            delta = -1;
+            isCoarse = true;
+            break;
+        case input::KeyAction::Edit2Inc:  // Alt+l/right - horizontal increment
+        case input::KeyAction::ZoomIn:    // +/=
+            delta = 1;
+            break;
+        case input::KeyAction::Edit2Dec:  // Alt+h/left - horizontal decrement
+        case input::KeyAction::ZoomOut:   // -
+            delta = -1;
+            break;
+        case input::KeyAction::ShiftEdit2Inc:  // Alt+Shift+l/right
+            delta = 1;
+            isCoarse = true;
+            break;
+        case input::KeyAction::ShiftEdit2Dec:  // Alt+Shift+h/left
+            delta = -1;
+            isCoarse = true;
+            break;
+
+        // Navigation actions
+        case input::KeyAction::NavUp:
+            slicerCursorRow_ = std::max(0, slicerCursorRow_ - 1);
+            repaint();
+            return true;
+        case input::KeyAction::NavDown:
+            slicerCursorRow_ = std::min(kNumSlicerRows - 1, slicerCursorRow_ + 1);
+            repaint();
+            return true;
+
+        // Tab/field navigation on mod rows
+        case input::KeyAction::TabNext:
+        case input::KeyAction::NavRight:
+            if (isModRow(slicerCursorRow_)) {
+                slicerCursorField_ = (slicerCursorField_ + 1) % 4;
+                repaint();
+                return true;
+            }
+            break;
+        case input::KeyAction::TabPrev:
+        case input::KeyAction::NavLeft:
+            if (isModRow(slicerCursorRow_)) {
+                slicerCursorField_ = (slicerCursorField_ + 3) % 4;  // -1 with wrap
+                repaint();
+                return true;
+            }
+            break;
+
+        default:
+            break;
     }
 
+    // Handle ChopMode sub-parameter adjustment with Edit1 actions
+    if (delta != 0 && slicerCursorRow_ == static_cast<int>(SlicerRowType::ChopMode) &&
+        (action.action == input::KeyAction::Edit1Inc || action.action == input::KeyAction::Edit1Dec ||
+         action.action == input::KeyAction::ShiftEdit1Inc || action.action == input::KeyAction::ShiftEdit1Dec))
+    {
+        int step = isCoarse ? 1 : 4;  // Fine vs coarse adjustment
+        if (params.chopMode == model::ChopMode::Divisions && slicer) {
+            params.numDivisions = std::clamp(params.numDivisions + delta * step, 2, 64);
+            slicer->chopIntoDivisions(params.numDivisions);
+            updateSlicerDisplay();
+            repaint();
+            return true;
+        } else if (params.chopMode == model::ChopMode::Transients && slicer) {
+            float sensStep = isCoarse ? 0.02f : 0.1f;
+            params.transientSensitivity = std::clamp(params.transientSensitivity + delta * sensStep, 0.0f, 1.0f);
+            slicer->chopByTransients(params.transientSensitivity);
+            updateSlicerDisplay();
+            repaint();
+            return true;
+        }
+    }
+
+    // Handle value adjustment with Edit actions (delta already set by action switch above)
     if (delta != 0) {
         // Handle modulation rows specially (multi-field)
         if (isModRow(slicerCursorRow_))
@@ -2290,7 +2730,7 @@ bool InstrumentScreen::handleSlicerKey(const juce::KeyPress& key, bool /*isEditM
                     case 3: lfo->amount = static_cast<int8_t>(std::clamp(static_cast<int>(lfo->amount) + delta, -64, 63)); break;
                 }
             } else if (env) {
-                float envStep = shiftHeld ? 0.01f : 0.05f;
+                float envStep = isCoarse ? 0.01f : 0.05f;
                 switch (slicerCursorField_) {
                     case 0: env->attack = std::clamp(env->attack + delta * envStep, 0.001f, 2.0f); break;
                     case 1: env->decay = std::clamp(env->decay + delta * envStep, 0.001f, 10.0f); break;
@@ -2303,15 +2743,15 @@ bool InstrumentScreen::handleSlicerKey(const juce::KeyPress& key, bool /*isEditM
             return true;
         }
 
-        float step = shiftHeld ? 0.01f : 0.05f;
-        float bpmStep = shiftHeld ? 0.5f : 5.0f;
-        float speedStep = shiftHeld ? 0.01f : 0.05f;
-        int pitchStep = shiftHeld ? 1 : 12;
+        float step = isCoarse ? 0.01f : 0.05f;
+        float bpmStep = isCoarse ? 0.5f : 5.0f;
+        float speedStep = isCoarse ? 0.01f : 0.05f;
+        int pitchStep = isCoarse ? 1 : 12;
 
         switch (static_cast<SlicerRowType>(slicerCursorRow_)) {
             case SlicerRowType::ChopMode: {
-                if (shiftHeld) {
-                    // Shift+Left/Right adjusts sub-parameter (divisions or sensitivity)
+                if (isCoarse) {
+                    // Coarse (Shift) adjusts sub-parameter (divisions or sensitivity)
                     if (params.chopMode == model::ChopMode::Divisions && slicer) {
                         params.numDivisions = std::clamp(params.numDivisions + delta, 2, 64);
                         slicer->chopIntoDivisions(params.numDivisions);
@@ -2322,7 +2762,7 @@ bool InstrumentScreen::handleSlicerKey(const juce::KeyPress& key, bool /*isEditM
                         updateSlicerDisplay();
                     }
                 } else {
-                    // Plain Left/Right cycles through chop modes
+                    // Normal edit cycles through chop modes
                     int modeVal = static_cast<int>(params.chopMode);
                     modeVal = (modeVal + delta + 3) % 3;  // 3 modes
                     model::ChopMode newMode = static_cast<model::ChopMode>(modeVal);
@@ -2429,8 +2869,8 @@ bool InstrumentScreen::handleSlicerKey(const juce::KeyPress& key, bool /*isEditM
         return true;
     }
 
-    // Load sample
-    if (textChar == 'o' || textChar == 'O') {
+    // Load sample (Open action)
+    if (action.action == input::KeyAction::Open) {
         auto chooser = std::make_shared<juce::FileChooser>(
             "Load Sample",
             juce::File::getSpecialLocation(juce::File::userHomeDirectory),
@@ -2454,8 +2894,18 @@ bool InstrumentScreen::handleSlicerKey(const juce::KeyPress& key, bool /*isEditM
         return true;
     }
 
-    // Navigate slices: h = previous, l = next (without Shift)
-    if ((textChar == 'h' || textChar == 'H') && !shiftHeld) {
+    // Delete current slice (Delete action)
+    if (action.action == input::KeyAction::Delete) {
+        if (sliceWaveformDisplay_) {
+            sliceWaveformDisplay_->deleteCurrentSlice();
+            repaint();
+        }
+        return true;
+    }
+
+    // Navigate slices: SecondaryPrev/Next (','/'.') navigate slices
+    // Also handle h/l for slice navigation (slicer-specific, without Alt modifier)
+    if (action.action == input::KeyAction::SecondaryPrev) {
         if (sliceWaveformDisplay_) {
             sliceWaveformDisplay_->previousSlice();
             params.currentSlice = sliceWaveformDisplay_->getCurrentSlice();
@@ -2463,8 +2913,7 @@ bool InstrumentScreen::handleSlicerKey(const juce::KeyPress& key, bool /*isEditM
         }
         return true;
     }
-
-    if ((textChar == 'l' || textChar == 'L') && !shiftHeld) {
+    if (action.action == input::KeyAction::SecondaryNext) {
         if (sliceWaveformDisplay_) {
             sliceWaveformDisplay_->nextSlice();
             params.currentSlice = sliceWaveformDisplay_->getCurrentSlice();
@@ -2473,27 +2922,39 @@ bool InstrumentScreen::handleSlicerKey(const juce::KeyPress& key, bool /*isEditM
         return true;
     }
 
-    // Delete current slice: d
-    if (textChar == 'd') {
+    // Slicer-specific slice navigation with h/l (different from vim editing)
+    // h/l without modifiers navigate slices; Shift+h/l scrolls the waveform
+    bool shiftHeld = key.getModifiers().isShiftDown();
+    if ((textChar == 'h' || textChar == 'H') && !shiftHeld && !key.getModifiers().isAltDown()) {
         if (sliceWaveformDisplay_) {
-            sliceWaveformDisplay_->deleteCurrentSlice();
+            sliceWaveformDisplay_->previousSlice();
+            params.currentSlice = sliceWaveformDisplay_->getCurrentSlice();
             repaint();
         }
         return true;
     }
 
-    // Zoom: +/-
-    if (textChar == '+' || textChar == '=') {
+    if ((textChar == 'l' || textChar == 'L') && !shiftHeld && !key.getModifiers().isAltDown()) {
+        if (sliceWaveformDisplay_) {
+            sliceWaveformDisplay_->nextSlice();
+            params.currentSlice = sliceWaveformDisplay_->getCurrentSlice();
+            repaint();
+        }
+        return true;
+    }
+
+    // Zoom with ZoomIn/ZoomOut already handled via delta, but also zoom the waveform display
+    if (action.action == input::KeyAction::ZoomIn) {
         if (sliceWaveformDisplay_) sliceWaveformDisplay_->zoomIn();
         return true;
     }
-    if (textChar == '-') {
+    if (action.action == input::KeyAction::ZoomOut) {
         if (sliceWaveformDisplay_) sliceWaveformDisplay_->zoomOut();
         return true;
     }
 
-    // Scroll: Shift+h/l
-    if (shiftHeld) {
+    // Scroll waveform: Shift+h/l
+    if (shiftHeld && !key.getModifiers().isAltDown()) {
         if (textChar == 'H' || textChar == 'h') {
             if (sliceWaveformDisplay_) sliceWaveformDisplay_->scrollLeft();
             return true;
@@ -2659,6 +3120,16 @@ void InstrumentScreen::paintVASynthUI(juce::Graphics& g) {
             g.fillRect(rowArea);
         }
 
+        // Draw shortcut key hint
+        char shortcutKey = getJumpKeyForRow(model::InstrumentType::VASynth, rowIndex);
+        if (shortcutKey != '\0')
+        {
+            g.setColour(fgColor.withAlpha(0.4f));
+            g.setFont(11.0f);
+            g.drawText(juce::String::charToString(shortcutKey), rowArea.getX(), rowArea.getY(), kShortcutWidth, kRowH, juce::Justification::centred);
+            rowArea.removeFromLeft(kShortcutWidth);
+        }
+
         g.setColour((isSelected && inActiveCol) ? cursorColor : fgColor);
         g.setFont(14.0f);
         g.drawText(label, rowArea.removeFromLeft(70), juce::Justification::centredLeft);
@@ -2678,6 +3149,16 @@ void InstrumentScreen::paintVASynthUI(juce::Graphics& g) {
         if (isSelected && inActiveCol) {
             g.setColour(highlightColor.withAlpha(0.3f));
             g.fillRect(rowArea);
+        }
+
+        // Draw shortcut key hint
+        char shortcutKey = getJumpKeyForRow(model::InstrumentType::VASynth, rowIndex);
+        if (shortcutKey != '\0')
+        {
+            g.setColour(fgColor.withAlpha(0.4f));
+            g.setFont(11.0f);
+            g.drawText(juce::String::charToString(shortcutKey), rowArea.getX(), rowArea.getY(), kShortcutWidth, kRowH, juce::Justification::centred);
+            rowArea.removeFromLeft(kShortcutWidth);
         }
 
         g.setColour((isSelected && inActiveCol) ? cursorColor : fgColor);
@@ -2814,35 +3295,54 @@ void InstrumentScreen::paintVASynthUI(juce::Graphics& g) {
 }
 
 bool InstrumentScreen::handleVASynthKey(const juce::KeyPress& key, bool /*isEditMode*/) {
+    // Use centralized key translation
+    auto action = input::KeyHandler::translateKey(key, getInputContext());
+
     auto* instrument = project_.getInstrument(currentInstrument_);
     if (!instrument || instrument->getType() != model::InstrumentType::VASynth) return false;
 
-    auto textChar = key.getTextCharacter();
+    // Handle actions from translateKey()
+    switch (action.action)
+    {
+        case input::KeyAction::PatternPrev:
+            // '[' switch to previous instrument
+            {
+                int numInstruments = project_.getInstrumentCount();
+                if (numInstruments > 0)
+                    currentInstrument_ = (currentInstrument_ - 1 + numInstruments) % numInstruments;
+            }
+            repaint();
+            return true;
 
-    // '[' and ']' switch instruments quickly - handle before VA synth specific keys
-    if (textChar == '[')
-    {
-        int numInstruments = project_.getInstrumentCount();
-        if (numInstruments > 0)
-            currentInstrument_ = (currentInstrument_ - 1 + numInstruments) % numInstruments;
-        repaint();
-        return true;
-    }
-    if (textChar == ']')
-    {
-        int numInstruments = project_.getInstrumentCount();
-        if (numInstruments > 0)
-            currentInstrument_ = (currentInstrument_ + 1) % numInstruments;
-        repaint();
-        return true;
+        case input::KeyAction::PatternNext:
+            // ']' switch to next instrument
+            {
+                int numInstruments = project_.getInstrumentCount();
+                if (numInstruments > 0)
+                    currentInstrument_ = (currentInstrument_ + 1) % numInstruments;
+            }
+            repaint();
+            return true;
+
+        case input::KeyAction::Jump:
+            // Use engine-aware jump key mapping for VA Synth
+            {
+                int targetRow = getRowForJumpKey(model::InstrumentType::VASynth, action.charData);
+                if (targetRow >= 0 && targetRow < kNumVASynthRows)
+                {
+                    vaSynthCursorRow_ = targetRow;
+                    vaSynthCursorField_ = 0;
+                    repaint();
+                    return true;
+                }
+            }
+            break;
+
+        default:
+            break;
     }
 
     auto& params = instrument->getVAParams();
-    auto keyCode = key.getKeyCode();
-    bool shift = key.getModifiers().isShiftDown();
-
-    float delta = shift ? 0.01f : 0.05f;
-    int intDelta = shift ? 1 : 1;
 
     auto wrapWaveform = [](int current, int d) {
         int next = current + d;
@@ -2862,89 +3362,128 @@ bool InstrumentScreen::handleVASynthKey(const juce::KeyPress& key, bool /*isEdit
                type == VASynthRowType::Env1 || type == VASynthRowType::Env2;
     };
 
-    bool altHeld = key.getModifiers().isAltDown();
+    // Handle edit actions for value adjustment and navigation
+    int valueDelta = 0;
+    bool isCoarse = false;
+    switch (action.action)
+    {
+        case input::KeyAction::Edit1Inc:  // Alt+k/up - vertical increment
+        case input::KeyAction::Edit2Inc:  // Alt+l/right - horizontal increment
+        case input::KeyAction::ZoomIn:    // +/=
+            valueDelta = 1;
+            break;
+        case input::KeyAction::Edit1Dec:  // Alt+j/down - vertical decrement
+        case input::KeyAction::Edit2Dec:  // Alt+h/left - horizontal decrement
+        case input::KeyAction::ZoomOut:   // -
+            valueDelta = -1;
+            break;
+        case input::KeyAction::ShiftEdit1Inc:  // Alt+Shift+k/up - coarse increment
+        case input::KeyAction::ShiftEdit2Inc:  // Alt+Shift+l/right
+            valueDelta = 1;
+            isCoarse = true;
+            break;
+        case input::KeyAction::ShiftEdit1Dec:  // Alt+Shift+j/down - coarse decrement
+        case input::KeyAction::ShiftEdit2Dec:  // Alt+Shift+h/left
+            valueDelta = -1;
+            isCoarse = true;
+            break;
 
-    // On mod rows: Tab or Left/Right (without Alt) navigate fields
-    if (isModRow(vaSynthCursorRow_) && !altHeld) {
-        if (keyCode == juce::KeyPress::tabKey || keyCode == juce::KeyPress::rightKey) {
-            vaSynthCursorField_ = (vaSynthCursorField_ + 1) % 4;
-            repaint();
-            return true;
-        }
-        if (keyCode == juce::KeyPress::leftKey) {
-            vaSynthCursorField_ = (vaSynthCursorField_ + 3) % 4;  // -1 with wrap
-            repaint();
-            return true;
-        }
-    }
-
-    // Column navigation with Left/Right (when not holding Alt, and NOT on mod row)
-    if (keyCode == juce::KeyPress::leftKey && !altHeld && !isModRow(vaSynthCursorRow_)) {
-        if (vaSynthCursorCol_ == 1) {
-            vaSynthCursorCol_ = 0;
-            // Keep same relative row position if possible, otherwise clamp
-            if (vaSynthCursorRow_ > static_cast<int>(VASynthRowType::AmpRelease)) {
-                vaSynthCursorRow_ = static_cast<int>(VASynthRowType::AmpRelease);
+        // Navigation actions
+        case input::KeyAction::NavUp:
+            if (vaSynthCursorCol_ == 0) {
+                // Left column: 0 to AmpRelease (18)
+                vaSynthCursorRow_ = std::max(0, vaSynthCursorRow_ - 1);
+            } else {
+                // Right column: FilterAttack (19) to Pan
+                int minRow = static_cast<int>(VASynthRowType::FilterAttack);
+                vaSynthCursorRow_ = std::max(minRow, vaSynthCursorRow_ - 1);
             }
             vaSynthCursorField_ = 0;
-        }
-        repaint();
-        return true;
-    }
-    if (keyCode == juce::KeyPress::rightKey && !altHeld && !isModRow(vaSynthCursorRow_)) {
-        if (vaSynthCursorCol_ == 0) {
-            vaSynthCursorCol_ = 1;
-            // Map to corresponding row in right column (preserve relative position)
-            // Left column has 19 rows (0-18), right has 17 (19-35)
-            int leftMax = static_cast<int>(VASynthRowType::AmpRelease);
-            int rightMin = static_cast<int>(VASynthRowType::FilterAttack);
-            int rightMax = static_cast<int>(VASynthRowType::Pan);
-            int rightRange = rightMax - rightMin;
-            // Map proportionally
-            float ratio = static_cast<float>(vaSynthCursorRow_) / static_cast<float>(leftMax);
-            vaSynthCursorRow_ = rightMin + static_cast<int>(ratio * rightRange);
-            vaSynthCursorRow_ = std::clamp(vaSynthCursorRow_, rightMin, rightMax);
+            repaint();
+            return true;
+
+        case input::KeyAction::NavDown:
+            if (vaSynthCursorCol_ == 0) {
+                // Left column: max is AmpRelease (18)
+                int maxRow = static_cast<int>(VASynthRowType::AmpRelease);
+                vaSynthCursorRow_ = std::min(maxRow, vaSynthCursorRow_ + 1);
+            } else {
+                // Right column: max is Pan
+                int maxRow = static_cast<int>(VASynthRowType::Pan);
+                vaSynthCursorRow_ = std::min(maxRow, vaSynthCursorRow_ + 1);
+            }
             vaSynthCursorField_ = 0;
-        }
-        repaint();
-        return true;
+            repaint();
+            return true;
+
+        case input::KeyAction::NavLeft:
+            // On mod rows: navigate fields
+            if (isModRow(vaSynthCursorRow_)) {
+                vaSynthCursorField_ = (vaSynthCursorField_ + 3) % 4;  // -1 with wrap
+                repaint();
+                return true;
+            }
+            // Column navigation
+            if (vaSynthCursorCol_ == 1) {
+                vaSynthCursorCol_ = 0;
+                // Keep same relative row position if possible, otherwise clamp
+                if (vaSynthCursorRow_ > static_cast<int>(VASynthRowType::AmpRelease)) {
+                    vaSynthCursorRow_ = static_cast<int>(VASynthRowType::AmpRelease);
+                }
+                vaSynthCursorField_ = 0;
+            }
+            repaint();
+            return true;
+
+        case input::KeyAction::NavRight:
+            // On mod rows: navigate fields
+            if (isModRow(vaSynthCursorRow_)) {
+                vaSynthCursorField_ = (vaSynthCursorField_ + 1) % 4;
+                repaint();
+                return true;
+            }
+            // Column navigation
+            if (vaSynthCursorCol_ == 0) {
+                vaSynthCursorCol_ = 1;
+                // Map to corresponding row in right column (preserve relative position)
+                // Left column has 19 rows (0-18), right has 17 (19-35)
+                int leftMax = static_cast<int>(VASynthRowType::AmpRelease);
+                int rightMin = static_cast<int>(VASynthRowType::FilterAttack);
+                int rightMax = static_cast<int>(VASynthRowType::Pan);
+                int rightRange = rightMax - rightMin;
+                // Map proportionally
+                float ratio = static_cast<float>(vaSynthCursorRow_) / static_cast<float>(leftMax);
+                vaSynthCursorRow_ = rightMin + static_cast<int>(ratio * rightRange);
+                vaSynthCursorRow_ = std::clamp(vaSynthCursorRow_, rightMin, rightMax);
+                vaSynthCursorField_ = 0;
+            }
+            repaint();
+            return true;
+
+        case input::KeyAction::TabNext:
+            // Tab navigates fields on mod rows
+            if (isModRow(vaSynthCursorRow_)) {
+                vaSynthCursorField_ = (vaSynthCursorField_ + 1) % 4;
+                repaint();
+                return true;
+            }
+            break;
+
+        case input::KeyAction::TabPrev:
+            // Shift+Tab navigates fields backward on mod rows
+            if (isModRow(vaSynthCursorRow_)) {
+                vaSynthCursorField_ = (vaSynthCursorField_ + 3) % 4;
+                repaint();
+                return true;
+            }
+            break;
+
+        default:
+            break;
     }
 
-    // Row navigation with Up/Down within current column
-    if (keyCode == juce::KeyPress::upKey) {
-        if (vaSynthCursorCol_ == 0) {
-            // Left column: 0 to AmpRelease (18)
-            vaSynthCursorRow_ = std::max(0, vaSynthCursorRow_ - 1);
-        } else {
-            // Right column: FilterAttack (19) to Pan
-            int minRow = static_cast<int>(VASynthRowType::FilterAttack);
-            vaSynthCursorRow_ = std::max(minRow, vaSynthCursorRow_ - 1);
-        }
-        vaSynthCursorField_ = 0;
-        repaint();
-        return true;
-    }
-    if (keyCode == juce::KeyPress::downKey) {
-        if (vaSynthCursorCol_ == 0) {
-            // Left column: max is AmpRelease (18)
-            int maxRow = static_cast<int>(VASynthRowType::AmpRelease);
-            vaSynthCursorRow_ = std::min(maxRow, vaSynthCursorRow_ + 1);
-        } else {
-            // Right column: max is Pan
-            int maxRow = static_cast<int>(VASynthRowType::Pan);
-            vaSynthCursorRow_ = std::min(maxRow, vaSynthCursorRow_ + 1);
-        }
-        vaSynthCursorField_ = 0;
-        repaint();
-        return true;
-    }
-
-    // Value adjustment - ALWAYS requires Alt+arrows or +/-
-    int valueDelta = 0;
-    if (textChar == '-') valueDelta = -1;
-    if (textChar == '+' || textChar == '=') valueDelta = 1;
-    if (altHeld && keyCode == juce::KeyPress::leftKey) valueDelta = -1;
-    if (altHeld && keyCode == juce::KeyPress::rightKey) valueDelta = 1;
+    // Determine delta step based on coarse flag
+    float delta = isCoarse ? 0.01f : 0.05f;
 
     if (valueDelta != 0) {
         switch (static_cast<VASynthRowType>(vaSynthCursorRow_)) {
@@ -2964,7 +3503,7 @@ bool InstrumentScreen::handleVASynthKey(const juce::KeyPress& key, bool /*isEdit
                 params.osc2.octave = std::clamp(params.osc2.octave + valueDelta, -2, 2);
                 break;
             case VASynthRowType::Osc2Detune:
-                params.osc2.cents = std::clamp(params.osc2.cents + valueDelta * (shift ? 1.0f : 5.0f), -50.0f, 50.0f);
+                params.osc2.cents = std::clamp(params.osc2.cents + valueDelta * (isCoarse ? 1.0f : 5.0f), -50.0f, 50.0f);
                 break;
             case VASynthRowType::Osc2Level:
                 clampFloat(params.osc2.level, valueDelta * delta);
@@ -2976,7 +3515,7 @@ bool InstrumentScreen::handleVASynthKey(const juce::KeyPress& key, bool /*isEdit
                 params.osc3.octave = std::clamp(params.osc3.octave + valueDelta, -2, 2);
                 break;
             case VASynthRowType::Osc3Detune:
-                params.osc3.cents = std::clamp(params.osc3.cents + valueDelta * (shift ? 1.0f : 5.0f), -50.0f, 50.0f);
+                params.osc3.cents = std::clamp(params.osc3.cents + valueDelta * (isCoarse ? 1.0f : 5.0f), -50.0f, 50.0f);
                 break;
             case VASynthRowType::Osc3Level:
                 clampFloat(params.osc3.level, valueDelta * delta);

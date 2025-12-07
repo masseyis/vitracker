@@ -189,6 +189,18 @@ void AudioEngine::releaseNote(int track)
     }
 }
 
+void AudioEngine::previewChord(const std::vector<int>& notes, int instrumentIndex)
+{
+    // Use tracks 0, 1, 2, etc. for chord preview
+    int track = 0;
+    for (int note : notes)
+    {
+        if (track >= NUM_TRACKS) break;
+        triggerNote(track, note, instrumentIndex, 0.8f);
+        track++;
+    }
+}
+
 Voice* AudioEngine::allocateVoice(int note)
 {
     juce::ignoreUnused(note);

@@ -1,6 +1,7 @@
 #include "SongScreen.h"
 #include "HelpPopup.h"
 #include "../audio/AudioEngine.h"
+#include "../input/KeyHandler.h"
 
 namespace ui {
 
@@ -158,6 +159,15 @@ void SongScreen::navigate(int dx, int dy)
     repaint();
 }
 
+input::InputContext SongScreen::getInputContext() const
+{
+    // Text editing mode takes priority
+    if (editingName_)
+        return input::InputContext::TextEdit;
+    // Song grid is a standard grid context
+    return input::InputContext::Grid;
+}
+
 bool SongScreen::handleEdit(const juce::KeyPress& key)
 {
     return handleEditKey(key);
@@ -165,100 +175,172 @@ bool SongScreen::handleEdit(const juce::KeyPress& key)
 
 bool SongScreen::handleEditKey(const juce::KeyPress& key)
 {
-    auto keyCode = key.getKeyCode();
-    auto textChar = key.getTextCharacter();
+    // Use centralized key translation
+    auto action = input::KeyHandler::translateKey(key, getInputContext(), false);
 
-    // Handle name editing mode
+    // Handle text editing mode
     if (editingName_)
     {
-        if (keyCode == juce::KeyPress::returnKey)
+        switch (action.action)
         {
-            project_.setName(nameBuffer_);
-            editingName_ = false;
-            if (onProjectRenamed)
-                onProjectRenamed(nameBuffer_);
+            case input::KeyAction::TextAccept:
+                project_.setName(nameBuffer_);
+                editingName_ = false;
+                if (onProjectRenamed)
+                    onProjectRenamed(nameBuffer_);
+                repaint();
+                return true;
+
+            case input::KeyAction::TextReject:
+                editingName_ = false;
+                repaint();
+                return true;
+
+            case input::KeyAction::TextBackspace:
+                if (!nameBuffer_.empty())
+                    nameBuffer_.pop_back();
+                repaint();
+                return true;
+
+            case input::KeyAction::TextChar:
+                if (nameBuffer_.length() < 32)
+                    nameBuffer_ += action.charData;
+                repaint();
+                return true;
+
+            default:
+                return true;  // Consume all keys in name editing mode
+        }
+    }
+
+    // Handle actions from translateKey()
+    switch (action.action)
+    {
+        case input::KeyAction::Rename:
+            editingName_ = true;
+            nameBuffer_ = project_.getName();
             repaint();
             return true;
-        }
-        else if (keyCode == juce::KeyPress::escapeKey)
-        {
-            editingName_ = false;
-            repaint();
+
+        case input::KeyAction::NewSelection:
+            // 'n' creates a new chain and assigns it to the current cell
+            {
+                int newChain = project_.addChain("Chain " + std::to_string(project_.getChainCount() + 1));
+                setChainAt(cursorTrack_, cursorRow_, newChain);
+                repaint();
+            }
             return true;
-        }
-        else if (keyCode == juce::KeyPress::backspaceKey && !nameBuffer_.empty())
-        {
-            nameBuffer_.pop_back();
-            repaint();
+
+        case input::KeyAction::NewItem:
+            // Shift+N creates a new chain and assigns it
+            {
+                int newChain = project_.addChain("Chain " + std::to_string(project_.getChainCount() + 1));
+                setChainAt(cursorTrack_, cursorRow_, newChain);
+                repaint();
+            }
             return true;
-        }
-        else if (textChar >= ' ' && textChar <= '~' && nameBuffer_.length() < 32)
-        {
-            nameBuffer_ += static_cast<char>(textChar);
-            repaint();
+
+        case input::KeyAction::ZoomIn:
+            // +/= : Add row to song (extend length)
+            {
+                auto& song = project_.getSong();
+                int currentLen = song.getLength();
+                if (currentLen < 256)
+                {
+                    song.setLength(currentLen + 1);
+                    repaint();
+                }
+            }
             return true;
-        }
-        return true;  // Consume all keys in name editing mode
-    }
 
-    // 'r' starts rename mode
-    if (textChar == 'r' || textChar == 'R')
-    {
-        editingName_ = true;
-        nameBuffer_ = project_.getName();
-        repaint();
-        return true;
-    }
+        case input::KeyAction::ZoomOut:
+            // - : Remove row from song (shrink length)
+            {
+                auto& song = project_.getSong();
+                int currentLen = song.getLength();
+                if (currentLen > 1)
+                {
+                    song.setLength(currentLen - 1);
+                    if (cursorRow_ >= currentLen - 1)
+                        cursorRow_ = currentLen - 2;
+                    if (cursorRow_ < 0) cursorRow_ = 0;
+                    repaint();
+                }
+            }
+            return true;
 
-    // 'n' creates new project (with confirmation via callback)
-    if (textChar == 'n' && !key.getModifiers().isShiftDown())
-    {
-        if (onNewProject)
-            onNewProject();
-        return true;
-    }
-
-    // Shift+N creates a new chain and assigns it (existing behavior)
-    if (textChar == 'N' && key.getModifiers().isShiftDown())
-    {
-        int newChain = project_.addChain("Chain " + std::to_string(project_.getChainCount() + 1));
-        setChainAt(cursorTrack_, cursorRow_, newChain);
-        repaint();
-        return true;
-    }
-
-    // +/= : Add row to song (extend length)
-    if (textChar == '+' || textChar == '=')
-    {
-        auto& song = project_.getSong();
-        int currentLen = song.getLength();
-        if (currentLen < 256)  // Reasonable max length
-        {
-            song.setLength(currentLen + 1);
+        case input::KeyAction::Delete:
+            // Clear cell
+            setChainAt(cursorTrack_, cursorRow_, -1);
             repaint();
-        }
-        return true;
+            return false;
+
+        case input::KeyAction::TabNext:
+        case input::KeyAction::TabPrev:
+            // Tab cycles through chains
+            {
+                int chainCount = project_.getChainCount();
+                if (chainCount == 0)
+                {
+                    int newChain = project_.addChain("Chain " + std::to_string(project_.getChainCount() + 1));
+                    setChainAt(cursorTrack_, cursorRow_, newChain);
+                }
+                else
+                {
+                    int currentChain = getChainAt(cursorTrack_, cursorRow_);
+                    int delta = (action.action == input::KeyAction::TabNext) ? 1 : -1;
+                    int nextChain = (currentChain + delta + chainCount) % chainCount;
+                    if (currentChain < 0) nextChain = (delta > 0) ? 0 : chainCount - 1;
+                    setChainAt(cursorTrack_, cursorRow_, nextChain);
+                }
+                repaint();
+            }
+            return false;
+
+        case input::KeyAction::Edit1Inc:
+        case input::KeyAction::Edit1Dec:
+        case input::KeyAction::ShiftEdit1Inc:
+        case input::KeyAction::ShiftEdit1Dec:
+            // Up/Down (via Alt+jk) cycle through chains
+            // Shift variant = coarse (skip 4 chains)
+            {
+                int chainCount = project_.getChainCount();
+                int currentChain = getChainAt(cursorTrack_, cursorRow_);
+                bool isInc = (action.action == input::KeyAction::Edit1Inc ||
+                              action.action == input::KeyAction::ShiftEdit1Inc);
+                bool isCoarse = (action.action == input::KeyAction::ShiftEdit1Inc ||
+                                 action.action == input::KeyAction::ShiftEdit1Dec);
+                int delta = isInc ? -1 : 1;
+                if (isCoarse) delta *= 4;  // Jump 4 chains
+
+                if (chainCount == 0)
+                {
+                    if (delta > 0)
+                    {
+                        int newChain = project_.addChain("Chain " + std::to_string(project_.getChainCount() + 1));
+                        setChainAt(cursorTrack_, cursorRow_, newChain);
+                    }
+                }
+                else if (currentChain < 0)
+                {
+                    currentChain = (delta > 0) ? 0 : chainCount - 1;
+                    setChainAt(cursorTrack_, cursorRow_, currentChain);
+                }
+                else
+                {
+                    currentChain = (currentChain + delta + chainCount) % chainCount;
+                    setChainAt(cursorTrack_, cursorRow_, currentChain);
+                }
+                repaint();
+            }
+            return true;
+
+        default:
+            break;
     }
 
-    // - : Remove row from song (shrink length)
-    if (textChar == '-' || textChar == '_')
-    {
-        auto& song = project_.getSong();
-        int currentLen = song.getLength();
-        if (currentLen > 1)
-        {
-            song.setLength(currentLen - 1);
-            // Adjust cursor if out of bounds
-            if (cursorRow_ >= currentLen - 1)
-                cursorRow_ = currentLen - 2;
-            if (cursorRow_ < 0) cursorRow_ = 0;
-            repaint();
-        }
-        return true;
-    }
-
-    // Enter jumps to the chain screen with the selected chain
-    if (keyCode == juce::KeyPress::returnKey)
+    // Enter (Confirm) jumps to the chain screen with the selected chain
+    if (action.action == input::KeyAction::Confirm)
     {
         int chainIdx = getChainAt(cursorTrack_, cursorRow_);
         if (chainIdx >= 0 && onJumpToChain)
@@ -268,16 +350,15 @@ bool SongScreen::handleEditKey(const juce::KeyPress& key)
         return false;
     }
 
-    // Up/Down cycle through chains (like scrolling a list)
-    if (keyCode == juce::KeyPress::upKey || keyCode == juce::KeyPress::downKey)
+    // NavUp/NavDown cycle through chains (plain Up/Down arrow keys in Normal mode)
+    if (action.action == input::KeyAction::NavUp || action.action == input::KeyAction::NavDown)
     {
         int chainCount = project_.getChainCount();
         int currentChain = getChainAt(cursorTrack_, cursorRow_);
-        int delta = (keyCode == juce::KeyPress::downKey) ? 1 : -1;
+        int delta = (action.action == input::KeyAction::NavDown) ? 1 : -1;
 
         if (chainCount == 0)
         {
-            // No chains exist - create one on down arrow
             if (delta > 0)
             {
                 int newChain = project_.addChain("Chain " + std::to_string(project_.getChainCount() + 1));
@@ -286,13 +367,11 @@ bool SongScreen::handleEditKey(const juce::KeyPress& key)
         }
         else if (currentChain < 0)
         {
-            // Empty cell - select first or last chain
             currentChain = (delta > 0) ? 0 : chainCount - 1;
             setChainAt(cursorTrack_, cursorRow_, currentChain);
         }
         else
         {
-            // Cycle through chains, wrapping around
             currentChain = (currentChain + delta + chainCount) % chainCount;
             setChainAt(cursorTrack_, cursorRow_, currentChain);
         }
@@ -300,47 +379,20 @@ bool SongScreen::handleEditKey(const juce::KeyPress& key)
         return false;
     }
 
-    // Left/Right do nothing in edit mode (no navigation)
-
-    // Tab cycles through chains (same as down)
-    if (keyCode == juce::KeyPress::tabKey)
+    // Number keys 0-9 for quick chain selection (via TextChar or Jump action)
+    if (action.action == input::KeyAction::TextChar || action.action == input::KeyAction::Jump)
     {
-        int chainCount = project_.getChainCount();
-        if (chainCount == 0)
+        char c = action.charData;
+        if (c >= '0' && c <= '9')
         {
-            int newChain = project_.addChain("Chain " + std::to_string(project_.getChainCount() + 1));
-            setChainAt(cursorTrack_, cursorRow_, newChain);
+            int chainIdx = c - '0';
+            if (chainIdx < project_.getChainCount())
+            {
+                setChainAt(cursorTrack_, cursorRow_, chainIdx);
+            }
+            repaint();
+            return false;
         }
-        else
-        {
-            int currentChain = getChainAt(cursorTrack_, cursorRow_);
-            int nextChain = (currentChain + 1) % chainCount;
-            if (currentChain < 0) nextChain = 0;
-            setChainAt(cursorTrack_, cursorRow_, nextChain);
-        }
-        repaint();
-        return false;
-    }
-
-    // Delete/clear with 'd' or Delete key
-    if (textChar == 'd' || keyCode == juce::KeyPress::deleteKey ||
-        keyCode == juce::KeyPress::backspaceKey)
-    {
-        setChainAt(cursorTrack_, cursorRow_, -1);
-        repaint();
-        return false;
-    }
-
-    // Number keys 0-9 for quick chain selection
-    if (textChar >= '0' && textChar <= '9')
-    {
-        int chainIdx = textChar - '0';
-        if (chainIdx < project_.getChainCount())
-        {
-            setChainAt(cursorTrack_, cursorRow_, chainIdx);
-        }
-        repaint();
-        return false;
     }
 
     return false;

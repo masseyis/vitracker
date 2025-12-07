@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ModeManager.h"
+#include "KeyAction.h"
 #include <JuceHeader.h>
 #include <functional>
 
@@ -13,6 +14,14 @@ public:
 
     // Returns true if key was handled
     bool handleKey(const juce::KeyPress& key);
+
+    // Translate a key press to a semantic action based on context
+    // This is the primary API for screens to use for consistent key handling
+    static KeyActionResult translateKey(const juce::KeyPress& key, InputContext context, bool visualMode = false);
+
+    // Check if a key is a reserved global key (screen switching, play/stop, etc.)
+    // These should never be consumed by screens
+    static bool isReservedGlobalKey(const juce::KeyPress& key);
 
     // Callbacks for actions
     std::function<void(int)> onScreenSwitch;      // 1-6

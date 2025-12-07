@@ -3,6 +3,7 @@
 #include <JuceHeader.h>
 #include "../model/Project.h"
 #include "../input/ModeManager.h"
+#include "../input/KeyAction.h"
 #include <vector>
 
 namespace audio { class AudioEngine; }
@@ -24,6 +25,13 @@ public:
 
     virtual void navigate(int dx, int dy) { juce::ignoreUnused(dx, dy); }
     virtual bool handleEdit(const juce::KeyPress& key) { juce::ignoreUnused(key); return false; }
+
+    // New action-based key handling system
+    // Returns the current input context for key translation
+    virtual input::InputContext getInputContext() const { return input::InputContext::Grid; }
+
+    // Handle a translated action - returns true if action was consumed
+    virtual bool handleAction(const input::KeyActionResult& action) { juce::ignoreUnused(action); return false; }
 
     virtual std::string getTitle() const = 0;
 

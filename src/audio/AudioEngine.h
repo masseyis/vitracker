@@ -52,6 +52,9 @@ public:
     void triggerNote(int track, int note, int instrumentIndex, float velocity, const model::Step& step);
     void releaseNote(int track);
 
+    // Preview a chord (multiple notes at once)
+    void previewChord(const std::vector<int>& notes, int instrumentIndex);
+
     // AudioSource interface
     void prepareToPlay(int samplesPerBlockExpected, double sampleRate) override;
     void releaseResources() override;

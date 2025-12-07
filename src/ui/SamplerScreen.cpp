@@ -1,4 +1,5 @@
 #include "SamplerScreen.h"
+#include "../input/KeyHandler.h"
 
 namespace ui {
 
@@ -85,54 +86,44 @@ void SamplerScreen::resized() {
 }
 
 bool SamplerScreen::handleEdit(const juce::KeyPress& key) {
-    auto keyCode = key.getKeyCode();
-    auto textChar = key.getTextCharacter();
+    // Use centralized key translation (RowParams context for sampler)
+    auto action = input::KeyHandler::translateKey(key, input::InputContext::RowParams, false);
 
     // Waveform controls (always active)
-    if (textChar == '+' || textChar == '=') {
+    if (action.action == input::KeyAction::ZoomIn) {
         waveformDisplay_.zoomIn();
         return true;
     }
-    if (textChar == '-') {
+    if (action.action == input::KeyAction::ZoomOut) {
         waveformDisplay_.zoomOut();
         return true;
     }
-    if (key.getModifiers().isShiftDown()) {
-        if (textChar == 'H' || textChar == 'h') {
-            waveformDisplay_.scrollLeft();
-            return true;
-        }
-        if (textChar == 'L' || textChar == 'l') {
-            waveformDisplay_.scrollRight();
-            return true;
-        }
+
+    // Secondary scroll (Shift+H/L mapped to SecondaryPrev/SecondaryNext)
+    if (action.action == input::KeyAction::SecondaryPrev) {
+        waveformDisplay_.scrollLeft();
+        return true;
+    }
+    if (action.action == input::KeyAction::SecondaryNext) {
+        waveformDisplay_.scrollRight();
+        return true;
     }
 
-    // Load sample command
-    if (textChar == 'o' || textChar == 'O') {
+    // Load sample command ('o' mapped to Open action)
+    if (action.action == input::KeyAction::Open) {
         loadSample();
         return true;
     }
 
-    // Value adjustment
-    if (key.getModifiers().isAltDown()) {
-        if (keyCode == juce::KeyPress::upKey) {
-            adjustValue(1);
-            return true;
-        }
-        if (keyCode == juce::KeyPress::downKey) {
-            adjustValue(-1);
-            return true;
-        }
-    }
-
-    // Left/right for value adjustments
-    if (keyCode == juce::KeyPress::leftKey) {
-        adjustValue(-1);
+    // Value adjustment (Edit1Inc/Dec for RowParams context)
+    if (action.action == input::KeyAction::Edit1Inc ||
+        action.action == input::KeyAction::ShiftEdit1Inc) {
+        adjustValue(1);
         return true;
     }
-    if (keyCode == juce::KeyPress::rightKey) {
-        adjustValue(1);
+    if (action.action == input::KeyAction::Edit1Dec ||
+        action.action == input::KeyAction::ShiftEdit1Dec) {
+        adjustValue(-1);
         return true;
     }
 

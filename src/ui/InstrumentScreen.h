@@ -138,6 +138,9 @@ public:
     std::string getTitle() const override { return "INSTRUMENT"; }
     std::vector<HelpSection> getHelpContent() const override;
 
+    // Key context for centralized key handling
+    input::InputContext getInputContext() const override;
+
     // FileDragAndDropTarget interface
     bool isInterestedInFileDrag(const juce::StringArray& files) override;
     void filesDropped(const juce::StringArray& files, int x, int y) override;
@@ -231,8 +234,14 @@ private:
     static constexpr int kNumSlicerRows = static_cast<int>(SlicerRowType::NumSlicerRows);
     static constexpr int kNumVASynthRows = static_cast<int>(VASynthRowType::NumVASynthRows);
     static constexpr int kRowHeight = 24;
+    static constexpr int kShortcutWidth = 16;  // Width for jump key indicator
     static constexpr int kLabelWidth = 80;
     static constexpr int kBarWidth = 180;
+
+    // Get the jump key for a row (returns '\0' if no jump key)
+    static char getJumpKeyForRow(model::InstrumentType type, int row);
+    // Get row number for a jump key (returns -1 if not found)
+    static int getRowForJumpKey(model::InstrumentType type, char key);
 
     static const char* engineNames_[16];
     static const char* engineParamLabels_[16][3];  // Per-engine labels for harmonics/timbre/morph
