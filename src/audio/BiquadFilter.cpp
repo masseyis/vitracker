@@ -15,6 +15,10 @@ void BiquadFilter::setHighpass(float freq, float q) {
     calculateCoefficients(Type::Highpass, freq, 0.0f, q);
 }
 
+void BiquadFilter::setLowpass(float freq, float q) {
+    calculateCoefficients(Type::Lowpass, freq, 0.0f, q);
+}
+
 void BiquadFilter::setLowShelf(float freq, float gainDb) {
     calculateCoefficients(Type::LowShelf, freq, gainDb, 0.707f);
 }
@@ -48,6 +52,15 @@ void BiquadFilter::calculateCoefficients(Type type, float freq, float gainDb, fl
             b0 = (1.0f + cosW0) / 2.0f;
             b1 = -(1.0f + cosW0);
             b2 = (1.0f + cosW0) / 2.0f;
+            a0 = 1.0f + alpha;
+            a1 = -2.0f * cosW0;
+            a2 = 1.0f - alpha;
+            break;
+
+        case Type::Lowpass:
+            b0 = (1.0f - cosW0) / 2.0f;
+            b1 = 1.0f - cosW0;
+            b2 = (1.0f - cosW0) / 2.0f;
             a0 = 1.0f + alpha;
             a1 = -2.0f * cosW0;
             a2 = 1.0f - alpha;

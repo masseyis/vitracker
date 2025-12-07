@@ -8,6 +8,7 @@ class BiquadFilter {
 public:
     enum class Type {
         Highpass,
+        Lowpass,
         LowShelf,
         HighShelf,
         Peak
@@ -18,6 +19,7 @@ public:
 
     // Configure filter type and parameters
     void setHighpass(float freq, float q = 0.707f);
+    void setLowpass(float freq, float q = 0.707f);
     void setLowShelf(float freq, float gainDb);
     void setHighShelf(float freq, float gainDb);
     void setPeak(float freq, float gainDb, float q);
