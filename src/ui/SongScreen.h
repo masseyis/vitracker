@@ -16,6 +16,9 @@ public:
     bool handleEditKey(const juce::KeyPress& key);
 
     std::string getTitle() const override { return "SONG - " + project_.getName(); }
+
+    // Key context for centralized key handling
+    input::InputContext getInputContext() const override;
     std::vector<HelpSection> getHelpContent() const override;
 
     // Callback when Enter is pressed on a chain cell

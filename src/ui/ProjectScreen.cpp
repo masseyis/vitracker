@@ -1,5 +1,6 @@
 #include "ProjectScreen.h"
 #include "HelpPopup.h"
+#include "../input/KeyHandler.h"
 
 namespace ui {
 
@@ -86,18 +87,19 @@ bool ProjectScreen::handleEdit(const juce::KeyPress& key)
 
 bool ProjectScreen::handleEditKey(const juce::KeyPress& key)
 {
-    auto keyCode = key.getKeyCode();
-    auto textChar = key.getTextCharacter();
+    // Determine context based on current mode
+    input::InputContext context = editingName_ ? input::InputContext::TextEdit : input::InputContext::RowParams;
+    auto action = input::KeyHandler::translateKey(key, context, false);
 
     // Up/Down navigate between fields (unless editing name)
     if (!editingName_)
     {
-        if (keyCode == juce::KeyPress::upKey)
+        if (action.action == input::KeyAction::NavUp)
         {
             navigate(0, -1);
             return false;
         }
-        if (keyCode == juce::KeyPress::downKey)
+        if (action.action == input::KeyAction::NavDown)
         {
             navigate(0, 1);
             return false;
@@ -112,56 +114,78 @@ bool ProjectScreen::handleEditKey(const juce::KeyPress& key)
         {
             editingName_ = true;
             nameBuffer_ = project_.getName();
+            // Re-translate key with TextEdit context now that we're editing
+            action = input::KeyHandler::translateKey(key, input::InputContext::TextEdit, false);
         }
 
-        if (keyCode == juce::KeyPress::returnKey || keyCode == juce::KeyPress::escapeKey)
+        switch (action.action)
         {
-            if (keyCode == juce::KeyPress::returnKey)
+            case input::KeyAction::TextAccept:
                 project_.setName(nameBuffer_);
-            editingName_ = false;
-            repaint();
-            return true;  // Consume Enter/Escape when in name editing mode
+                editingName_ = false;
+                repaint();
+                return true;
+
+            case input::KeyAction::TextReject:
+                editingName_ = false;
+                repaint();
+                return true;
+
+            case input::KeyAction::TextBackspace:
+                if (!nameBuffer_.empty())
+                    nameBuffer_.pop_back();
+                repaint();
+                return true;
+
+            case input::KeyAction::TextChar:
+                if (nameBuffer_.length() < 32)
+                    nameBuffer_ += action.charData;
+                repaint();
+                return true;
+
+            default:
+                repaint();
+                return editingName_;  // Consume keys when editing name
         }
-        else if (keyCode == juce::KeyPress::backspaceKey && !nameBuffer_.empty())
-        {
-            nameBuffer_.pop_back();
-        }
-        else if (textChar >= ' ' && textChar <= '~' && nameBuffer_.length() < 32)
-        {
-            nameBuffer_ += static_cast<char>(textChar);
-        }
-        repaint();
-        return editingName_;  // Consume keys when editing name
     }
     else if (cursorRow_ == TEMPO)
     {
-        if (textChar == '+' || textChar == '=' || keyCode == juce::KeyPress::rightKey)
+        // In RowParams context, Edit1Inc/Dec and ZoomIn/Out adjust tempo
+        if (action.action == input::KeyAction::Edit1Inc ||
+            action.action == input::KeyAction::ZoomIn)
         {
             project_.setTempo(std::min(project_.getTempo() + 1.0f, 300.0f));
             if (onTempoChanged) onTempoChanged();
             repaint();
+            return true;
         }
-        else if (textChar == '-' || keyCode == juce::KeyPress::leftKey)
+        else if (action.action == input::KeyAction::Edit1Dec ||
+                 action.action == input::KeyAction::ZoomOut)
         {
             project_.setTempo(std::max(project_.getTempo() - 1.0f, 20.0f));
             if (onTempoChanged) onTempoChanged();
             repaint();
+            return true;
         }
     }
     else if (cursorRow_ == GROOVE)
     {
         int currentGroove = getGrooveIndex(project_.getGrooveTemplate());
-        if (textChar == '+' || textChar == '=' || keyCode == juce::KeyPress::rightKey)
+        if (action.action == input::KeyAction::Edit1Inc ||
+            action.action == input::KeyAction::ZoomIn)
         {
             int newGroove = (currentGroove + 1) % NUM_GROOVES;
             project_.setGrooveTemplate(getGrooveName(newGroove));
             repaint();
+            return true;
         }
-        else if (textChar == '-' || keyCode == juce::KeyPress::leftKey)
+        else if (action.action == input::KeyAction::Edit1Dec ||
+                 action.action == input::KeyAction::ZoomOut)
         {
             int newGroove = (currentGroove - 1 + NUM_GROOVES) % NUM_GROOVES;
             project_.setGrooveTemplate(getGrooveName(newGroove));
             repaint();
+            return true;
         }
     }
     return false;

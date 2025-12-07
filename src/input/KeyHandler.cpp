@@ -1,4 +1,5 @@
 #include "KeyHandler.h"
+#include <iostream>  // For debug output in Release builds
 
 namespace input {
 
@@ -32,14 +33,30 @@ bool KeyHandler::handleNormalMode(const juce::KeyPress& key)
         return true;
     }
 
-    // Alt+Arrow = temporary edit mode (adjust values without switching modes)
+    // Alt+Arrow/hjkl = temporary edit mode (adjust values without switching modes)
+    // Note: On macOS, Alt+letter produces special characters, so we check keyCode directly
+    // Using kVK_* constants from KeyAction.h for correct macOS virtual key codes
+    // Also check ASCII codes as fallback since JUCE may return either depending on context
     if (key.getModifiers().isAltDown())
     {
+        // DEBUG: Log what JUCE reports for Alt+key combinations
+        std::cerr << "Alt+key: keyCode=" << keyCode << " (0x" << std::hex << keyCode << std::dec << ")"
+                  << " textChar=" << (int)textChar << " ('" << (char)textChar << "')"
+                  << " kVK_J=" << kVK_J << " kASCII_J=" << kASCII_J << std::endl;
+
         if (keyCode == juce::KeyPress::upKey || keyCode == juce::KeyPress::downKey ||
-            keyCode == juce::KeyPress::leftKey || keyCode == juce::KeyPress::rightKey)
+            keyCode == juce::KeyPress::leftKey || keyCode == juce::KeyPress::rightKey ||
+            keyCode == kVK_H || keyCode == kVK_J || keyCode == kVK_K || keyCode == kVK_L ||
+            keyCode == kASCII_H || keyCode == kASCII_J || keyCode == kASCII_K || keyCode == kASCII_L ||
+            keyCode == kASCII_h || keyCode == kASCII_j || keyCode == kASCII_k || keyCode == kASCII_l)
         {
+            std::cerr << "  -> MATCHED Alt+hjkl, forwarding to onEditKey" << std::endl;
             if (onEditKey && onEditKey(key)) return true;
-            return true;  // Still consume Alt+arrows even if not handled
+            return true;  // Still consume Alt+arrows/hjkl even if not handled
+        }
+        else
+        {
+            std::cerr << "  -> NOT matched as hjkl" << std::endl;
         }
     }
 
@@ -152,15 +169,26 @@ bool KeyHandler::handleNormalMode(const juce::KeyPress& key)
         // Not consumed - fall through to navigation
     }
 
-    // Up/Down: navigate
-    if (keyCode == juce::KeyPress::upKey)
+    // Up/Down: navigate (arrows and hjkl)
+    if (keyCode == juce::KeyPress::upKey || textChar == 'k')
     {
         if (onNavigate) onNavigate(0, -1);
         return true;
     }
-    if (keyCode == juce::KeyPress::downKey)
+    if (keyCode == juce::KeyPress::downKey || textChar == 'j')
     {
         if (onNavigate) onNavigate(0, 1);
+        return true;
+    }
+    // Left/Right vim keys (h/l) - only if not consumed by screen above
+    if (textChar == 'h')
+    {
+        if (onNavigate) onNavigate(-1, 0);
+        return true;
+    }
+    if (textChar == 'l')
+    {
+        if (onNavigate) onNavigate(1, 0);
         return true;
     }
 
@@ -178,9 +206,12 @@ bool KeyHandler::handleNormalMode(const juce::KeyPress& key)
         return true;
     }
 
-    // Actions
+    // Space: Forward to screen first for text editing, then play/stop
     if (keyCode == juce::KeyPress::spaceKey)
     {
+        // Screen can consume space if in TextEdit context
+        if (onEditKey && onEditKey(key)) return true;
+        // Not consumed by screen, use for play/stop
         if (onPlayStop) onPlayStop();
         return true;
     }
@@ -236,10 +267,12 @@ bool KeyHandler::handleVisualMode(const juce::KeyPress& key)
         return true;
     }
 
-    // Navigation extends selection
+    // Navigation extends selection (arrows and hjkl)
     auto keyCode = key.getKeyCode();
+    auto textChar = key.getTextCharacter();
     if (keyCode == juce::KeyPress::upKey || keyCode == juce::KeyPress::downKey ||
-        keyCode == juce::KeyPress::leftKey || keyCode == juce::KeyPress::rightKey)
+        keyCode == juce::KeyPress::leftKey || keyCode == juce::KeyPress::rightKey ||
+        textChar == 'h' || textChar == 'j' || textChar == 'k' || textChar == 'l')
     {
         // Navigate and update selection
         bool result = handleNormalMode(key);
@@ -247,7 +280,6 @@ bool KeyHandler::handleVisualMode(const juce::KeyPress& key)
         return result;
     }
 
-    auto textChar = key.getTextCharacter();
     if (textChar == 'y')
     {
         if (onYank) onYank();
@@ -291,9 +323,14 @@ bool KeyHandler::handleVisualMode(const juce::KeyPress& key)
         if (onEditKey && onEditKey(key)) return true;
     }
 
-    // Alt+Up/Down for batch editing - forward to screen
+    // Alt+arrows/hjkl for batch editing - forward to screen
+    // Check both macOS virtual keycodes and ASCII keycodes (both upper and lowercase)
     if (key.getModifiers().isAltDown() &&
-        (keyCode == juce::KeyPress::upKey || keyCode == juce::KeyPress::downKey))
+        (keyCode == juce::KeyPress::upKey || keyCode == juce::KeyPress::downKey ||
+         keyCode == juce::KeyPress::leftKey || keyCode == juce::KeyPress::rightKey ||
+         keyCode == kVK_H || keyCode == kVK_J || keyCode == kVK_K || keyCode == kVK_L ||
+         keyCode == kASCII_H || keyCode == kASCII_J || keyCode == kASCII_K || keyCode == kASCII_L ||
+         keyCode == kASCII_h || keyCode == kASCII_j || keyCode == kASCII_k || keyCode == kASCII_l))
     {
         if (onEditKey && onEditKey(key)) return true;
     }
@@ -417,6 +454,284 @@ void KeyHandler::executeCommand(const std::string& command)
     }
 
     if (onCommand) onCommand(command);
+}
+
+bool KeyHandler::isReservedGlobalKey(const juce::KeyPress& key)
+{
+    auto keyCode = key.getKeyCode();
+    auto textChar = key.getTextCharacter();
+    auto mods = key.getModifiers();
+
+    // Screen switching: 1-5
+    if (textChar >= '1' && textChar <= '5' && !mods.isAltDown() && !mods.isCtrlDown())
+        return true;
+
+    // Screen switching: { and }
+    if (textChar == '{' || textChar == '}')
+        return true;
+
+    // Play/Stop: Space
+    if (keyCode == juce::KeyPress::spaceKey)
+        return true;
+
+    // Undo: u
+    if (textChar == 'u' && !mods.isAltDown() && !mods.isCtrlDown() && !mods.isShiftDown())
+        return true;
+
+    // Redo: Ctrl+r
+    if (mods.isCtrlDown() && (textChar == 'r' || textChar == 'R'))
+        return true;
+
+    // Command mode: :
+    if (textChar == ':')
+        return true;
+
+    // Visual mode: v
+    if (textChar == 'v' && !mods.isAltDown() && !mods.isCtrlDown() && !mods.isShiftDown())
+        return true;
+
+    // Help: ?
+    if (textChar == '?')
+        return true;
+
+    return false;
+}
+
+KeyActionResult KeyHandler::translateKey(const juce::KeyPress& key, InputContext context, bool visualMode)
+{
+    auto keyCode = key.getKeyCode();
+    auto textChar = key.getTextCharacter();
+    auto mods = key.getModifiers();
+    bool alt = mods.isAltDown();
+    bool shift = mods.isShiftDown();
+
+    // Text editing context - special handling (checked BEFORE reserved global keys
+    // so that space and other printable chars can be entered as text)
+    if (context == InputContext::TextEdit)
+    {
+        if (keyCode == juce::KeyPress::returnKey)
+            return KeyActionResult(KeyAction::TextAccept);
+        if (keyCode == juce::KeyPress::escapeKey)
+            return KeyActionResult(KeyAction::TextReject);
+        if (keyCode == juce::KeyPress::backspaceKey)
+            return KeyActionResult(KeyAction::TextBackspace);
+        // Printable characters (includes space)
+        if (textChar >= ' ' && textChar <= '~')
+            return KeyActionResult(KeyAction::TextChar, static_cast<char>(textChar));
+        return KeyActionResult(KeyAction::None);
+    }
+
+    // Reserved global keys return None - they're handled by KeyHandler directly
+    if (isReservedGlobalKey(key))
+        return KeyActionResult(KeyAction::None);
+
+    // Tab key handling (all contexts)
+    if (keyCode == juce::KeyPress::tabKey)
+    {
+        if (shift)
+            return KeyActionResult(KeyAction::TabPrev);
+        return KeyActionResult(KeyAction::TabNext);
+    }
+
+    // Universal actions: Enter and Escape (outside TextEdit context)
+    if (keyCode == juce::KeyPress::returnKey)
+        return KeyActionResult(KeyAction::Confirm);
+    if (keyCode == juce::KeyPress::escapeKey)
+        return KeyActionResult(KeyAction::Cancel);
+
+    // Backspace/Delete for clearing
+    if (keyCode == juce::KeyPress::backspaceKey || keyCode == juce::KeyPress::deleteKey)
+        return KeyActionResult(KeyAction::Delete);
+
+    // Pattern navigation brackets
+    if (textChar == '[')
+        return KeyActionResult(KeyAction::PatternPrev);
+    if (textChar == ']')
+        return KeyActionResult(KeyAction::PatternNext);
+
+    // Zoom: +/- (not in visual mode where they're transpose)
+    if (!visualMode)
+    {
+        if (textChar == '+' || textChar == '=')
+            return KeyActionResult(KeyAction::ZoomIn);
+        if (textChar == '-')
+            return KeyActionResult(KeyAction::ZoomOut);
+    }
+
+    // Secondary navigation: , and .
+    if (textChar == ',')
+        return KeyActionResult(KeyAction::SecondaryPrev);
+    if (textChar == '.')
+        return KeyActionResult(KeyAction::SecondaryNext);
+
+    // Item operations
+    if (textChar == 'n' && !alt && !shift)
+        return KeyActionResult(KeyAction::NewSelection);
+    if (textChar == 'N' && shift)
+        return KeyActionResult(KeyAction::NewItem);
+    if (textChar == 'd' && !alt)
+        return KeyActionResult(KeyAction::Delete);
+    if (textChar == 'r' && !alt && !shift)
+        return KeyActionResult(KeyAction::Rename);
+    if (textChar == 'o' && !alt && !shift)
+        return KeyActionResult(KeyAction::Open);
+
+    // Clipboard
+    if (textChar == 'y' && !alt)
+        return KeyActionResult(KeyAction::Yank);
+    if (textChar == 'p' && !alt)
+        return KeyActionResult(KeyAction::Paste);
+
+    // Visual mode operations
+    if (visualMode)
+    {
+        if (textChar == 'f')
+            return KeyActionResult(KeyAction::Fill);
+        if (textChar == 's')
+            return KeyActionResult(KeyAction::Shuffle);
+        // Transpose in visual mode: +/- are octave, Alt+arrows/hjkl are semitone
+        if (textChar == '+' || textChar == '=')
+            return KeyActionResult(KeyAction::Edit2Inc);  // Octave up
+        if (textChar == '-')
+            return KeyActionResult(KeyAction::Edit2Dec);  // Octave down
+    }
+
+    // Mixer-specific toggles (outside visual mode where 's' is Shuffle)
+    if (!visualMode)
+    {
+        if (textChar == 'm' && !alt)
+            return KeyActionResult(KeyAction::ToggleMute);
+        if (textChar == 's' && !alt)
+            return KeyActionResult(KeyAction::ToggleSolo);
+    }
+
+    // Helper to check for hjkl by keyCode (needed because Alt+letter produces special chars on macOS)
+    // Check both macOS virtual key codes and ASCII codes since JUCE may return either
+    auto isH = [&]() { return keyCode == kVK_H || keyCode == kASCII_H || textChar == 'h'; };
+    auto isJ = [&]() { return keyCode == kVK_J || keyCode == kASCII_J || textChar == 'j'; };
+    auto isK = [&]() { return keyCode == kVK_K || keyCode == kASCII_K || textChar == 'k'; };
+    auto isL = [&]() { return keyCode == kVK_L || keyCode == kASCII_L || textChar == 'l'; };
+
+    // Context-specific key translation
+    switch (context)
+    {
+        case InputContext::Grid:
+        {
+            // Grid: hjkl and arrows for navigation, Alt variants for editing
+            if (!alt)
+            {
+                // Navigation
+                if (isH() || keyCode == juce::KeyPress::leftKey)
+                    return KeyActionResult(KeyAction::NavLeft);
+                if (isL() || keyCode == juce::KeyPress::rightKey)
+                    return KeyActionResult(KeyAction::NavRight);
+                if (isK() || keyCode == juce::KeyPress::upKey)
+                    return KeyActionResult(KeyAction::NavUp);
+                if (isJ() || keyCode == juce::KeyPress::downKey)
+                    return KeyActionResult(KeyAction::NavDown);
+            }
+            else
+            {
+                // Alt + direction = edit (direction determines Edit1 vs Edit2, Shift = coarse)
+                // Vertical (j/k/up/down) = Edit1, Horizontal (h/l/left/right) = Edit2
+                if (isH() || keyCode == juce::KeyPress::leftKey)
+                    return KeyActionResult(shift ? KeyAction::ShiftEdit2Dec : KeyAction::Edit2Dec);
+                if (isL() || keyCode == juce::KeyPress::rightKey)
+                    return KeyActionResult(shift ? KeyAction::ShiftEdit2Inc : KeyAction::Edit2Inc);
+                if (isK() || keyCode == juce::KeyPress::upKey)
+                    return KeyActionResult(shift ? KeyAction::ShiftEdit1Inc : KeyAction::Edit1Inc);
+                if (isJ() || keyCode == juce::KeyPress::downKey)
+                    return KeyActionResult(shift ? KeyAction::ShiftEdit1Dec : KeyAction::Edit1Dec);
+            }
+            break;
+        }
+
+        case InputContext::RowParams:
+        {
+            // RowParams: j/k/arrows for nav up/down, h/l/left/right for edit
+            // Edit2 = horizontal (h/l), Edit1 = vertical (j/k when with Alt)
+            if (!alt)
+            {
+                // Vertical navigation
+                if (isK() || keyCode == juce::KeyPress::upKey)
+                    return KeyActionResult(KeyAction::NavUp);
+                if (isJ() || keyCode == juce::KeyPress::downKey)
+                    return KeyActionResult(KeyAction::NavDown);
+                // Horizontal = edit (Edit2)
+                if (isH() || keyCode == juce::KeyPress::leftKey)
+                    return KeyActionResult(shift ? KeyAction::ShiftEdit2Dec : KeyAction::Edit2Dec);
+                if (isL() || keyCode == juce::KeyPress::rightKey)
+                    return KeyActionResult(shift ? KeyAction::ShiftEdit2Inc : KeyAction::Edit2Inc);
+            }
+            else
+            {
+                // Alt + direction = edit (horizontal=Edit2, vertical=Edit1, Shift=coarse)
+                if (isH() || keyCode == juce::KeyPress::leftKey)
+                    return KeyActionResult(shift ? KeyAction::ShiftEdit2Dec : KeyAction::Edit2Dec);
+                if (isL() || keyCode == juce::KeyPress::rightKey)
+                    return KeyActionResult(shift ? KeyAction::ShiftEdit2Inc : KeyAction::Edit2Inc);
+                if (isK() || keyCode == juce::KeyPress::upKey)
+                    return KeyActionResult(shift ? KeyAction::ShiftEdit1Inc : KeyAction::Edit1Inc);
+                if (isJ() || keyCode == juce::KeyPress::downKey)
+                    return KeyActionResult(shift ? KeyAction::ShiftEdit1Dec : KeyAction::Edit1Dec);
+            }
+            break;
+        }
+
+        case InputContext::ColumnParams:
+        {
+            // ColumnParams: h/l/arrows for nav left/right, j/k for edit
+            // Edit1 = vertical (j/k), Edit2 = horizontal (h/l when with Alt)
+            if (!alt)
+            {
+                // Horizontal navigation
+                if (isH() || keyCode == juce::KeyPress::leftKey)
+                    return KeyActionResult(KeyAction::NavLeft);
+                if (isL() || keyCode == juce::KeyPress::rightKey)
+                    return KeyActionResult(KeyAction::NavRight);
+                // Vertical = edit (Edit1)
+                if (isK() || keyCode == juce::KeyPress::upKey)
+                    return KeyActionResult(shift ? KeyAction::ShiftEdit1Inc : KeyAction::Edit1Inc);
+                if (isJ() || keyCode == juce::KeyPress::downKey)
+                    return KeyActionResult(shift ? KeyAction::ShiftEdit1Dec : KeyAction::Edit1Dec);
+            }
+            else
+            {
+                // Alt + direction = edit (vertical=Edit1, horizontal=Edit2, Shift=coarse)
+                if (isK() || keyCode == juce::KeyPress::upKey)
+                    return KeyActionResult(shift ? KeyAction::ShiftEdit1Inc : KeyAction::Edit1Inc);
+                if (isJ() || keyCode == juce::KeyPress::downKey)
+                    return KeyActionResult(shift ? KeyAction::ShiftEdit1Dec : KeyAction::Edit1Dec);
+                if (isH() || keyCode == juce::KeyPress::leftKey)
+                    return KeyActionResult(shift ? KeyAction::ShiftEdit2Dec : KeyAction::Edit2Dec);
+                if (isL() || keyCode == juce::KeyPress::rightKey)
+                    return KeyActionResult(shift ? KeyAction::ShiftEdit2Inc : KeyAction::Edit2Inc);
+            }
+            break;
+        }
+
+        case InputContext::TextEdit:
+            // Already handled above
+            break;
+    }
+
+    // Shortcut keys (a-z that aren't reserved) - return as Jump
+    if (textChar >= 'a' && textChar <= 'z' && !alt)
+    {
+        // Skip navigation keys and keys with explicit actions
+        if (context == InputContext::Grid || context == InputContext::RowParams || context == InputContext::ColumnParams)
+        {
+            if (textChar != 'h' && textChar != 'j' && textChar != 'k' && textChar != 'l' &&
+                textChar != 'n' && textChar != 'd' && textChar != 'r' && textChar != 'o' &&
+                textChar != 'y' && textChar != 'p' && textChar != 'f' && textChar != 's' &&
+                textChar != 'm' && textChar != 'v' && textChar != 'u')
+            {
+                return KeyActionResult(KeyAction::Jump, static_cast<char>(textChar));
+            }
+        }
+    }
+
+    return KeyActionResult(KeyAction::None);
 }
 
 } // namespace input
