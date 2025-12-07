@@ -150,7 +150,9 @@ bool PatternScreen::handleEditKey(const juce::KeyPress& key)
     bool shiftHeld = key.getModifiers().isShiftDown();
 
     // Use translateKey to detect Alt+hjkl for edit operations (macOS Alt produces special chars)
-    auto action = input::KeyHandler::translateKey(key, input::InputContext::Grid,
+    // Use TextEdit context when in name editing mode so text actions work
+    auto context = editingName_ ? input::InputContext::TextEdit : input::InputContext::Grid;
+    auto action = input::KeyHandler::translateKey(key, context,
                                                    modeManager_.getMode() == input::Mode::Visual);
     // Edit actions from translateKey - direction-based (Edit1=vertical, Edit2=horizontal)
     bool isEdit1Inc = (action.action == input::KeyAction::Edit1Inc ||
@@ -569,8 +571,8 @@ bool PatternScreen::handleEditKey(const juce::KeyPress& key)
         return true;
     }
 
-    // Chord popup ('c' is passed as TextChar from translateKey)
-    if (action.action == input::KeyAction::TextChar && action.charData == 'c' && !shiftHeld)
+    // Chord popup ('c' returns Jump action in Grid context)
+    if (action.action == input::KeyAction::Jump && action.charData == 'c' && !shiftHeld)
     {
         showChordPopup();
         return true;
