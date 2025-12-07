@@ -29,7 +29,6 @@ public:
     float getReverbSend() const { return reverbSend_; }
     float getDelaySend() const { return delaySend_; }
     float getChorusSend() const { return chorusSend_; }
-    float getDriveSend() const { return driveSend_; }
     float getSidechainSend() const { return sidechainSend_; }
 
     // FX command processing
@@ -54,7 +53,6 @@ private:
     float reverbSend_ = 0.0f;
     float delaySend_ = 0.0f;
     float chorusSend_ = 0.0f;
-    float driveSend_ = 0.0f;
     float sidechainSend_ = 0.0f;
 
     // FX state

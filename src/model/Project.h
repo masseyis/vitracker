@@ -69,7 +69,7 @@ public:
         std::array<float, 16> trackPans;
         std::array<bool, 16> trackMutes;
         std::array<bool, 16> trackSolos;
-        std::array<float, 5> busLevels;  // reverb, delay, chorus, drive, sidechain
+        std::array<float, 4> busLevels;  // reverb, delay, chorus, sidechain
         float masterVolume = 1.0f;
 
         // Effect parameters
@@ -84,10 +84,6 @@ public:
         // Chorus
         float chorusRate = 0.4f;      // LFO rate (0-1)
         float chorusDepth = 0.6f;     // Modulation depth (0-1)
-
-        // Drive
-        float driveGain = 0.3f;       // Saturation amount (0-1)
-        float driveTone = 0.6f;       // Brightness (0-1)
 
         // Sidechain compressor
         int sidechainSource = -1;     // Instrument index (-1 = none)

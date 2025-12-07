@@ -225,7 +225,6 @@ juce::var ProjectSerializer::instrumentToVar(const Instrument& inst)
     sends->setProperty("reverb", s.reverb);
     sends->setProperty("delay", s.delay);
     sends->setProperty("chorus", s.chorus);
-    sends->setProperty("drive", s.drive);
     sends->setProperty("sidechainDuck", s.sidechainDuck);
     obj->setProperty("sends", juce::var(sends.get()));
 
@@ -313,8 +312,8 @@ void ProjectSerializer::varToInstrument(Instrument& inst, const juce::var& v)
         s.reverb = static_cast<float>(sendsObj->getProperty("reverb"));
         s.delay = static_cast<float>(sendsObj->getProperty("delay"));
         s.chorus = static_cast<float>(sendsObj->getProperty("chorus"));
-        s.drive = static_cast<float>(sendsObj->getProperty("drive"));
         s.sidechainDuck = static_cast<float>(sendsObj->getProperty("sidechainDuck"));
+        // Note: drive removed from sends - now per-instrument in ChannelStrip
     }
 
     // Per-instrument mixer controls (defaults for old files)

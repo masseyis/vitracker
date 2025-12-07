@@ -57,7 +57,6 @@ struct SendLevels
     float reverb = 0.0f;
     float delay = 0.0f;
     float chorus = 0.0f;
-    float drive = 0.0f;
     float sidechainDuck = 0.0f;
 };
 

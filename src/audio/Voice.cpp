@@ -54,7 +54,6 @@ void Voice::noteOn(int note, float velocity, const model::Instrument& instrument
     reverbSend_ = sends.reverb;
     delaySend_ = sends.delay;
     chorusSend_ = sends.chorus;
-    driveSend_ = sends.drive;
     sidechainSend_ = sends.sidechainDuck;
 }
 

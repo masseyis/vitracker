@@ -444,9 +444,6 @@ void InstrumentScreen::drawRow(juce::Graphics& g, juce::Rectangle<int> area, int
             valueText = juce::String(static_cast<int>(value * 100)) + "%";
             break;
 
-        case InstrumentRowType::Drive:
-            label = "DRIVE";
-            value = sends.drive;
             valueText = juce::String(static_cast<int>(value * 100)) + "%";
             break;
 
@@ -999,8 +996,6 @@ void InstrumentScreen::setRowValue(int row, float delta)
         case InstrumentRowType::Chorus:
             clamp01(sends.chorus, delta);
             break;
-        case InstrumentRowType::Drive:
-            clamp01(sends.drive, delta);
             break;
         case InstrumentRowType::Sidechain:
             clamp01(sends.sidechainDuck, delta);
@@ -1517,8 +1512,6 @@ bool InstrumentScreen::handleSamplerKey(const juce::KeyPress& key, bool /*isEdit
             case SamplerRowType::Chorus:
                 params.modulation.fxSends.chorus = std::clamp(params.modulation.fxSends.chorus + delta * step, 0.0f, 1.0f);
                 break;
-            case SamplerRowType::Drive:
-                params.modulation.fxSends.drive = std::clamp(params.modulation.fxSends.drive + delta * step, 0.0f, 1.0f);
                 break;
             case SamplerRowType::Sidechain:
                 {
@@ -1790,7 +1783,6 @@ void InstrumentScreen::paintSamplerUI(juce::Graphics& g) {
     drawSamplerSliderRow(static_cast<int>(SamplerRowType::Reverb), "REVERB", params.modulation.fxSends.reverb, juce::String(static_cast<int>(params.modulation.fxSends.reverb * 100)) + "%");
     drawSamplerSliderRow(static_cast<int>(SamplerRowType::Delay), "DELAY", params.modulation.fxSends.delay, juce::String(static_cast<int>(params.modulation.fxSends.delay * 100)) + "%");
     drawSamplerSliderRow(static_cast<int>(SamplerRowType::Chorus), "CHORUS", params.modulation.fxSends.chorus, juce::String(static_cast<int>(params.modulation.fxSends.chorus * 100)) + "%");
-    drawSamplerSliderRow(static_cast<int>(SamplerRowType::Drive), "DRIVE", params.modulation.fxSends.drive, juce::String(static_cast<int>(params.modulation.fxSends.drive * 100)) + "%");
     drawSamplerSliderRow(static_cast<int>(SamplerRowType::Sidechain), "SIDECHAIN", inst->getSends().sidechainDuck, juce::String(static_cast<int>(inst->getSends().sidechainDuck * 100)) + "%");
 
     // Volume & Pan section header
@@ -2050,7 +2042,6 @@ void InstrumentScreen::paintSlicerUI(juce::Graphics& g) {
     drawSlicerSliderRow(static_cast<int>(SlicerRowType::Reverb), "REVERB", params.modulation.fxSends.reverb, juce::String(static_cast<int>(params.modulation.fxSends.reverb * 100)) + "%");
     drawSlicerSliderRow(static_cast<int>(SlicerRowType::Delay), "DELAY", params.modulation.fxSends.delay, juce::String(static_cast<int>(params.modulation.fxSends.delay * 100)) + "%");
     drawSlicerSliderRow(static_cast<int>(SlicerRowType::Chorus), "CHORUS", params.modulation.fxSends.chorus, juce::String(static_cast<int>(params.modulation.fxSends.chorus * 100)) + "%");
-    drawSlicerSliderRow(static_cast<int>(SlicerRowType::Drive), "DRIVE", params.modulation.fxSends.drive, juce::String(static_cast<int>(params.modulation.fxSends.drive * 100)) + "%");
     drawSlicerSliderRow(static_cast<int>(SlicerRowType::Sidechain), "SIDECHAIN", inst->getSends().sidechainDuck, juce::String(static_cast<int>(inst->getSends().sidechainDuck * 100)) + "%");
 
     // Output section header
@@ -2418,8 +2409,6 @@ bool InstrumentScreen::handleSlicerKey(const juce::KeyPress& key, bool /*isEditM
             case SlicerRowType::Chorus:
                 params.modulation.fxSends.chorus = std::clamp(params.modulation.fxSends.chorus + delta * step, 0.0f, 1.0f);
                 break;
-            case SlicerRowType::Drive:
-                params.modulation.fxSends.drive = std::clamp(params.modulation.fxSends.drive + delta * step, 0.0f, 1.0f);
                 break;
             case SlicerRowType::Sidechain:
                 {
@@ -2813,7 +2802,6 @@ void InstrumentScreen::paintVASynthUI(juce::Graphics& g) {
     drawSliderRow(rightCol, static_cast<int>(VASynthRowType::Reverb), "REVERB", modParams.fxSends.reverb, juce::String(static_cast<int>(modParams.fxSends.reverb * 100)) + "%");
     drawSliderRow(rightCol, static_cast<int>(VASynthRowType::Delay), "DELAY", modParams.fxSends.delay, juce::String(static_cast<int>(modParams.fxSends.delay * 100)) + "%");
     drawSliderRow(rightCol, static_cast<int>(VASynthRowType::Chorus), "CHORUS", modParams.fxSends.chorus, juce::String(static_cast<int>(modParams.fxSends.chorus * 100)) + "%");
-    drawSliderRow(rightCol, static_cast<int>(VASynthRowType::Drive), "DRIVE", modParams.fxSends.drive, juce::String(static_cast<int>(modParams.fxSends.drive * 100)) + "%");
     drawSliderRow(rightCol, static_cast<int>(VASynthRowType::Sidechain), "SIDECHAIN", inst->getSends().sidechainDuck, juce::String(static_cast<int>(inst->getSends().sidechainDuck * 100)) + "%");
 
     drawHeader(rightCol, "-- OUTPUT --");
@@ -3109,8 +3097,6 @@ bool InstrumentScreen::handleVASynthKey(const juce::KeyPress& key, bool /*isEdit
             case VASynthRowType::Chorus:
                 params.modulation.fxSends.chorus = std::clamp(params.modulation.fxSends.chorus + valueDelta * delta, 0.0f, 1.0f);
                 break;
-            case VASynthRowType::Drive:
-                params.modulation.fxSends.drive = std::clamp(params.modulation.fxSends.drive + valueDelta * delta, 0.0f, 1.0f);
                 break;
             case VASynthRowType::Sidechain:
                 {

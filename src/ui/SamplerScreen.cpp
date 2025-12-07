@@ -204,7 +204,6 @@ float SamplerScreen::getRowValue(RowType row) const {
         case RowType::SendReverb: return sends.reverb;
         case RowType::SendDelay: return sends.delay;
         case RowType::SendChorus: return sends.chorus;
-        case RowType::SendDrive: return sends.drive;
         default: return 0.0f;
     }
 }
@@ -230,7 +229,6 @@ void SamplerScreen::setRowValue(RowType row, float value) {
         case RowType::SendReverb: sends.reverb = value; break;
         case RowType::SendDelay: sends.delay = value; break;
         case RowType::SendChorus: sends.chorus = value; break;
-        case RowType::SendDrive: sends.drive = value; break;
         default: break;
     }
 }
@@ -249,7 +247,6 @@ juce::String SamplerScreen::getRowName(RowType row) const {
         case RowType::SendReverb: return "Send Reverb";
         case RowType::SendDelay: return "Send Delay";
         case RowType::SendChorus: return "Send Chorus";
-        case RowType::SendDrive: return "Send Drive";
         default: return "";
     }
 }

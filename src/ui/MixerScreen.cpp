@@ -393,13 +393,13 @@ void MixerScreen::drawFxPanel(juce::Graphics& g, juce::Rectangle<int> area, int 
         return;
     }
 
-    // Standard effect panels (0-3)
-    const char* fxNames[] = {"REVERB", "DELAY", "CHORUS", "DRIVE"};
-    const char* param1Names[] = {"Size", "Time", "Rate", "Gain"};
-    const char* param2Names[] = {"Damp", "Fdbk", "Depth", "Tone"};
+    // Standard effect panels (0-2)
+    const char* fxNames[] = {"REVERB", "DELAY", "CHORUS"};
+    const char* param1Names[] = {"Size", "Time", "Rate"};
+    const char* param2Names[] = {"Damp", "Fdbk", "Depth"};
 
-    float param1Values[] = {mixer.reverbSize, mixer.delayTime, mixer.chorusRate, mixer.driveGain};
-    float param2Values[] = {mixer.reverbDamping, mixer.delayFeedback, mixer.chorusDepth, mixer.driveTone};
+    float param1Values[] = {mixer.reverbSize, mixer.delayTime, mixer.chorusRate};
+    float param2Values[] = {mixer.reverbDamping, mixer.delayFeedback, mixer.chorusDepth};
 
     // Effect name
     g.setFont(11.0f);
@@ -479,7 +479,7 @@ void MixerScreen::navigate(int dx, int dy)
         // Navigation within FX section
         if (dx != 0)
         {
-            cursorFx_ = std::clamp(cursorFx_ + dx, 0, 6);
+            cursorFx_ = std::clamp(cursorFx_ + dx, 0, 5);
         }
         if (dy != 0)
         {
@@ -569,7 +569,7 @@ bool MixerScreen::handleEditKey(const juce::KeyPress& key)
             auto& mixer = project_.getMixer();
 
             // Sidechain source is special - increment/decrement instrument index
-            if (cursorFx_ == 4 && cursorFxParam_ == 0)
+            if (cursorFx_ == 3 && cursorFxParam_ == 0)
             {
                 int numInst = project_.getInstrumentCount();
                 int delta = (keyCode == juce::KeyPress::rightKey) ? 1 : -1;
@@ -603,20 +603,14 @@ bool MixerScreen::handleEditKey(const juce::KeyPress& key)
                     else
                         mixer.chorusDepth = std::clamp(mixer.chorusDepth + delta, 0.0f, 1.0f);
                     break;
-                case 3:  // Drive
-                    if (cursorFxParam_ == 0)
-                        mixer.driveGain = std::clamp(mixer.driveGain + delta, 0.0f, 1.0f);
-                    else
-                        mixer.driveTone = std::clamp(mixer.driveTone + delta, 0.0f, 1.0f);
-                    break;
-                case 4:  // Sidechain - only ratio uses slider (param 1)
+                case 3:  // Sidechain - only ratio uses slider (param 1)
                     if (cursorFxParam_ == 1)
                         mixer.sidechainRatio = std::clamp(mixer.sidechainRatio + delta, 0.0f, 1.0f);
                     break;
-                case 5:  // DJ Filter - bipolar position (single param)
+                case 4:  // DJ Filter - bipolar position (single param)
                     mixer.djFilterPosition = std::clamp(mixer.djFilterPosition + delta, -1.0f, 1.0f);
                     break;
-                case 6:  // Limiter
+                case 5:  // Limiter
                     if (cursorFxParam_ == 0)
                         mixer.limiterThreshold = std::clamp(mixer.limiterThreshold + delta, 0.1f, 1.0f);
                     else
@@ -633,7 +627,7 @@ bool MixerScreen::handleEditKey(const juce::KeyPress& key)
             auto& mixer = project_.getMixer();
 
             // Sidechain source is special - increment/decrement instrument index
-            if (cursorFx_ == 4 && cursorFxParam_ == 0)
+            if (cursorFx_ == 3 && cursorFxParam_ == 0)
             {
                 int numInst = project_.getInstrumentCount();
                 int delta = (textChar == '-') ? -1 : 1;
@@ -666,20 +660,14 @@ bool MixerScreen::handleEditKey(const juce::KeyPress& key)
                     else
                         mixer.chorusDepth = std::clamp(mixer.chorusDepth + delta, 0.0f, 1.0f);
                     break;
-                case 3:  // Drive
-                    if (cursorFxParam_ == 0)
-                        mixer.driveGain = std::clamp(mixer.driveGain + delta, 0.0f, 1.0f);
-                    else
-                        mixer.driveTone = std::clamp(mixer.driveTone + delta, 0.0f, 1.0f);
-                    break;
-                case 4:  // Sidechain - only ratio uses slider (param 1)
+                case 3:  // Sidechain - only ratio uses slider (param 1)
                     if (cursorFxParam_ == 1)
                         mixer.sidechainRatio = std::clamp(mixer.sidechainRatio + delta, 0.0f, 1.0f);
                     break;
-                case 5:  // DJ Filter - bipolar position (single param)
+                case 4:  // DJ Filter - bipolar position (single param)
                     mixer.djFilterPosition = std::clamp(mixer.djFilterPosition + delta, -1.0f, 1.0f);
                     break;
-                case 6:  // Limiter
+                case 5:  // Limiter
                     if (cursorFxParam_ == 0)
                         mixer.limiterThreshold = std::clamp(mixer.limiterThreshold + delta, 0.1f, 1.0f);
                     else
@@ -885,7 +873,6 @@ std::vector<HelpSection> MixerScreen::getHelpContent() const
             {"Reverb", "Size, Damping"},
             {"Delay", "Time, Feedback"},
             {"Chorus", "Rate, Depth"},
-            {"Drive", "Gain, Tone"},
             {"Sidechain", "Source, Amount"},
             {"Filter", "LP/HP position"},
             {"Limiter", "Threshold, Release"},

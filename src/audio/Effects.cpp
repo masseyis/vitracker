@@ -383,8 +383,7 @@ void EffectsProcessor::setTempo(float bpm)
 }
 
 void EffectsProcessor::process(float& left, float& right,
-                               float reverbSend, float delaySend, float chorusSend,
-                               float driveSend)
+                               float reverbSend, float delaySend, float chorusSend)
 {
     // Send-based mixing: dry signal preserved, wet signal added on top
     // Full send (1.0) = 100% wet mixed with dry
@@ -429,18 +428,7 @@ void EffectsProcessor::process(float& left, float& right,
     left = dryL + wetL;
     right = dryR + wetR;
 
-    // Drive is an insert effect, not a send - it replaces dry signal
-    // driveSend controls wet/dry blend
-    if (driveSend > 0.001f)
-    {
-        float driveL = left;
-        float driveR = right;
-        drive.process(driveL, driveR);  // Returns 100% processed
-        // Blend: 0 = dry, 1 = fully driven
-        left = left * (1.0f - driveSend) + driveL * driveSend;
-        right = right * (1.0f - driveSend) + driveR * driveSend;
-    }
-
+    // Note: Drive is now per-instrument in ChannelStrip, not a master bus send
     // Note: Sidechain is now handled separately in AudioEngine
     // Call sidechain.feedSource() with source instrument audio
     // Then sidechain.process() to apply ducking

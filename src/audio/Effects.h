@@ -170,8 +170,7 @@ public:
 
     // Process audio with send levels (sidechain handled separately)
     void process(float& left, float& right,
-                 float reverbSend, float delaySend, float chorusSend,
-                 float driveSend);
+                 float reverbSend, float delaySend, float chorusSend);
 
     // Process master bus effects (DJ filter + limiter)
     void processMaster(float& left, float& right);
