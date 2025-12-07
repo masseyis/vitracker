@@ -7,6 +7,7 @@
 #include "SamplerInstrument.h"
 #include "SlicerInstrument.h"
 #include "VASynthInstrument.h"
+#include "ChannelStrip.h"
 #include "../model/Project.h"
 #include "../model/Groove.h"
 #include <JuceHeader.h>
@@ -87,6 +88,9 @@ private:
     std::array<std::unique_ptr<SamplerInstrument>, NUM_INSTRUMENTS> samplerProcessors_;
     std::array<std::unique_ptr<SlicerInstrument>, NUM_INSTRUMENTS> slicerProcessors_;
     std::array<std::unique_ptr<VASynthInstrument>, NUM_INSTRUMENTS> vaSynthProcessors_;
+
+    // Per-instrument channel strip processing
+    std::array<std::unique_ptr<ChannelStrip>, NUM_INSTRUMENTS> channelStrips_;
 
     double sampleRate_ = 48000.0;
     int samplesPerBlock_ = 512;

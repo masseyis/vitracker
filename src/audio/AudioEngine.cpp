@@ -256,6 +256,16 @@ void AudioEngine::prepareToPlay(int samplesPerBlockExpected, double sampleRate)
         }
     }
 
+    // Initialize channel strips
+    for (auto& strip : channelStrips_)
+    {
+        if (!strip)
+        {
+            strip = std::make_unique<ChannelStrip>();
+        }
+        strip->prepare(sampleRate, samplesPerBlockExpected);
+    }
+
     // Initialize legacy voices (can be removed later)
     for (auto& voice : voices_)
     {
@@ -575,6 +585,13 @@ void AudioEngine::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferTo
         // Render instrument to temp buffers
         processor->process(tempL.data(), tempR.data(), numSamples);
 
+        // Apply channel strip processing
+        if (instrument && channelStrips_[instIdx])
+        {
+            channelStrips_[instIdx]->updateParams(instrument->getChannelStrip());
+            channelStrips_[instIdx]->process(tempL.data(), tempR.data(), numSamples);
+        }
+
         // Apply volume and pan, mix into output
         // Pan law: constant power (sqrt)
         float leftGain = volume * std::sqrt((1.0f - pan) / 2.0f);
@@ -650,6 +667,13 @@ void AudioEngine::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferTo
         // Render sampler to temp buffers
         sampler->process(tempL.data(), tempR.data(), numSamples);
 
+        // Apply channel strip processing
+        if (instrument && channelStrips_[instIdx])
+        {
+            channelStrips_[instIdx]->updateParams(instrument->getChannelStrip());
+            channelStrips_[instIdx]->process(tempL.data(), tempR.data(), numSamples);
+        }
+
         // Apply volume and pan, mix into output
         float leftGain = volume * std::sqrt((1.0f - pan) / 2.0f);
         float rightGain = volume * std::sqrt((1.0f + pan) / 2.0f);
@@ -720,6 +744,13 @@ void AudioEngine::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferTo
         // Render slicer to temp buffers
         slicer->process(tempL.data(), tempR.data(), numSamples);
 
+        // Apply channel strip processing
+        if (instrument && channelStrips_[instIdx])
+        {
+            channelStrips_[instIdx]->updateParams(instrument->getChannelStrip());
+            channelStrips_[instIdx]->process(tempL.data(), tempR.data(), numSamples);
+        }
+
         // Apply volume and pan, mix into output
         float leftGain = volume * std::sqrt((1.0f - pan) / 2.0f);
         float rightGain = volume * std::sqrt((1.0f + pan) / 2.0f);
@@ -789,6 +820,13 @@ void AudioEngine::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferTo
 
         // Render VA synth to temp buffers
         vaSynth->process(tempL.data(), tempR.data(), numSamples);
+
+        // Apply channel strip processing
+        if (instrument && channelStrips_[instIdx])
+        {
+            channelStrips_[instIdx]->updateParams(instrument->getChannelStrip());
+            channelStrips_[instIdx]->process(tempL.data(), tempR.data(), numSamples);
+        }
 
         // Apply volume and pan, mix into output
         float leftGain = volume * std::sqrt((1.0f - pan) / 2.0f);
