@@ -271,8 +271,12 @@ bool ChannelScreen::handleEdit(const juce::KeyPress& key) {
     auto* inst = project_.getInstrument(currentInstrument_);
     if (!inst) return false;
 
-    // Jump keys (in Edit mode)
+    auto keyCode = key.getKeyCode();
     char textChar = static_cast<char>(key.getTextCharacter());
+    bool altHeld = key.getModifiers().isAltDown();
+    bool shiftHeld = key.getModifiers().isShiftDown();
+
+    // Jump keys
     int jumpRow = getRowForJumpKey(textChar);
     if (jumpRow >= 0) {
         cursorRow_ = jumpRow;
@@ -291,7 +295,39 @@ bool ChannelScreen::handleEdit(const juce::KeyPress& key) {
         return true;
     }
 
-    // Value adjustment handled by KeyHandler via Alt+hjkl
+    // Value adjustment with Alt+arrows
+    if (altHeld) {
+        float delta = shiftHeld ? 10.0f : 1.0f;  // Coarse adjustment with Shift
+
+        if (keyCode == juce::KeyPress::leftKey) {
+            adjustParam(cursorRow_, cursorField_, -delta);
+            return true;
+        }
+        if (keyCode == juce::KeyPress::rightKey) {
+            adjustParam(cursorRow_, cursorField_, delta);
+            return true;
+        }
+        if (keyCode == juce::KeyPress::upKey) {
+            adjustParam(cursorRow_, cursorField_, delta);
+            return true;
+        }
+        if (keyCode == juce::KeyPress::downKey) {
+            adjustParam(cursorRow_, cursorField_, -delta);
+            return true;
+        }
+    }
+
+    // +/- for quick adjustment (no Alt required)
+    if (textChar == '+' || textChar == '=') {
+        float delta = shiftHeld ? 10.0f : 1.0f;
+        adjustParam(cursorRow_, cursorField_, delta);
+        return true;
+    }
+    if (textChar == '-') {
+        float delta = shiftHeld ? 10.0f : 1.0f;
+        adjustParam(cursorRow_, cursorField_, -delta);
+        return true;
+    }
 
     return false;
 }
