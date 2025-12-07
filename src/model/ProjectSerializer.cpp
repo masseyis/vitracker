@@ -228,6 +228,26 @@ juce::var ProjectSerializer::instrumentToVar(const Instrument& inst)
     sends->setProperty("sidechainDuck", s.sidechainDuck);
     obj->setProperty("sends", juce::var(sends.get()));
 
+    // Channel strip parameters
+    const auto& cs = inst.getChannelStrip();
+    juce::DynamicObject::Ptr channelStrip = new juce::DynamicObject();
+    channelStrip->setProperty("hpfFreq", cs.hpfFreq);
+    channelStrip->setProperty("hpfSlope", cs.hpfSlope);
+    channelStrip->setProperty("lowShelfGain", cs.lowShelfGain);
+    channelStrip->setProperty("lowShelfFreq", cs.lowShelfFreq);
+    channelStrip->setProperty("midFreq", cs.midFreq);
+    channelStrip->setProperty("midGain", cs.midGain);
+    channelStrip->setProperty("midQ", cs.midQ);
+    channelStrip->setProperty("highShelfGain", cs.highShelfGain);
+    channelStrip->setProperty("highShelfFreq", cs.highShelfFreq);
+    channelStrip->setProperty("driveAmount", cs.driveAmount);
+    channelStrip->setProperty("driveTone", cs.driveTone);
+    channelStrip->setProperty("punchAmount", cs.punchAmount);
+    channelStrip->setProperty("ottDepth", cs.ottDepth);
+    channelStrip->setProperty("ottMix", cs.ottMix);
+    channelStrip->setProperty("ottSmooth", cs.ottSmooth);
+    obj->setProperty("channelStrip", juce::var(channelStrip.get()));
+
     // Per-instrument mixer controls
     obj->setProperty("volume", inst.getVolume());
     obj->setProperty("pan", inst.getPan());
@@ -314,6 +334,28 @@ void ProjectSerializer::varToInstrument(Instrument& inst, const juce::var& v)
         s.chorus = static_cast<float>(sendsObj->getProperty("chorus"));
         s.sidechainDuck = static_cast<float>(sendsObj->getProperty("sidechainDuck"));
         // Note: drive removed from sends - now per-instrument in ChannelStrip
+    }
+
+    // Channel strip parameters (defaults for old files without channelStrip)
+    auto channelStripVar = obj->getProperty("channelStrip");
+    if (auto* csObj = channelStripVar.getDynamicObject())
+    {
+        auto& cs = inst.getChannelStrip();
+        cs.hpfFreq = static_cast<float>(csObj->getProperty("hpfFreq"));
+        cs.hpfSlope = static_cast<int>(csObj->getProperty("hpfSlope"));
+        cs.lowShelfGain = static_cast<float>(csObj->getProperty("lowShelfGain"));
+        cs.lowShelfFreq = static_cast<float>(csObj->getProperty("lowShelfFreq"));
+        cs.midFreq = static_cast<float>(csObj->getProperty("midFreq"));
+        cs.midGain = static_cast<float>(csObj->getProperty("midGain"));
+        cs.midQ = static_cast<float>(csObj->getProperty("midQ"));
+        cs.highShelfGain = static_cast<float>(csObj->getProperty("highShelfGain"));
+        cs.highShelfFreq = static_cast<float>(csObj->getProperty("highShelfFreq"));
+        cs.driveAmount = static_cast<float>(csObj->getProperty("driveAmount"));
+        cs.driveTone = static_cast<float>(csObj->getProperty("driveTone"));
+        cs.punchAmount = static_cast<float>(csObj->getProperty("punchAmount"));
+        cs.ottDepth = static_cast<float>(csObj->getProperty("ottDepth"));
+        cs.ottMix = static_cast<float>(csObj->getProperty("ottMix"));
+        cs.ottSmooth = static_cast<float>(csObj->getProperty("ottSmooth"));
     }
 
     // Per-instrument mixer controls (defaults for old files)
