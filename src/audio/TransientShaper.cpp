@@ -7,13 +7,13 @@ namespace audio {
 void TransientShaper::prepare(double sampleRate) {
     sampleRate_ = sampleRate;
 
-    // Fast envelope: ~1ms attack, ~10ms release
-    fastAttack_ = 1.0f - std::exp(-1.0f / (static_cast<float>(sampleRate) * 0.001f));
-    fastRelease_ = 1.0f - std::exp(-1.0f / (static_cast<float>(sampleRate) * 0.01f));
+    // Fast envelope: ~0.5ms attack, ~5ms release - very snappy for punch
+    fastAttack_ = 1.0f - std::exp(-1.0f / (static_cast<float>(sampleRate) * 0.0005f));
+    fastRelease_ = 1.0f - std::exp(-1.0f / (static_cast<float>(sampleRate) * 0.005f));
 
-    // Slow envelope: ~20ms attack, ~200ms release
-    slowAttack_ = 1.0f - std::exp(-1.0f / (static_cast<float>(sampleRate) * 0.02f));
-    slowRelease_ = 1.0f - std::exp(-1.0f / (static_cast<float>(sampleRate) * 0.2f));
+    // Slow envelope: ~30ms attack, ~300ms release - bigger difference for more punch
+    slowAttack_ = 1.0f - std::exp(-1.0f / (static_cast<float>(sampleRate) * 0.03f));
+    slowRelease_ = 1.0f - std::exp(-1.0f / (static_cast<float>(sampleRate) * 0.3f));
 
     reset();
 }
@@ -50,9 +50,13 @@ void TransientShaper::process(float& left, float& right) {
     float transientL = std::max(0.0f, fastEnvL_ - slowEnvL_);
     float transientR = std::max(0.0f, fastEnvR_ - slowEnvR_);
 
+    // Amplify transient signal for more pronounced detection
+    transientL = std::min(transientL * 2.0f, 1.0f);
+    transientR = std::min(transientR * 2.0f, 1.0f);
+
     // Apply gain boost to transient portion (amount controls intensity)
-    // Scale: amount=0 -> 1x, amount=1 -> 4x boost
-    float boost = 1.0f + amount_ * 3.0f;
+    // Scale: amount=0 -> 1x, amount=1 -> 8x boost for heavy punch
+    float boost = 1.0f + amount_ * 7.0f;
     float gainL = 1.0f + transientL * (boost - 1.0f);
     float gainR = 1.0f + transientR * (boost - 1.0f);
 

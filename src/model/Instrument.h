@@ -87,9 +87,10 @@ struct ChannelStripParams {
     float punchAmount = 0.0f;   // 0-1 (0 = bypass)
 
     // OTT (3-band multiband dynamics)
-    float ottDepth = 0.0f;      // 0-1 (0 = bypass)
+    float ottLowDepth = 0.0f;   // 0-1 low band depth (0 = bypass)
+    float ottMidDepth = 0.0f;   // 0-1 mid band depth (0 = bypass)
+    float ottHighDepth = 0.0f;  // 0-1 high band depth (0 = bypass)
     float ottMix = 1.0f;        // 0-1 wet/dry
-    float ottSmooth = 0.5f;     // 0-1 (faster to slower attack/release)
 };
 
 class Instrument

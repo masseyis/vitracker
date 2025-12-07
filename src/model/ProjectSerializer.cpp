@@ -243,9 +243,10 @@ juce::var ProjectSerializer::instrumentToVar(const Instrument& inst)
     channelStrip->setProperty("driveAmount", cs.driveAmount);
     channelStrip->setProperty("driveTone", cs.driveTone);
     channelStrip->setProperty("punchAmount", cs.punchAmount);
-    channelStrip->setProperty("ottDepth", cs.ottDepth);
+    channelStrip->setProperty("ottLowDepth", cs.ottLowDepth);
+    channelStrip->setProperty("ottMidDepth", cs.ottMidDepth);
+    channelStrip->setProperty("ottHighDepth", cs.ottHighDepth);
     channelStrip->setProperty("ottMix", cs.ottMix);
-    channelStrip->setProperty("ottSmooth", cs.ottSmooth);
     obj->setProperty("channelStrip", juce::var(channelStrip.get()));
 
     // Per-instrument mixer controls
@@ -353,9 +354,10 @@ void ProjectSerializer::varToInstrument(Instrument& inst, const juce::var& v)
         cs.driveAmount = static_cast<float>(csObj->getProperty("driveAmount"));
         cs.driveTone = static_cast<float>(csObj->getProperty("driveTone"));
         cs.punchAmount = static_cast<float>(csObj->getProperty("punchAmount"));
-        cs.ottDepth = static_cast<float>(csObj->getProperty("ottDepth"));
+        cs.ottLowDepth = static_cast<float>(csObj->getProperty("ottLowDepth"));
+        cs.ottMidDepth = static_cast<float>(csObj->getProperty("ottMidDepth"));
+        cs.ottHighDepth = static_cast<float>(csObj->getProperty("ottHighDepth"));
         cs.ottMix = static_cast<float>(csObj->getProperty("ottMix"));
-        cs.ottSmooth = static_cast<float>(csObj->getProperty("ottSmooth"));
     }
 
     // Per-instrument mixer controls (defaults for old files)

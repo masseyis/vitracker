@@ -83,136 +83,151 @@ void ChannelScreen::drawRow(juce::Graphics& g, juce::Rectangle<int> area, int ro
     auto labelArea = area.removeFromLeft(kLabelWidth);
     g.drawText(rowLabels[row], labelArea, juce::Justification::centredLeft);
 
-    // Parameter display depends on row type
+    // Fixed-width columns for consistent alignment
+    constexpr int kFieldWidth = 160;  // Width for each field (bar + value)
+    constexpr int kFieldBarWidth = 100;
+    constexpr int kFieldSpacing = 16;
+
     auto paramArea = area;
+
+    // Helper lambda to draw a field with bar + value
+    auto drawField = [&](int fieldIndex, float value, float min, float max,
+                         const juce::String& valueText, bool bipolar = false) {
+        auto fieldArea = paramArea.removeFromLeft(kFieldWidth);
+
+        // Focus indicator if this field is selected
+        bool fieldSelected = selected && (cursorField_ == fieldIndex);
+        if (fieldSelected) {
+            g.setColour(juce::Colour(0xff6666aa));
+            g.fillRect(fieldArea.reduced(1, 2));
+        }
+
+        // Bar
+        auto barArea = fieldArea.removeFromLeft(kFieldBarWidth);
+        drawParamBar(g, barArea, value, min, max, bipolar);
+
+        // Value text
+        g.setColour(fieldSelected ? cursorColor : fgColor);
+        g.drawText(valueText, fieldArea, juce::Justification::centredLeft);
+
+        paramArea.removeFromLeft(kFieldSpacing);
+    };
 
     switch (static_cast<ChannelRowType>(row)) {
         case ChannelRowType::HPF: {
-            // Frequency bar + slope indicator
-            auto barArea = paramArea.removeFromLeft(kBarWidth);
-            drawParamBar(g, barArea, strip.hpfFreq, 20.0f, 500.0f);
+            // Frequency
+            juce::String freqText = juce::String(static_cast<int>(strip.hpfFreq)) + "Hz";
+            drawField(0, strip.hpfFreq, 20.0f, 500.0f, freqText);
 
-            g.setColour(fgColor);
-            juce::String freqText = juce::String(static_cast<int>(strip.hpfFreq)) + " Hz";
-            g.drawText(freqText, paramArea.removeFromLeft(60), juce::Justification::centred);
-
+            // Slope (discrete values shown as 0-1 bar)
             static const char* slopes[] = {"OFF", "12dB", "24dB"};
-            g.drawText(slopes[strip.hpfSlope], paramArea.removeFromLeft(50), juce::Justification::centred);
+            float slopeNorm = strip.hpfSlope / 2.0f;
+            drawField(1, slopeNorm, 0.0f, 1.0f, slopes[strip.hpfSlope]);
             break;
         }
 
-        case ChannelRowType::LowShelf:
-        case ChannelRowType::HighShelf: {
-            float gain = (row == static_cast<int>(ChannelRowType::LowShelf))
-                ? strip.lowShelfGain : strip.highShelfGain;
-            float freq = (row == static_cast<int>(ChannelRowType::LowShelf))
-                ? strip.lowShelfFreq : strip.highShelfFreq;
+        case ChannelRowType::LowShelf: {
+            juce::String gainText = (strip.lowShelfGain >= 0 ? "+" : "") + juce::String(strip.lowShelfGain, 1) + "dB";
+            drawField(0, strip.lowShelfGain, -12.0f, 12.0f, gainText, true);
 
-            auto barArea = paramArea.removeFromLeft(kBarWidth);
-            drawParamBar(g, barArea, gain, -12.0f, 12.0f, true);  // Bipolar
-
-            g.setColour(fgColor);
-            juce::String gainText = (gain >= 0 ? "+" : "") + juce::String(gain, 1) + " dB";
-            g.drawText(gainText, paramArea.removeFromLeft(70), juce::Justification::centred);
-
-            juce::String freqText = juce::String(static_cast<int>(freq)) + " Hz";
-            g.drawText(freqText, paramArea.removeFromLeft(70), juce::Justification::centred);
+            juce::String freqText = juce::String(static_cast<int>(strip.lowShelfFreq)) + "Hz";
+            drawField(1, strip.lowShelfFreq, 50.0f, 500.0f, freqText);
             break;
         }
 
         case ChannelRowType::MidEQ: {
-            auto barArea = paramArea.removeFromLeft(kBarWidth);
-            drawParamBar(g, barArea, strip.midGain, -12.0f, 12.0f, true);
-
-            g.setColour(fgColor);
-            juce::String gainText = (strip.midGain >= 0 ? "+" : "") + juce::String(strip.midGain, 1) + " dB";
-            g.drawText(gainText, paramArea.removeFromLeft(70), juce::Justification::centred);
+            juce::String gainText = (strip.midGain >= 0 ? "+" : "") + juce::String(strip.midGain, 1) + "dB";
+            drawField(0, strip.midGain, -12.0f, 12.0f, gainText, true);
 
             juce::String freqText = strip.midFreq >= 1000.0f
                 ? juce::String(strip.midFreq / 1000.0f, 1) + "k"
-                : juce::String(static_cast<int>(strip.midFreq));
-            g.drawText(freqText, paramArea.removeFromLeft(50), juce::Justification::centred);
+                : juce::String(static_cast<int>(strip.midFreq)) + "Hz";
+            drawField(1, strip.midFreq, 200.0f, 8000.0f, freqText);
 
-            g.drawText("Q" + juce::String(strip.midQ, 1), paramArea.removeFromLeft(50), juce::Justification::centred);
+            juce::String qText = "Q" + juce::String(strip.midQ, 1);
+            drawField(2, strip.midQ, 0.5f, 8.0f, qText);
+            break;
+        }
+
+        case ChannelRowType::HighShelf: {
+            juce::String gainText = (strip.highShelfGain >= 0 ? "+" : "") + juce::String(strip.highShelfGain, 1) + "dB";
+            drawField(0, strip.highShelfGain, -12.0f, 12.0f, gainText, true);
+
+            juce::String freqText = strip.highShelfFreq >= 1000.0f
+                ? juce::String(strip.highShelfFreq / 1000.0f, 1) + "k"
+                : juce::String(static_cast<int>(strip.highShelfFreq)) + "Hz";
+            drawField(1, strip.highShelfFreq, 2000.0f, 16000.0f, freqText);
             break;
         }
 
         case ChannelRowType::Drive: {
-            auto barArea = paramArea.removeFromLeft(kBarWidth);
-            drawParamBar(g, barArea, strip.driveAmount, 0.0f, 1.0f);
+            juce::String amtText = juce::String(static_cast<int>(strip.driveAmount * 100)) + "%";
+            drawField(0, strip.driveAmount, 0.0f, 1.0f, amtText);
 
-            g.setColour(fgColor);
-            g.drawText(juce::String(static_cast<int>(strip.driveAmount * 100)) + "%",
-                paramArea.removeFromLeft(50), juce::Justification::centred);
-            g.drawText("Tone:" + juce::String(static_cast<int>(strip.driveTone * 100)) + "%",
-                paramArea.removeFromLeft(80), juce::Justification::centred);
+            juce::String toneText = juce::String(static_cast<int>(strip.driveTone * 100)) + "%";
+            drawField(1, strip.driveTone, 0.0f, 1.0f, toneText);
             break;
         }
 
         case ChannelRowType::Punch: {
-            auto barArea = paramArea.removeFromLeft(kBarWidth);
-            drawParamBar(g, barArea, strip.punchAmount, 0.0f, 1.0f);
-
-            g.setColour(fgColor);
-            g.drawText(juce::String(static_cast<int>(strip.punchAmount * 100)) + "%",
-                paramArea.removeFromLeft(50), juce::Justification::centred);
+            juce::String punchText = juce::String(static_cast<int>(strip.punchAmount * 100)) + "%";
+            drawField(0, strip.punchAmount, 0.0f, 1.0f, punchText);
             break;
         }
 
         case ChannelRowType::OTT: {
-            auto barArea = paramArea.removeFromLeft(kBarWidth);
-            drawParamBar(g, barArea, strip.ottDepth, 0.0f, 1.0f);
+            // 3-band OTT: Low, Mid, High depths + Mix
+            juce::String lowText = juce::String(static_cast<int>(strip.ottLowDepth * 100)) + "%";
+            drawField(0, strip.ottLowDepth, 0.0f, 1.0f, "L:" + lowText);
 
-            g.setColour(fgColor);
-            g.drawText("Depth " + juce::String(static_cast<int>(strip.ottDepth * 100)) + "%",
-                paramArea.removeFromLeft(80), juce::Justification::centred);
-            g.drawText("Mix " + juce::String(static_cast<int>(strip.ottMix * 100)) + "%",
-                paramArea.removeFromLeft(70), juce::Justification::centred);
+            juce::String midText = juce::String(static_cast<int>(strip.ottMidDepth * 100)) + "%";
+            drawField(1, strip.ottMidDepth, 0.0f, 1.0f, "M:" + midText);
+
+            juce::String highText = juce::String(static_cast<int>(strip.ottHighDepth * 100)) + "%";
+            drawField(2, strip.ottHighDepth, 0.0f, 1.0f, "H:" + highText);
+
+            juce::String mixText = juce::String(static_cast<int>(strip.ottMix * 100)) + "%";
+            drawField(3, strip.ottMix, 0.0f, 1.0f, mixText);
             break;
         }
 
         case ChannelRowType::Volume: {
-            auto barArea = paramArea.removeFromLeft(kBarWidth);
-            drawParamBar(g, barArea, inst->getVolume(), 0.0f, 1.0f);
-
-            g.setColour(fgColor);
             float db = 20.0f * std::log10(std::max(0.0001f, inst->getVolume()));
-            g.drawText(juce::String(db, 1) + " dB", paramArea.removeFromLeft(70), juce::Justification::centred);
+            juce::String volText = juce::String(db, 1) + "dB";
+            drawField(0, inst->getVolume(), 0.0f, 1.0f, volText);
             break;
         }
 
         case ChannelRowType::Pan: {
-            auto barArea = paramArea.removeFromLeft(kBarWidth);
-            drawParamBar(g, barArea, inst->getPan(), -1.0f, 1.0f, true);
-
-            g.setColour(fgColor);
             float pan = inst->getPan();
             juce::String panText = (std::abs(pan) < 0.01f) ? "C"
                 : (pan < 0 ? juce::String(static_cast<int>(-pan * 100)) + "L"
                            : juce::String(static_cast<int>(pan * 100)) + "R");
-            g.drawText(panText, paramArea.removeFromLeft(50), juce::Justification::centred);
+            drawField(0, pan, -1.0f, 1.0f, panText, true);
             break;
         }
 
-        case ChannelRowType::Reverb:
-        case ChannelRowType::Delay:
-        case ChannelRowType::Chorus:
+        case ChannelRowType::Reverb: {
+            juce::String text = juce::String(static_cast<int>(sends.reverb * 100)) + "%";
+            drawField(0, sends.reverb, 0.0f, 1.0f, text);
+            break;
+        }
+
+        case ChannelRowType::Delay: {
+            juce::String text = juce::String(static_cast<int>(sends.delay * 100)) + "%";
+            drawField(0, sends.delay, 0.0f, 1.0f, text);
+            break;
+        }
+
+        case ChannelRowType::Chorus: {
+            juce::String text = juce::String(static_cast<int>(sends.chorus * 100)) + "%";
+            drawField(0, sends.chorus, 0.0f, 1.0f, text);
+            break;
+        }
+
         case ChannelRowType::Sidechain: {
-            float value = 0.0f;
-            switch (static_cast<ChannelRowType>(row)) {
-                case ChannelRowType::Reverb: value = sends.reverb; break;
-                case ChannelRowType::Delay: value = sends.delay; break;
-                case ChannelRowType::Chorus: value = sends.chorus; break;
-                case ChannelRowType::Sidechain: value = sends.sidechainDuck; break;
-                default: break;
-            }
-
-            auto barArea = paramArea.removeFromLeft(kBarWidth);
-            drawParamBar(g, barArea, value, 0.0f, 1.0f);
-
-            g.setColour(fgColor);
-            g.drawText(juce::String(static_cast<int>(value * 100)) + "%",
-                paramArea.removeFromLeft(50), juce::Justification::centred);
+            juce::String text = juce::String(static_cast<int>(sends.sidechainDuck * 100)) + "%";
+            drawField(0, sends.sidechainDuck, 0.0f, 1.0f, text);
             break;
         }
 
@@ -339,7 +354,7 @@ int ChannelScreen::getNumFieldsForRow(int row) const {
         case ChannelRowType::MidEQ:     return 3;  // gain, freq, Q
         case ChannelRowType::HighShelf: return 2;  // gain, freq
         case ChannelRowType::Drive:     return 2;  // amount, tone
-        case ChannelRowType::OTT:       return 3;  // depth, mix, smooth
+        case ChannelRowType::OTT:       return 4;  // low, mid, high, mix
         default:                        return 1;
     }
 }
@@ -419,11 +434,13 @@ void ChannelScreen::adjustParam(int row, int field, float delta) {
 
         case ChannelRowType::OTT:
             if (field == 0) {
-                strip.ottDepth = std::clamp(strip.ottDepth + delta * 0.01f, 0.0f, 1.0f);
+                strip.ottLowDepth = std::clamp(strip.ottLowDepth + delta * 0.01f, 0.0f, 1.0f);
             } else if (field == 1) {
-                strip.ottMix = std::clamp(strip.ottMix + delta * 0.01f, 0.0f, 1.0f);
+                strip.ottMidDepth = std::clamp(strip.ottMidDepth + delta * 0.01f, 0.0f, 1.0f);
+            } else if (field == 2) {
+                strip.ottHighDepth = std::clamp(strip.ottHighDepth + delta * 0.01f, 0.0f, 1.0f);
             } else {
-                strip.ottSmooth = std::clamp(strip.ottSmooth + delta * 0.01f, 0.0f, 1.0f);
+                strip.ottMix = std::clamp(strip.ottMix + delta * 0.01f, 0.0f, 1.0f);
             }
             break;
 

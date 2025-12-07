@@ -267,22 +267,24 @@ void Drive::setParams(float gain, float tone)
 
 void Drive::process(float& left, float& right)
 {
-    // Tube-style saturation with asymmetric clipping
+    // Aggressive tube-style saturation with asymmetric clipping
     // Outputs 100% processed signal for send usage
 
-    // Pre-gain (1x to 8x) - reduced range for better control
-    float preGain = 1.0f + gain_ * 7.0f;
+    // Pre-gain (1x to 20x) - more aggressive range for heavy distortion
+    float preGain = 1.0f + gain_ * 19.0f;
 
-    // Asymmetric soft saturation (tube-like)
+    // Asymmetric soft saturation (tube-like) with extra harmonics
     auto saturate = [](float x, float drive) {
         x *= drive;
+        // Add subtle odd harmonics before main saturation
+        float harmonic = x + 0.1f * x * x * x;
         // Asymmetric waveshaper - positive side clips harder
-        if (x > 0.0f) {
+        if (harmonic > 0.0f) {
             // Harder positive clipping (tube-like)
-            return std::tanh(x * 1.2f);
+            return std::tanh(harmonic * 1.5f);
         } else {
-            // Softer negative clipping
-            return std::tanh(x * 0.9f);
+            // Softer negative clipping for asymmetry
+            return std::tanh(harmonic * 1.1f);
         }
     };
 
@@ -291,7 +293,7 @@ void Drive::process(float& left, float& right)
 
     // Tone control: low-pass filter (darker when tone is low)
     // Higher tone = more highs preserved
-    float lpCoeff = 0.1f + tone_ * 0.85f;  // 0.1 to 0.95
+    float lpCoeff = 0.15f + tone_ * 0.8f;  // 0.15 to 0.95
     lpStateL_ += lpCoeff * (satL - lpStateL_);
     lpStateR_ += lpCoeff * (satR - lpStateR_);
 
@@ -301,17 +303,14 @@ void Drive::process(float& left, float& right)
     hpStateR_ = hpCoeff * (hpStateR_ + satR - lpStateR_);
 
     // Mix based on tone: low tone = more filtered, high tone = more original saturation
-    float toneBlend = tone_ * 0.7f + 0.3f;  // 0.3 to 1.0
+    float toneBlend = tone_ * 0.6f + 0.4f;  // 0.4 to 1.0
     left = lpStateL_ * (1.0f - toneBlend) + satL * toneBlend;
     right = lpStateR_ * (1.0f - toneBlend) + satR * toneBlend;
 
-    // Aggressive makeup gain to maintain consistent perceived loudness
-    // tanh saturation increases RMS, so we compensate more heavily
-    // At low gain: minimal compensation, at high gain: significant reduction
-    float makeupGain = 1.0f / (1.0f + gain_ * 1.5f);
+    // Light makeup gain - let it get louder at high drive for more impact
+    // Only compensate slightly to prevent extreme clipping
+    float makeupGain = 1.0f / (1.0f + gain_ * 0.3f);
 
-    // Additional compensation based on input level (louder inputs get more saturation boost)
-    // This helps maintain consistent output regardless of input level
     left *= makeupGain;
     right *= makeupGain;
 }

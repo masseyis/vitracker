@@ -11,7 +11,7 @@ namespace audio {
 class MultibandOTT {
 public:
     void prepare(double sampleRate, int samplesPerBlock);
-    void setParams(float depth, float mix, float smooth);  // All 0-1
+    void setParams(float lowDepth, float midDepth, float highDepth, float mix);  // All 0-1
     void process(float& left, float& right);
     void reset();
 
@@ -21,12 +21,13 @@ private:
         float envDown = 0.0f;  // Downward compressor envelope
     };
 
-    float compressBand(float input, BandState& state, float upThreshold, float downThreshold);
+    float compressBand(float input, BandState& state, float upThreshold, float downThreshold, float depth);
 
     double sampleRate_ = 44100.0;
-    float depth_ = 0.0f;
+    float lowDepth_ = 0.0f;
+    float midDepth_ = 0.0f;
+    float highDepth_ = 0.0f;
     float mix_ = 1.0f;
-    float smooth_ = 0.5f;
 
     // Crossover filters (Linkwitz-Riley = 2x Butterworth cascaded)
     // Low band: below ~100Hz
@@ -43,7 +44,7 @@ private:
     std::array<BandState, 3> bandStatesL_;  // Low, Mid, High
     std::array<BandState, 3> bandStatesR_;
 
-    // Attack/release coefficients (recalculated when smooth changes)
+    // Attack/release coefficients (fixed values for OTT character)
     float attackCoef_ = 0.0f, releaseCoef_ = 0.0f;
 };
 

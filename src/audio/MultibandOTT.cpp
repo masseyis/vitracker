@@ -33,19 +33,18 @@ void MultibandOTT::prepare(double sampleRate, int /*samplesPerBlock*/) {
     highpassR2_.setHighpass(highXover, q);
 
     reset();
-    setParams(depth_, mix_, smooth_);
+    setParams(lowDepth_, midDepth_, highDepth_, mix_);
 }
 
-void MultibandOTT::setParams(float depth, float mix, float smooth) {
-    depth_ = std::clamp(depth, 0.0f, 1.0f);
+void MultibandOTT::setParams(float lowDepth, float midDepth, float highDepth, float mix) {
+    lowDepth_ = std::clamp(lowDepth, 0.0f, 1.0f);
+    midDepth_ = std::clamp(midDepth, 0.0f, 1.0f);
+    highDepth_ = std::clamp(highDepth, 0.0f, 1.0f);
     mix_ = std::clamp(mix, 0.0f, 1.0f);
-    smooth_ = std::clamp(smooth, 0.0f, 1.0f);
 
-    // Calculate attack/release based on smooth parameter
-    // smooth=0 -> fast (5ms attack, 50ms release)
-    // smooth=1 -> slow (50ms attack, 500ms release)
-    float attackMs = 5.0f + smooth_ * 45.0f;
-    float releaseMs = 50.0f + smooth_ * 450.0f;
+    // Fixed attack/release times for classic OTT character (medium-fast)
+    float attackMs = 15.0f;
+    float releaseMs = 150.0f;
 
     attackCoef_ = 1.0f - std::exp(-1.0f / (static_cast<float>(sampleRate_) * attackMs * 0.001f));
     releaseCoef_ = 1.0f - std::exp(-1.0f / (static_cast<float>(sampleRate_) * releaseMs * 0.001f));
@@ -67,7 +66,7 @@ void MultibandOTT::reset() {
     highpassR1_.reset(); highpassR2_.reset();
 }
 
-float MultibandOTT::compressBand(float input, BandState& state, float upThreshold, float downThreshold) {
+float MultibandOTT::compressBand(float input, BandState& state, float upThreshold, float downThreshold, float depth) {
     float absInput = std::abs(input);
 
     // Update envelope followers
@@ -79,25 +78,28 @@ float MultibandOTT::compressBand(float input, BandState& state, float upThreshol
 
     float gain = 1.0f;
 
-    // Upward compression: boost quiet signals
-    if (state.envUp < upThreshold && state.envUp > 0.0001f) {
+    // Upward compression: boost quiet signals aggressively
+    if (state.envUp < upThreshold && state.envUp > 0.00001f) {
         float ratio = upThreshold / state.envUp;
-        gain *= 1.0f + (ratio - 1.0f) * depth_ * 0.5f;
-        gain = std::min(gain, 4.0f);  // Limit boost to ~12dB
+        // Full depth scaling - no 0.5f damping
+        gain *= 1.0f + (ratio - 1.0f) * depth;
+        gain = std::min(gain, 10.0f);  // Limit boost to ~20dB for extreme effect
     }
 
-    // Downward compression: squash loud signals
+    // Downward compression: squash loud signals hard
     if (state.envDown > downThreshold) {
         float ratio = downThreshold / state.envDown;
-        gain *= 1.0f - (1.0f - ratio) * depth_ * 0.5f;
-        gain = std::max(gain, 0.25f);  // Limit reduction to ~-12dB
+        // Full depth scaling - more aggressive squashing
+        gain *= 1.0f - (1.0f - ratio) * depth;
+        gain = std::max(gain, 0.1f);  // Limit reduction to ~-20dB
     }
 
     return input * gain;
 }
 
 void MultibandOTT::process(float& left, float& right) {
-    if (depth_ < 0.001f) return;  // Bypass when off
+    // Bypass when all bands are off
+    if (lowDepth_ < 0.001f && midDepth_ < 0.001f && highDepth_ < 0.001f) return;
 
     float dryL = left, dryR = right;
 
@@ -118,20 +120,21 @@ void MultibandOTT::process(float& left, float& right) {
     float midL = left - lowL - highL;
     float midR = right - lowR - highR;
 
-    // Thresholds per band (different for character)
-    const float lowUpThresh = 0.15f, lowDownThresh = 0.6f;
-    const float midUpThresh = 0.1f, midDownThresh = 0.5f;
-    const float highUpThresh = 0.08f, highDownThresh = 0.4f;
+    // Thresholds per band - more aggressive for pronounced OTT effect
+    // Lower up thresholds = more upward boost, lower down thresholds = more squashing
+    const float lowUpThresh = 0.25f, lowDownThresh = 0.4f;
+    const float midUpThresh = 0.2f, midDownThresh = 0.35f;
+    const float highUpThresh = 0.15f, highDownThresh = 0.3f;
 
-    // Process each band
-    lowL = compressBand(lowL, bandStatesL_[0], lowUpThresh, lowDownThresh);
-    lowR = compressBand(lowR, bandStatesR_[0], lowUpThresh, lowDownThresh);
+    // Process each band with per-band depth control
+    lowL = compressBand(lowL, bandStatesL_[0], lowUpThresh, lowDownThresh, lowDepth_);
+    lowR = compressBand(lowR, bandStatesR_[0], lowUpThresh, lowDownThresh, lowDepth_);
 
-    midL = compressBand(midL, bandStatesL_[1], midUpThresh, midDownThresh);
-    midR = compressBand(midR, bandStatesR_[1], midUpThresh, midDownThresh);
+    midL = compressBand(midL, bandStatesL_[1], midUpThresh, midDownThresh, midDepth_);
+    midR = compressBand(midR, bandStatesR_[1], midUpThresh, midDownThresh, midDepth_);
 
-    highL = compressBand(highL, bandStatesL_[2], highUpThresh, highDownThresh);
-    highR = compressBand(highR, bandStatesR_[2], highUpThresh, highDownThresh);
+    highL = compressBand(highL, bandStatesL_[2], highUpThresh, highDownThresh, highDepth_);
+    highR = compressBand(highR, bandStatesR_[2], highUpThresh, highDownThresh, highDepth_);
 
     // Sum bands back together
     float wetL = lowL + midL + highL;

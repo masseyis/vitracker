@@ -56,7 +56,7 @@ void ChannelStrip::updateParams(const model::ChannelStripParams& params) {
     updateEQ();
     drive_->setParams(params_.driveAmount, params_.driveTone);
     punch_.setAmount(params_.punchAmount);
-    ott_.setParams(params_.ottDepth, params_.ottMix, params_.ottSmooth);
+    ott_.setParams(params_.ottLowDepth, params_.ottMidDepth, params_.ottHighDepth, params_.ottMix);
 }
 
 void ChannelStrip::updateHPF() {
