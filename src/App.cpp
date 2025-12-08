@@ -98,6 +98,10 @@ App::App()
     // Initialize help popup (hidden by default, always on top)
     addChildComponent(helpPopup_);
 
+    // Initialize audio settings popup (hidden by default)
+    audioSettingsPopup_ = std::make_unique<ui::AudioSettingsPopup>(deviceManager_);
+    addChildComponent(audioSettingsPopup_.get());
+
     // Initialize Tip Me button (mouse-only, no keyboard focus)
     tipMeButton_.setColour(juce::TextButton::buttonColourId, juce::Colour(0xffff5e5b));
     tipMeButton_.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
@@ -543,6 +547,10 @@ void App::resized()
     // Help popup covers the whole window
     helpPopup_.setBounds(getLocalBounds());
 
+    // Audio settings popup covers the whole window (centered dialog inside)
+    if (audioSettingsPopup_)
+        audioSettingsPopup_->setBounds(getLocalBounds());
+
     // Position Tip Me button in status bar (right side)
     tipMeButton_.setBounds(statusBarArea.removeFromRight(70).reduced(4, 3));
 }
@@ -566,6 +574,25 @@ void App::visibilityChanged()
 bool App::keyPressed(const juce::KeyPress& key, juce::Component* originatingComponent)
 {
     juce::ignoreUnused(originatingComponent);
+
+    // Handle audio settings popup toggle (~)
+    if (key.getTextCharacter() == '~' || key.getTextCharacter() == '`')
+    {
+        toggleAudioSettings();
+        return true;
+    }
+
+    // If audio settings is showing, Escape or ~ closes it
+    if (audioSettingsPopup_ && audioSettingsPopup_->isShowing())
+    {
+        if (key.getKeyCode() == juce::KeyPress::escapeKey)
+        {
+            hideAudioSettings();
+            return true;
+        }
+        // Allow typing in the settings dialog - don't block all keys
+        return false;
+    }
 
     // Handle help popup toggle
     if (key.getTextCharacter() == '?')
@@ -801,6 +828,33 @@ void App::toggleHelp()
         hideHelp();
     else
         showHelp();
+}
+
+// Audio settings popup
+void App::showAudioSettings()
+{
+    if (audioSettingsPopup_)
+    {
+        audioSettingsPopup_->show();
+        audioSettingsPopup_->toFront(true);
+    }
+}
+
+void App::hideAudioSettings()
+{
+    if (audioSettingsPopup_)
+        audioSettingsPopup_->hide();
+}
+
+void App::toggleAudioSettings()
+{
+    if (audioSettingsPopup_)
+    {
+        if (audioSettingsPopup_->isShowing())
+            hideAudioSettings();
+        else
+            showAudioSettings();
+    }
 }
 
 // Tempo adjust mode
