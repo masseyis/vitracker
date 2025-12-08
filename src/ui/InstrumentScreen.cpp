@@ -187,6 +187,9 @@ InstrumentScreen::InstrumentScreen(model::Project& project, input::ModeManager& 
     samplerWaveformDisplay_ = std::make_unique<WaveformDisplay>();
     addChildComponent(samplerWaveformDisplay_.get());
 
+    // Load DX7 presets from bundled resources (or fall back to built-in presets)
+    dxPresetBank_.loadBundledPresets();
+
     // Start playhead update timer (30Hz for smooth animation)
     startTimer(33);
 }
@@ -274,16 +277,17 @@ void InstrumentScreen::drawTypeSelector(juce::Graphics& g, juce::Rectangle<int> 
     g.setColour(fgColor.darker(0.5f));
     g.drawText("TYPE:", area.removeFromLeft(50), juce::Justification::centredLeft);
 
-    const char* typeNames[] = {"Plaits", "Sampler", "Slicer", "VASynth"};
+    const char* typeNames[] = {"Plaits", "Sampler", "Slicer", "VASynth", "DX7"};
     const model::InstrumentType types[] = {
         model::InstrumentType::Plaits,
         model::InstrumentType::Sampler,
         model::InstrumentType::Slicer,
-        model::InstrumentType::VASynth
+        model::InstrumentType::VASynth,
+        model::InstrumentType::DXPreset
     };
 
-    for (int i = 0; i < 4; ++i) {
-        auto buttonArea = area.removeFromLeft(70);
+    for (int i = 0; i < 5; ++i) {
+        auto buttonArea = area.removeFromLeft(60);
         bool isSelected = (types[i] == currentType);
 
         if (isSelected) {
@@ -349,6 +353,12 @@ void InstrumentScreen::paint(juce::Graphics& g)
     // Check if this is a VA synth instrument and render VA synth UI
     if (instrument && instrument->getType() == model::InstrumentType::VASynth) {
         paintVASynthUI(g);
+        return;
+    }
+
+    // Check if this is a DX Preset instrument and render DX preset UI
+    if (instrument && instrument->getType() == model::InstrumentType::DXPreset) {
+        paintDXPresetUI(g);
         return;
     }
 
@@ -853,6 +863,21 @@ void InstrumentScreen::navigate(int dx, int dy)
         return;
     }
 
+    // Handle DX Preset navigation
+    if (instrument && instrument->getType() == model::InstrumentType::DXPreset) {
+        if (dy != 0) {
+            dxPresetCursorRow_ = std::clamp(dxPresetCursorRow_ + dy, 0, kNumDXPresetRows - 1);
+        }
+        if (dx != 0) {
+            // Left/Right switches instruments in DXPreset mode
+            int numInstruments = project_.getInstrumentCount();
+            currentInstrument_ = (currentInstrument_ + dx + numInstruments) % numInstruments;
+            setCurrentInstrument(currentInstrument_);
+        }
+        repaint();
+        return;
+    }
+
     // Plaits navigation (original behavior)
     if (dx != 0 && !isModRow(cursorRow_))
     {
@@ -1056,6 +1081,11 @@ bool InstrumentScreen::handleEditKey(const juce::KeyPress& key)
     // Check if this is a VA synth instrument and handle VA synth keys
     if (instrument && instrument->getType() == model::InstrumentType::VASynth) {
         return handleVASynthKey(key, true);
+    }
+
+    // Check if this is a DX Preset instrument and handle DX preset keys
+    if (instrument && instrument->getType() == model::InstrumentType::DXPreset) {
+        return handleDXPresetKey(key, true);
     }
 
     // Handle standard actions via KeyAction
@@ -2987,7 +3017,7 @@ void InstrumentScreen::cycleInstrumentType(bool reverse) {
     model::InstrumentType newType;
 
     if (!reverse) {
-        // Forward: Plaits -> Sampler -> Slicer -> VASynth -> Plaits
+        // Forward: Plaits -> Sampler -> Slicer -> VASynth -> DXPreset -> Plaits
         switch (currentType) {
             case model::InstrumentType::Plaits:
                 newType = model::InstrumentType::Sampler;
@@ -2999,6 +3029,9 @@ void InstrumentScreen::cycleInstrumentType(bool reverse) {
                 newType = model::InstrumentType::VASynth;
                 break;
             case model::InstrumentType::VASynth:
+                newType = model::InstrumentType::DXPreset;
+                break;
+            case model::InstrumentType::DXPreset:
                 newType = model::InstrumentType::Plaits;
                 break;
             default:
@@ -3006,9 +3039,12 @@ void InstrumentScreen::cycleInstrumentType(bool reverse) {
                 break;
         }
     } else {
-        // Reverse: Plaits -> VASynth -> Slicer -> Sampler -> Plaits
+        // Reverse: Plaits -> DXPreset -> VASynth -> Slicer -> Sampler -> Plaits
         switch (currentType) {
             case model::InstrumentType::Plaits:
+                newType = model::InstrumentType::DXPreset;
+                break;
+            case model::InstrumentType::DXPreset:
                 newType = model::InstrumentType::VASynth;
                 break;
             case model::InstrumentType::VASynth:
@@ -3042,6 +3078,23 @@ void InstrumentScreen::cycleInstrumentType(bool reverse) {
         }
     }
 
+    // Initialize DX7 processor with first preset when switching to DXPreset type
+    if (newType == model::InstrumentType::DXPreset && audioEngine_) {
+        auto& dxParams = instrument->getDXParams();
+        if (dxPresetBank_.getPresetCount() > 0 && dxParams.presetIndex < 0) {
+            dxParams.presetIndex = 0;  // Start with first preset
+        }
+        // Load the preset into the DX7 processor
+        auto* dx7 = audioEngine_->getDX7Processor(currentInstrument_);
+        if (dx7 && dxParams.presetIndex >= 0) {
+            const auto* preset = dxPresetBank_.getPreset(dxParams.presetIndex);
+            if (preset) {
+                dx7->loadPackedPatch(preset->packedData.data());
+                dx7->setPolyphony(dxParams.polyphony);
+            }
+        }
+    }
+
     repaint();
 }
 
@@ -3065,6 +3118,24 @@ void InstrumentScreen::setCurrentInstrument(int index) {
             samplerWaveformDisplay_->setVisible(type == model::InstrumentType::Sampler);
             if (type == model::InstrumentType::Sampler) {
                 updateSamplerDisplay();
+            }
+        }
+
+        // Sync DX7 processor with preset when switching to a DXPreset instrument
+        if (type == model::InstrumentType::DXPreset && audioEngine_) {
+            auto& dxParams = inst->getDXParams();
+            // Ensure a preset is selected
+            if (dxPresetBank_.getPresetCount() > 0 && dxParams.presetIndex < 0) {
+                dxParams.presetIndex = 0;
+            }
+            // Load the preset into the DX7 processor
+            auto* dx7 = audioEngine_->getDX7Processor(index);
+            if (dx7 && dxParams.presetIndex >= 0) {
+                const auto* preset = dxPresetBank_.getPreset(dxParams.presetIndex);
+                if (preset) {
+                    dx7->loadPackedPatch(preset->packedData.data());
+                    dx7->setPolyphony(dxParams.polyphony);
+                }
             }
         }
     }
@@ -3799,6 +3870,382 @@ std::vector<HelpSection> InstrumentScreen::getHelpContent() const
     }});
 
     return sections;
+}
+
+// ============================================================================
+// DX Preset UI Implementation
+// ============================================================================
+
+void InstrumentScreen::paintDXPresetUI(juce::Graphics& g) {
+    auto area = getLocalBounds();
+    area.removeFromTop(30);  // Instrument tabs
+    area.removeFromTop(26);  // Type selector
+
+    auto* inst = project_.getInstrument(currentInstrument_);
+    if (!inst || inst->getType() != model::InstrumentType::DXPreset) return;
+
+    const auto& dxParams = inst->getDXParams();
+    auto& sends = inst->getSends();
+
+    // Header bar
+    auto headerArea = area.removeFromTop(30);
+    g.setColour(headerColor);
+    g.fillRect(headerArea);
+
+    g.setColour(fgColor);
+    g.setFont(18.0f);
+    juce::String title = "DX7: ";
+    if (editingName_)
+        title += juce::String(nameBuffer_) + "_";
+    else
+        title += juce::String(inst->getName());
+    g.drawText(title, headerArea.reduced(10, 0), juce::Justification::centredLeft, true);
+
+    area = area.reduced(5, 2);
+
+    constexpr int kRowH = 24;
+    constexpr int kDXBarWidth = 180;
+
+    // Lambda to draw a simple row (text value only)
+    auto drawTextRow = [&](int rowIndex, const char* label, const juce::String& value) {
+        auto rowArea = area.removeFromTop(kRowH);
+        bool isSelected = (rowIndex == dxPresetCursorRow_);
+
+        if (isSelected) {
+            g.setColour(highlightColor.withAlpha(0.3f));
+            g.fillRect(rowArea);
+        }
+
+        g.setColour(isSelected ? cursorColor : fgColor);
+        g.setFont(14.0f);
+        g.drawText(label, rowArea.removeFromLeft(kLabelWidth), juce::Justification::centredLeft);
+        g.drawText(value, rowArea, juce::Justification::centredLeft);
+    };
+
+    // Lambda to draw a slider row (with bar)
+    auto drawSliderRow = [&](int rowIndex, const char* label, float value, const juce::String& valueText) {
+        auto rowArea = area.removeFromTop(kRowH);
+        bool isSelected = (rowIndex == dxPresetCursorRow_);
+
+        if (isSelected) {
+            g.setColour(highlightColor.withAlpha(0.3f));
+            g.fillRect(rowArea);
+        }
+
+        g.setColour(isSelected ? cursorColor : fgColor);
+        g.setFont(14.0f);
+        g.drawText(label, rowArea.removeFromLeft(kLabelWidth), juce::Justification::centredLeft);
+
+        // Slider bar
+        int barX = rowArea.getX();
+        int barY = rowArea.getY() + (kRowH - 10) / 2;
+        g.setColour(juce::Colour(0xff303030));
+        g.fillRect(barX, barY, kDXBarWidth, 10);
+        g.setColour(isSelected ? cursorColor : juce::Colour(0xff4a9090));
+        g.fillRect(barX, barY, static_cast<int>(kDXBarWidth * value), 10);
+
+        // Value text
+        g.setColour(isSelected ? cursorColor : fgColor);
+        g.setFont(14.0f);
+        g.drawText(valueText, barX + kDXBarWidth + 8, rowArea.getY(), 60, kRowH, juce::Justification::centredLeft);
+    };
+
+    // Lambda for section headers
+    auto drawHeader = [&](const char* text) {
+        area.removeFromTop(4);
+        g.setColour(fgColor.darker(0.5f));
+        g.setFont(12.0f);
+        g.drawText(text, area.removeFromTop(16), juce::Justification::centredLeft);
+    };
+
+    // Get preset info
+    const auto& presets = dxPresetBank_.getPresets();
+    int presetIndex = dxParams.presetIndex;
+    juce::String cartridgeName = "No cartridge";
+    juce::String presetName = "INIT";
+    int presetInBank = 0;
+
+    if (presetIndex >= 0 && presetIndex < static_cast<int>(presets.size())) {
+        const auto& preset = presets[static_cast<size_t>(presetIndex)];
+        cartridgeName = juce::String(preset.bankName);
+        presetName = juce::String(preset.name);
+        presetInBank = preset.patchIndex;
+    }
+
+    // Draw rows
+    drawHeader("-- PRESET --");
+    drawTextRow(static_cast<int>(DXPresetRowType::Cartridge), "CARTRIDGE", cartridgeName);
+
+    // Preset row with index
+    juce::String presetStr = juce::String(presetInBank + 1) + ". " + presetName;
+    drawTextRow(static_cast<int>(DXPresetRowType::Preset), "PRESET", presetStr);
+
+    drawHeader("-- VOICE --");
+    drawTextRow(static_cast<int>(DXPresetRowType::Polyphony), "VOICES",
+                juce::String(dxParams.polyphony) + (dxParams.polyphony == 1 ? " (MONO)" : ""));
+
+    drawHeader("-- FX SENDS --");
+    drawSliderRow(static_cast<int>(DXPresetRowType::Reverb), "REVERB", sends.reverb,
+                  juce::String(static_cast<int>(sends.reverb * 100)) + "%");
+    drawSliderRow(static_cast<int>(DXPresetRowType::Delay), "DELAY", sends.delay,
+                  juce::String(static_cast<int>(sends.delay * 100)) + "%");
+    drawSliderRow(static_cast<int>(DXPresetRowType::Chorus), "CHORUS", sends.chorus,
+                  juce::String(static_cast<int>(sends.chorus * 100)) + "%");
+    drawSliderRow(static_cast<int>(DXPresetRowType::Drive), "DRIVE", sends.drive,
+                  juce::String(static_cast<int>(sends.drive * 100)) + "%");
+    drawSliderRow(static_cast<int>(DXPresetRowType::Sidechain), "SIDECHAIN", sends.sidechainDuck,
+                  juce::String(static_cast<int>(sends.sidechainDuck * 100)) + "%");
+
+    drawHeader("-- OUTPUT --");
+    drawSliderRow(static_cast<int>(DXPresetRowType::Volume), "VOLUME", inst->getVolume(),
+                  juce::String(static_cast<int>(inst->getVolume() * 100)) + "%");
+
+    float panNormalized = (inst->getPan() + 1.0f) / 2.0f;
+    juce::String panStr;
+    if (inst->getPan() < -0.01f)
+        panStr = "L" + juce::String(static_cast<int>(-inst->getPan() * 100));
+    else if (inst->getPan() > 0.01f)
+        panStr = "R" + juce::String(static_cast<int>(inst->getPan() * 100));
+    else
+        panStr = "C";
+    drawSliderRow(static_cast<int>(DXPresetRowType::Pan), "PAN", panNormalized, panStr);
+
+    // Show total preset count
+    area.removeFromTop(10);
+    g.setColour(fgColor.darker(0.3f));
+    g.setFont(12.0f);
+    g.drawText("Total presets: " + juce::String(static_cast<int>(presets.size())),
+               area.removeFromTop(16), juce::Justification::centredLeft);
+}
+
+bool InstrumentScreen::handleDXPresetKey(const juce::KeyPress& key, bool /*isEditMode*/) {
+    // Use centralized key translation
+    auto action = input::KeyHandler::translateKey(key, getInputContext());
+
+    auto* instrument = project_.getInstrument(currentInstrument_);
+    if (!instrument || instrument->getType() != model::InstrumentType::DXPreset) return false;
+
+    // Handle actions from translateKey()
+    switch (action.action)
+    {
+        case input::KeyAction::PatternPrev:
+            // '[' switch to previous instrument
+            {
+                int numInstruments = project_.getInstrumentCount();
+                if (numInstruments > 0)
+                    currentInstrument_ = (currentInstrument_ - 1 + numInstruments) % numInstruments;
+            }
+            repaint();
+            return true;
+
+        case input::KeyAction::PatternNext:
+            // ']' switch to next instrument
+            {
+                int numInstruments = project_.getInstrumentCount();
+                if (numInstruments > 0)
+                    currentInstrument_ = (currentInstrument_ + 1) % numInstruments;
+            }
+            repaint();
+            return true;
+
+        default:
+            break;
+    }
+
+    auto& dxParams = instrument->getDXParams();
+    auto& sends = instrument->getSends();
+    const auto& presets = dxPresetBank_.getPresets();
+    int numPresets = static_cast<int>(presets.size());
+
+    // Navigation actions
+    switch (action.action)
+    {
+        case input::KeyAction::NavUp:
+            dxPresetCursorRow_ = std::max(0, dxPresetCursorRow_ - 1);
+            repaint();
+            return true;
+
+        case input::KeyAction::NavDown:
+            dxPresetCursorRow_ = std::min(kNumDXPresetRows - 1, dxPresetCursorRow_ + 1);
+            repaint();
+            return true;
+
+        default:
+            break;
+    }
+
+    // Handle edit actions for value adjustment
+    int valueDelta = 0;
+    bool isCoarse = false;
+    switch (action.action)
+    {
+        case input::KeyAction::Edit1Inc:
+        case input::KeyAction::Edit2Inc:
+        case input::KeyAction::ZoomIn:
+        case input::KeyAction::NavRight:
+            valueDelta = 1;
+            break;
+        case input::KeyAction::Edit1Dec:
+        case input::KeyAction::Edit2Dec:
+        case input::KeyAction::ZoomOut:
+        case input::KeyAction::NavLeft:
+            valueDelta = -1;
+            break;
+        case input::KeyAction::ShiftEdit1Inc:
+        case input::KeyAction::ShiftEdit2Inc:
+            valueDelta = 1;
+            isCoarse = true;
+            break;
+        case input::KeyAction::ShiftEdit1Dec:
+        case input::KeyAction::ShiftEdit2Dec:
+            valueDelta = -1;
+            isCoarse = true;
+            break;
+
+        default:
+            break;
+    }
+
+    float delta = isCoarse ? 0.01f : 0.05f;
+
+    if (valueDelta != 0) {
+        switch (static_cast<DXPresetRowType>(dxPresetCursorRow_)) {
+            case DXPresetRowType::Cartridge:
+                // Navigate between cartridges (banks)
+                // Find all unique bank names
+                if (numPresets > 0) {
+                    std::vector<std::string> bankNames;
+                    for (const auto& p : presets) {
+                        if (std::find(bankNames.begin(), bankNames.end(), p.bankName) == bankNames.end()) {
+                            bankNames.push_back(p.bankName);
+                        }
+                    }
+
+                    if (!bankNames.empty()) {
+                        // Find current bank index
+                        std::string currentBank;
+                        if (dxParams.presetIndex >= 0 && dxParams.presetIndex < numPresets) {
+                            currentBank = presets[static_cast<size_t>(dxParams.presetIndex)].bankName;
+                        }
+
+                        int bankIdx = 0;
+                        for (size_t i = 0; i < bankNames.size(); ++i) {
+                            if (bankNames[i] == currentBank) {
+                                bankIdx = static_cast<int>(i);
+                                break;
+                            }
+                        }
+
+                        // Navigate to next/prev bank
+                        bankIdx = (bankIdx + valueDelta + static_cast<int>(bankNames.size())) % static_cast<int>(bankNames.size());
+
+                        // Find first preset in new bank
+                        for (int i = 0; i < numPresets; ++i) {
+                            if (presets[static_cast<size_t>(i)].bankName == bankNames[static_cast<size_t>(bankIdx)]) {
+                                dxParams.presetIndex = i;
+                                break;
+                            }
+                        }
+
+                        // Update DX7Instrument with new patch
+                        if (audioEngine_) {
+                            auto* dx7 = audioEngine_->getDX7Processor(currentInstrument_);
+                            if (dx7 && dxParams.presetIndex >= 0) {
+                                const auto* preset = dxPresetBank_.getPreset(dxParams.presetIndex);
+                                if (preset) {
+                                    dx7->loadPackedPatch(preset->packedData.data());
+                                }
+                            }
+                        }
+                    }
+                }
+                break;
+
+            case DXPresetRowType::Preset:
+                // Navigate within current cartridge
+                if (numPresets > 0) {
+                    std::string currentBank;
+                    if (dxParams.presetIndex >= 0 && dxParams.presetIndex < numPresets) {
+                        currentBank = presets[static_cast<size_t>(dxParams.presetIndex)].bankName;
+                    }
+
+                    // Find presets in same bank
+                    std::vector<int> bankPresets;
+                    for (int i = 0; i < numPresets; ++i) {
+                        if (presets[static_cast<size_t>(i)].bankName == currentBank) {
+                            bankPresets.push_back(i);
+                        }
+                    }
+
+                    if (!bankPresets.empty()) {
+                        // Find current position in bank
+                        int posInBank = 0;
+                        for (size_t i = 0; i < bankPresets.size(); ++i) {
+                            if (bankPresets[i] == dxParams.presetIndex) {
+                                posInBank = static_cast<int>(i);
+                                break;
+                            }
+                        }
+
+                        // Navigate
+                        int step = isCoarse ? 8 : 1;
+                        posInBank = (posInBank + valueDelta * step + static_cast<int>(bankPresets.size())) % static_cast<int>(bankPresets.size());
+                        dxParams.presetIndex = bankPresets[static_cast<size_t>(posInBank)];
+
+                        // Update DX7Instrument with new patch
+                        if (audioEngine_) {
+                            auto* dx7 = audioEngine_->getDX7Processor(currentInstrument_);
+                            if (dx7) {
+                                const auto* preset = dxPresetBank_.getPreset(dxParams.presetIndex);
+                                if (preset) {
+                                    dx7->loadPackedPatch(preset->packedData.data());
+                                }
+                            }
+                        }
+                    }
+                }
+                break;
+
+            case DXPresetRowType::Polyphony:
+                dxParams.polyphony = std::clamp(dxParams.polyphony + valueDelta, 1, 16);
+                if (audioEngine_) {
+                    auto* dx7 = audioEngine_->getDX7Processor(currentInstrument_);
+                    if (dx7) {
+                        dx7->setPolyphony(dxParams.polyphony);
+                    }
+                }
+                break;
+
+            case DXPresetRowType::Reverb:
+                sends.reverb = std::clamp(sends.reverb + valueDelta * delta, 0.0f, 1.0f);
+                break;
+            case DXPresetRowType::Delay:
+                sends.delay = std::clamp(sends.delay + valueDelta * delta, 0.0f, 1.0f);
+                break;
+            case DXPresetRowType::Chorus:
+                sends.chorus = std::clamp(sends.chorus + valueDelta * delta, 0.0f, 1.0f);
+                break;
+            case DXPresetRowType::Drive:
+                sends.drive = std::clamp(sends.drive + valueDelta * delta, 0.0f, 1.0f);
+                break;
+            case DXPresetRowType::Sidechain:
+                sends.sidechainDuck = std::clamp(sends.sidechainDuck + valueDelta * delta, 0.0f, 1.0f);
+                break;
+            case DXPresetRowType::Volume:
+                instrument->setVolume(std::clamp(instrument->getVolume() + valueDelta * delta, 0.0f, 1.0f));
+                break;
+            case DXPresetRowType::Pan:
+                instrument->setPan(std::clamp(instrument->getPan() + valueDelta * delta, -1.0f, 1.0f));
+                break;
+
+            default:
+                break;
+        }
+        repaint();
+        return true;
+    }
+
+    return false;
 }
 
 } // namespace ui

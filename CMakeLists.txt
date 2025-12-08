@@ -59,6 +59,7 @@ target_sources(Vitracker PRIVATE
     src/model/Project.cpp
     src/model/ProjectSerializer.cpp
     src/model/PresetManager.cpp
+    src/model/DX7PresetBank.cpp
     src/input/ModeManager.cpp
     src/input/KeyHandler.cpp
     src/ui/Screen.cpp
@@ -82,6 +83,7 @@ target_sources(Vitracker PRIVATE
     src/audio/SlicerVoice.cpp
     src/audio/SlicerInstrument.cpp
     src/audio/VASynthInstrument.cpp
+    src/audio/DX7Instrument.cpp
     ${DSP_SOURCES}
     ${rubberband_SOURCE_DIR}/single/RubberBandSingle.cpp)
 
@@ -117,3 +119,34 @@ target_link_libraries(Vitracker PRIVATE
 if(APPLE)
     target_link_libraries(Vitracker PRIVATE "-framework Accelerate")
 endif()
+
+# Bundle DX7 preset sysex files as resources
+file(GLOB DX7_SYSEX_FILES "${CMAKE_CURRENT_SOURCE_DIR}/resources/dx7/*.syx")
+juce_add_bundle_resources_directory(Vitracker "${CMAKE_CURRENT_SOURCE_DIR}/resources/dx7")
+
+# Unit Tests
+enable_testing()
+
+add_executable(DX7InstrumentTest
+    tests/DX7InstrumentTest.cpp
+    src/audio/DX7Instrument.cpp
+    ${DSP_SOURCES}
+)
+
+target_include_directories(DX7InstrumentTest PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/dsp
+)
+
+target_compile_definitions(DX7InstrumentTest PRIVATE
+    STMLIB_X86=1
+    $<$<CXX_COMPILER_ID:MSVC>:_USE_MATH_DEFINES>
+    $<$<CXX_COMPILER_ID:MSVC>:NOMINMAX>
+)
+
+target_link_libraries(DX7InstrumentTest PRIVATE
+    GTest::gtest_main
+)
+
+include(GoogleTest)
+gtest_discover_tests(DX7InstrumentTest)

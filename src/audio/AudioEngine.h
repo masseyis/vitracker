@@ -7,6 +7,7 @@
 #include "SamplerInstrument.h"
 #include "SlicerInstrument.h"
 #include "VASynthInstrument.h"
+#include "DX7Instrument.h"
 #include "../model/Project.h"
 #include "../model/Groove.h"
 #include <JuceHeader.h>
@@ -65,6 +66,7 @@ public:
     SamplerInstrument* getSamplerProcessor(int index);
     SlicerInstrument* getSlicerProcessor(int index);
     VASynthInstrument* getVASynthProcessor(int index);
+    DX7Instrument* getDX7Processor(int index);
 
 private:
     Voice* allocateVoice(int note);
@@ -90,6 +92,7 @@ private:
     std::array<std::unique_ptr<SamplerInstrument>, NUM_INSTRUMENTS> samplerProcessors_;
     std::array<std::unique_ptr<SlicerInstrument>, NUM_INSTRUMENTS> slicerProcessors_;
     std::array<std::unique_ptr<VASynthInstrument>, NUM_INSTRUMENTS> vaSynthProcessors_;
+    std::array<std::unique_ptr<DX7Instrument>, NUM_INSTRUMENTS> dx7Processors_;
 
     double sampleRate_ = 48000.0;
     int samplesPerBlock_ = 512;

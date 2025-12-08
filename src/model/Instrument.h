@@ -7,6 +7,7 @@
 #include "SamplerParams.h"
 #include "SlicerParams.h"
 #include "VAParams.h"
+#include "DXParams.h"
 
 namespace model {
 
@@ -14,7 +15,8 @@ enum class InstrumentType {
     Plaits,
     Sampler,
     Slicer,
-    VASynth
+    VASynth,
+    DXPreset
 };
 
 // LFO parameter structure
@@ -85,6 +87,9 @@ public:
     VAParams& getVAParams() { return vaParams_; }
     const VAParams& getVAParams() const { return vaParams_; }
 
+    DXParams& getDXParams() { return dxParams_; }
+    const DXParams& getDXParams() const { return dxParams_; }
+
     // Mixer controls (per-instrument)
     float getVolume() const { return volume_; }
     void setVolume(float v) { volume_ = std::max(0.0f, std::min(1.0f, v)); }
@@ -108,6 +113,7 @@ private:
     SamplerParams samplerParams_;
     SlicerParams slicerParams_;
     VAParams vaParams_;
+    DXParams dxParams_;
 
     // Mixer state
     float volume_ = 1.0f;    // 0.0-1.0
