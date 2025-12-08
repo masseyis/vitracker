@@ -995,7 +995,7 @@ void AudioEngine::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferTo
         avgReverb += sends.reverb * volume;
         avgDelay += sends.delay * volume;
         avgChorus += sends.chorus * volume;
-        avgDrive += sends.drive * volume;
+        // Note: drive is now part of ChannelStrip (per-instrument insert), not a send
         activeCount++;
     }
 

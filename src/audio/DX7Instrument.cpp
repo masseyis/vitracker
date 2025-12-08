@@ -212,8 +212,16 @@ void DX7Instrument::noteOn(int note, float velocity)
     voice.active = true;
     voice.age = voiceCounter_++;
 
-    // Trigger LFO on new note
-    lfo_.keydown();
+    // Trigger LFO only on first note (when no other voices are playing)
+    // The DX7 has a global LFO shared across all voices
+    int activeVoices = 0;
+    for (const auto& v : voices_) {
+        if (v.active) activeVoices++;
+    }
+    if (activeVoices == 1) {  // Only this new voice is active
+        lfo_.keydown();
+        DX7_LOG("  LFO triggered (first voice)");
+    }
     DX7_LOG("  noteOn complete, voice active");
 }
 

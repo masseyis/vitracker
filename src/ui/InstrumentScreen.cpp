@@ -3977,8 +3977,8 @@ void InstrumentScreen::paintDXPresetUI(juce::Graphics& g) {
                   juce::String(static_cast<int>(sends.delay * 100)) + "%");
     drawSliderRow(static_cast<int>(DXPresetRowType::Chorus), "CHORUS", sends.chorus,
                   juce::String(static_cast<int>(sends.chorus * 100)) + "%");
-    drawSliderRow(static_cast<int>(DXPresetRowType::Drive), "DRIVE", sends.drive,
-                  juce::String(static_cast<int>(sends.drive * 100)) + "%");
+    drawSliderRow(static_cast<int>(DXPresetRowType::Drive), "DRIVE", inst->getChannelStrip().driveAmount,
+                  juce::String(static_cast<int>(inst->getChannelStrip().driveAmount * 100)) + "%");
     drawSliderRow(static_cast<int>(DXPresetRowType::Sidechain), "SIDECHAIN", sends.sidechainDuck,
                   juce::String(static_cast<int>(sends.sidechainDuck * 100)) + "%");
 
@@ -4212,7 +4212,7 @@ bool InstrumentScreen::handleDXPresetKey(const juce::KeyPress& key, bool /*isEdi
                 sends.chorus = std::clamp(sends.chorus + valueDelta * delta, 0.0f, 1.0f);
                 break;
             case DXPresetRowType::Drive:
-                sends.drive = std::clamp(sends.drive + valueDelta * delta, 0.0f, 1.0f);
+                instrument->getChannelStrip().driveAmount = std::clamp(instrument->getChannelStrip().driveAmount + valueDelta * delta, 0.0f, 1.0f);
                 break;
             case DXPresetRowType::Sidechain:
                 sends.sidechainDuck = std::clamp(sends.sidechainDuck + valueDelta * delta, 0.0f, 1.0f);
