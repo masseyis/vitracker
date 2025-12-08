@@ -36,7 +36,7 @@ private:
 
     // FX section cursor state
     bool inFxSection_ = false;  // True when cursor is in FX section
-    int cursorFx_ = 0;          // 0 = reverb, 1 = delay, 2 = chorus, 3 = sidechain, 4 = dj filter, 5 = limiter
+    int cursorFx_ = 0;          // 0 = reverb, 1 = delay, 2 = chorus, 3 = sidechain, 4 = DJ filter, 5 = limiter
     int cursorFxParam_ = 0;     // 0 = first param, 1 = second param
 
     static constexpr int kStripWidth = 60;

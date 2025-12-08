@@ -210,17 +210,17 @@ void MixerScreen::drawFxSection(juce::Graphics& g, juce::Rectangle<int> area)
     g.setColour(inFxSection_ ? cursorColor : fgColor.darker(0.3f));
     g.drawText("FX", area.removeFromLeft(30), juce::Justification::centredLeft);
 
-    // Seven effect panels - calculate width accounting for 6 gaps between 7 panels
-    int totalGaps = 6 * 6;  // 6px gap between panels (slightly smaller for 7 panels)
-    int panelWidth = (area.getWidth() - totalGaps) / 7;
-    for (int fx = 0; fx < 7; ++fx)
+    // Six effect panels - calculate width accounting for 5 gaps between 6 panels
+    int totalGaps = 5 * 8;  // 8px gap between panels
+    int panelWidth = (area.getWidth() - totalGaps) / 6;
+    for (int fx = 0; fx < 6; ++fx)
     {
         auto panelArea = area.removeFromLeft(panelWidth);
         bool isSelected = (inFxSection_ && cursorFx_ == fx);
         int selectedParam = isSelected ? cursorFxParam_ : -1;
         drawFxPanel(g, panelArea, fx, isSelected, selectedParam);
-        if (fx < 6)  // Only add gap between panels, not after the last one
-            area.removeFromLeft(6);
+        if (fx < 5)  // Only add gap between panels, not after the last one
+            area.removeFromLeft(8);
     }
 }
 
@@ -235,8 +235,8 @@ void MixerScreen::drawFxPanel(juce::Graphics& g, juce::Rectangle<int> area, int 
         g.fillRoundedRectangle(area.toFloat(), 4.0f);
     }
 
-    // Handle Sidechain panel (index 4) specially
-    if (fxIndex == 4)
+    // Handle Sidechain panel (index 3) specially
+    if (fxIndex == 3)
     {
         // Effect name
         g.setFont(11.0f);
@@ -294,8 +294,8 @@ void MixerScreen::drawFxPanel(juce::Graphics& g, juce::Rectangle<int> area, int 
         return;
     }
 
-    // Handle DJ Filter panel (index 5) - bipolar slider
-    if (fxIndex == 5)
+    // Handle DJ Filter panel (index 4) - bipolar slider
+    if (fxIndex == 4)
     {
         g.setFont(11.0f);
         g.setColour(isSelected ? cursorColor : fgColor);
@@ -348,8 +348,8 @@ void MixerScreen::drawFxPanel(juce::Graphics& g, juce::Rectangle<int> area, int 
         return;
     }
 
-    // Handle Limiter panel (index 6)
-    if (fxIndex == 6)
+    // Handle Limiter panel (index 5)
+    if (fxIndex == 5)
     {
         g.setFont(11.0f);
         g.setColour(isSelected ? cursorColor : fgColor);
@@ -394,7 +394,17 @@ void MixerScreen::drawFxPanel(juce::Graphics& g, juce::Rectangle<int> area, int 
         return;
     }
 
-    // Standard effect panels (0-2)
+    // Standard effect panels (0-2 only)
+    // If we get here, fxIndex should be 0, 1, or 2
+    if (fxIndex < 0 || fxIndex > 2)
+    {
+        // Safety check - should never happen
+        g.setFont(11.0f);
+        g.setColour(juce::Colours::red);
+        g.drawText("ERROR", area.removeFromTop(16), juce::Justification::centred);
+        return;
+    }
+
     const char* fxNames[] = {"REVERB", "DELAY", "CHORUS"};
     const char* param1Names[] = {"Size", "Time", "Rate"};
     const char* param2Names[] = {"Damp", "Fdbk", "Depth"};

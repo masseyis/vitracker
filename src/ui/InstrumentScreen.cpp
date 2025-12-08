@@ -570,53 +570,6 @@ void InstrumentScreen::drawRow(juce::Graphics& g, juce::Rectangle<int> area, int
             }
             break;
 
-        case InstrumentRowType::Reverb:
-            label = "REVERB";
-            value = sends.reverb;
-            valueText = juce::String(static_cast<int>(value * 100)) + "%";
-            break;
-
-        case InstrumentRowType::Delay:
-            label = "DELAY";
-            value = sends.delay;
-            valueText = juce::String(static_cast<int>(value * 100)) + "%";
-            break;
-
-        case InstrumentRowType::Chorus:
-            label = "CHORUS";
-            value = sends.chorus;
-            valueText = juce::String(static_cast<int>(value * 100)) + "%";
-            break;
-
-            valueText = juce::String(static_cast<int>(value * 100)) + "%";
-            break;
-
-        case InstrumentRowType::Sidechain:
-            label = "SIDECHAIN";
-            value = sends.sidechainDuck;
-            valueText = juce::String(static_cast<int>(value * 100)) + "%";
-            break;
-
-        case InstrumentRowType::Volume:
-            label = "VOLUME";
-            value = instrument->getVolume();
-            valueText = juce::String(static_cast<int>(value * 100)) + "%";
-            break;
-
-        case InstrumentRowType::Pan:
-            label = "PAN";
-            {
-                float pan = instrument->getPan();
-                value = (pan + 1.0f) / 2.0f;  // Convert -1..1 to 0..1 for display
-                if (pan < -0.01f)
-                    valueText = "L" + juce::String(static_cast<int>(-pan * 100));
-                else if (pan > 0.01f)
-                    valueText = "R" + juce::String(static_cast<int>(pan * 100));
-                else
-                    valueText = "C";
-            }
-            break;
-
         default:
             break;
     }
@@ -1326,25 +1279,6 @@ void InstrumentScreen::setRowValue(int row, float delta)
         case InstrumentRowType::Resonance:
             clamp01(params.filter.resonance, delta);
             break;
-        case InstrumentRowType::Reverb:
-            clamp01(sends.reverb, delta);
-            break;
-        case InstrumentRowType::Delay:
-            clamp01(sends.delay, delta);
-            break;
-        case InstrumentRowType::Chorus:
-            clamp01(sends.chorus, delta);
-            break;
-            break;
-        case InstrumentRowType::Sidechain:
-            clamp01(sends.sidechainDuck, delta);
-            break;
-        case InstrumentRowType::Volume:
-            instrument->setVolume(instrument->getVolume() + delta);
-            break;
-        case InstrumentRowType::Pan:
-            instrument->setPan(instrument->getPan() + delta);
-            break;
         default:
             break;
     }
@@ -1920,29 +1854,6 @@ bool InstrumentScreen::handleSamplerKey(const juce::KeyPress& key, bool /*isEdit
             case SamplerRowType::Resonance:
                 params.filter.resonance = std::clamp(params.filter.resonance + delta * step, 0.0f, 1.0f);
                 break;
-            // FX sends
-            case SamplerRowType::Reverb:
-                params.modulation.fxSends.reverb = std::clamp(params.modulation.fxSends.reverb + delta * step, 0.0f, 1.0f);
-                break;
-            case SamplerRowType::Delay:
-                params.modulation.fxSends.delay = std::clamp(params.modulation.fxSends.delay + delta * step, 0.0f, 1.0f);
-                break;
-            case SamplerRowType::Chorus:
-                params.modulation.fxSends.chorus = std::clamp(params.modulation.fxSends.chorus + delta * step, 0.0f, 1.0f);
-                break;
-                break;
-            case SamplerRowType::Sidechain:
-                {
-                    auto& sends = instrument->getSends();
-                    sends.sidechainDuck = std::clamp(sends.sidechainDuck + delta * step, 0.0f, 1.0f);
-                }
-                break;
-            case SamplerRowType::Volume:
-                instrument->setVolume(std::clamp(instrument->getVolume() + delta * step, 0.0f, 1.0f));
-                break;
-            case SamplerRowType::Pan:
-                instrument->setPan(std::clamp(instrument->getPan() + delta * step, -1.0f, 1.0f));
-                break;
             default:
                 break;
         }
@@ -2176,37 +2087,7 @@ void InstrumentScreen::paintSamplerUI(juce::Graphics& g) {
     // Row 12: ENV2
     drawSamplerModRow(static_cast<int>(SamplerRowType::Env2), "ENV2", nullptr, &params.modulation.env2);
 
-    // FX sends section header
-    contentArea.removeFromTop(8);
-    g.setColour(fgColor.darker(0.3f));
-    g.drawText("-- FX SENDS --", contentArea.removeFromTop(16), juce::Justification::centredLeft);
-    contentArea.removeFromTop(4);
-
-    // FX send rows use the same slider style
-    drawSamplerSliderRow(static_cast<int>(SamplerRowType::Reverb), "REVERB", params.modulation.fxSends.reverb, juce::String(static_cast<int>(params.modulation.fxSends.reverb * 100)) + "%");
-    drawSamplerSliderRow(static_cast<int>(SamplerRowType::Delay), "DELAY", params.modulation.fxSends.delay, juce::String(static_cast<int>(params.modulation.fxSends.delay * 100)) + "%");
-    drawSamplerSliderRow(static_cast<int>(SamplerRowType::Chorus), "CHORUS", params.modulation.fxSends.chorus, juce::String(static_cast<int>(params.modulation.fxSends.chorus * 100)) + "%");
-    drawSamplerSliderRow(static_cast<int>(SamplerRowType::Sidechain), "SIDECHAIN", inst->getSends().sidechainDuck, juce::String(static_cast<int>(inst->getSends().sidechainDuck * 100)) + "%");
-
-    // Volume & Pan section header
-    contentArea.removeFromTop(8);
-    g.setColour(fgColor.darker(0.3f));
-    g.drawText("-- OUTPUT --", contentArea.removeFromTop(16), juce::Justification::centredLeft);
-    contentArea.removeFromTop(4);
-
-    // Volume
-    float vol = inst->getVolume();
-    juce::String volStr = juce::String(static_cast<int>(vol * 100.0f)) + "%";
-    drawSamplerSliderRow(static_cast<int>(SamplerRowType::Volume), "VOLUME", vol, volStr);
-
-    // Pan
-    float pan = inst->getPan();
-    float panNorm = (pan + 1.0f) / 2.0f;  // Convert -1..1 to 0..1 for bar
-    juce::String panStr;
-    if (pan < -0.01f) panStr = "L" + juce::String(static_cast<int>(-pan * 100));
-    else if (pan > 0.01f) panStr = "R" + juce::String(static_cast<int>(pan * 100));
-    else panStr = "C";
-    drawSamplerSliderRow(static_cast<int>(SamplerRowType::Pan), "PAN", panNorm, panStr);
+    // Volume and Pan removed - now in Mixer screen
 
     // Pitch ratio display
     contentArea.removeFromTop(8);
@@ -2451,37 +2332,8 @@ void InstrumentScreen::paintSlicerUI(juce::Graphics& g) {
     drawSlicerModRow(static_cast<int>(SlicerRowType::Env1), "ENV1", nullptr, &params.modulation.env1);
     drawSlicerModRow(static_cast<int>(SlicerRowType::Env2), "ENV2", nullptr, &params.modulation.env2);
 
-    // FX sends section header
-    contentArea.removeFromTop(8);
-    g.setColour(fgColor.darker(0.3f));
-    g.drawText("-- FX SENDS --", contentArea.removeFromTop(16), juce::Justification::centredLeft);
-    contentArea.removeFromTop(4);
-
-    // FX send rows use slider style
-    drawSlicerSliderRow(static_cast<int>(SlicerRowType::Reverb), "REVERB", params.modulation.fxSends.reverb, juce::String(static_cast<int>(params.modulation.fxSends.reverb * 100)) + "%");
-    drawSlicerSliderRow(static_cast<int>(SlicerRowType::Delay), "DELAY", params.modulation.fxSends.delay, juce::String(static_cast<int>(params.modulation.fxSends.delay * 100)) + "%");
-    drawSlicerSliderRow(static_cast<int>(SlicerRowType::Chorus), "CHORUS", params.modulation.fxSends.chorus, juce::String(static_cast<int>(params.modulation.fxSends.chorus * 100)) + "%");
-    drawSlicerSliderRow(static_cast<int>(SlicerRowType::Sidechain), "SIDECHAIN", inst->getSends().sidechainDuck, juce::String(static_cast<int>(inst->getSends().sidechainDuck * 100)) + "%");
-
     // Output section header
-    contentArea.removeFromTop(8);
-    g.setColour(fgColor.darker(0.3f));
-    g.drawText("-- OUTPUT --", contentArea.removeFromTop(16), juce::Justification::centredLeft);
-    contentArea.removeFromTop(4);
-
-    // Volume
-    float vol = inst->getVolume();
-    juce::String volStr = juce::String(static_cast<int>(vol * 100.0f)) + "%";
-    drawSlicerSliderRow(static_cast<int>(SlicerRowType::Volume), "VOLUME", vol, volStr);
-
-    // Pan
-    float pan = inst->getPan();
-    float panNorm = (pan + 1.0f) / 2.0f;  // Convert -1..1 to 0..1 for bar
-    juce::String panStr;
-    if (pan < -0.01f) panStr = "L" + juce::String(static_cast<int>(-pan * 100));
-    else if (pan > 0.01f) panStr = "R" + juce::String(static_cast<int>(pan * 100));
-    else panStr = "C";
-    drawSlicerSliderRow(static_cast<int>(SlicerRowType::Pan), "PAN", panNorm, panStr);
+    // Volume and Pan removed - now in Mixer screen
 
     // Check lazy chop status
     audio::SlicerInstrument* slicer = nullptr;
@@ -2868,29 +2720,6 @@ bool InstrumentScreen::handleSlicerKey(const juce::KeyPress& key, bool /*isEditM
                 break;
             case SlicerRowType::Polyphony:
                 params.polyphony = std::clamp(params.polyphony + delta, 1, 8);
-                break;
-            // FX sends
-            case SlicerRowType::Reverb:
-                params.modulation.fxSends.reverb = std::clamp(params.modulation.fxSends.reverb + delta * step, 0.0f, 1.0f);
-                break;
-            case SlicerRowType::Delay:
-                params.modulation.fxSends.delay = std::clamp(params.modulation.fxSends.delay + delta * step, 0.0f, 1.0f);
-                break;
-            case SlicerRowType::Chorus:
-                params.modulation.fxSends.chorus = std::clamp(params.modulation.fxSends.chorus + delta * step, 0.0f, 1.0f);
-                break;
-                break;
-            case SlicerRowType::Sidechain:
-                {
-                    auto& sends = inst->getSends();
-                    sends.sidechainDuck = std::clamp(sends.sidechainDuck + delta * step, 0.0f, 1.0f);
-                }
-                break;
-            case SlicerRowType::Volume:
-                inst->setVolume(std::clamp(inst->getVolume() + delta * step, 0.0f, 1.0f));
-                break;
-            case SlicerRowType::Pan:
-                inst->setPan(std::clamp(inst->getPan() + delta * step, -1.0f, 1.0f));
                 break;
             default:
                 break;
@@ -3350,19 +3179,7 @@ void InstrumentScreen::paintVASynthUI(juce::Graphics& g) {
                static_cast<int>(modParams.env2.attack * 100), static_cast<int>(modParams.env2.decay * 100),
                modParams.env2.destIndex, modParams.env2.amount);
 
-    drawHeader(rightCol, "-- FX SENDS --");
-    drawSliderRow(rightCol, static_cast<int>(VASynthRowType::Reverb), "REVERB", modParams.fxSends.reverb, juce::String(static_cast<int>(modParams.fxSends.reverb * 100)) + "%");
-    drawSliderRow(rightCol, static_cast<int>(VASynthRowType::Delay), "DELAY", modParams.fxSends.delay, juce::String(static_cast<int>(modParams.fxSends.delay * 100)) + "%");
-    drawSliderRow(rightCol, static_cast<int>(VASynthRowType::Chorus), "CHORUS", modParams.fxSends.chorus, juce::String(static_cast<int>(modParams.fxSends.chorus * 100)) + "%");
-    drawSliderRow(rightCol, static_cast<int>(VASynthRowType::Sidechain), "SIDECHAIN", inst->getSends().sidechainDuck, juce::String(static_cast<int>(inst->getSends().sidechainDuck * 100)) + "%");
-
-    drawHeader(rightCol, "-- OUTPUT --");
-    drawSliderRow(rightCol, static_cast<int>(VASynthRowType::Volume), "VOLUME", params.masterLevel, juce::String(static_cast<int>(params.masterLevel * 100)) + "%");
-    float pan = inst->getPan();
-    float panNorm = (pan + 1.0f) / 2.0f;  // Convert -1..1 to 0..1 for bar display
-    juce::String panStr = pan < -0.01f ? ("L" + juce::String(static_cast<int>(-pan * 100)))
-                        : pan > 0.01f ? ("R" + juce::String(static_cast<int>(pan * 100))) : "C";
-    drawSliderRow(rightCol, static_cast<int>(VASynthRowType::Pan), "PAN", panNorm, panStr);
+    // Volume and Pan removed - now in Mixer screen
 }
 
 bool InstrumentScreen::handleVASynthKey(const juce::KeyPress& key, bool /*isEditMode*/) {
@@ -3479,8 +3296,8 @@ bool InstrumentScreen::handleVASynthKey(const juce::KeyPress& key, bool /*isEdit
                 int maxRow = static_cast<int>(VASynthRowType::AmpRelease);
                 vaSynthCursorRow_ = std::min(maxRow, vaSynthCursorRow_ + 1);
             } else {
-                // Right column: max is Pan
-                int maxRow = static_cast<int>(VASynthRowType::Pan);
+                // Right column: max is Env2
+                int maxRow = static_cast<int>(VASynthRowType::Env2);
                 vaSynthCursorRow_ = std::min(maxRow, vaSynthCursorRow_ + 1);
             }
             vaSynthCursorField_ = 0;
@@ -3517,10 +3334,10 @@ bool InstrumentScreen::handleVASynthKey(const juce::KeyPress& key, bool /*isEdit
             if (vaSynthCursorCol_ == 0) {
                 vaSynthCursorCol_ = 1;
                 // Map to corresponding row in right column (preserve relative position)
-                // Left column has 19 rows (0-18), right has 17 (19-35)
+                // Left column has 19 rows (0-18), right has rows from FilterAttack to Env2
                 int leftMax = static_cast<int>(VASynthRowType::AmpRelease);
                 int rightMin = static_cast<int>(VASynthRowType::FilterAttack);
-                int rightMax = static_cast<int>(VASynthRowType::Pan);
+                int rightMax = static_cast<int>(VASynthRowType::Env2);
                 int rightRange = rightMax - rightMin;
                 // Map proportionally
                 float ratio = static_cast<float>(vaSynthCursorRow_) / static_cast<float>(leftMax);
@@ -3644,12 +3461,6 @@ bool InstrumentScreen::handleVASynthKey(const juce::KeyPress& key, bool /*isEdit
                     params.polyphony = std::clamp(params.polyphony + valueDelta, 1, 16);
                 }
                 break;
-            case VASynthRowType::Volume:
-                clampFloat(params.masterLevel, valueDelta * delta);
-                break;
-            case VASynthRowType::Pan:
-                instrument->setPan(std::clamp(instrument->getPan() + valueDelta * delta, -1.0f, 1.0f));
-                break;
 
             // Modulation rows - 4 fields each
             case VASynthRowType::Lfo1:
@@ -3694,24 +3505,6 @@ bool InstrumentScreen::handleVASynthKey(const juce::KeyPress& key, bool /*isEdit
                         case 2: env.destIndex = std::clamp(env.destIndex + valueDelta, 0, 8); break;
                         case 3: env.amount = static_cast<int8_t>(std::clamp(static_cast<int>(env.amount) + valueDelta, -64, 63)); break;
                     }
-                }
-                break;
-
-            // FX Sends
-            case VASynthRowType::Reverb:
-                params.modulation.fxSends.reverb = std::clamp(params.modulation.fxSends.reverb + valueDelta * delta, 0.0f, 1.0f);
-                break;
-            case VASynthRowType::Delay:
-                params.modulation.fxSends.delay = std::clamp(params.modulation.fxSends.delay + valueDelta * delta, 0.0f, 1.0f);
-                break;
-            case VASynthRowType::Chorus:
-                params.modulation.fxSends.chorus = std::clamp(params.modulation.fxSends.chorus + valueDelta * delta, 0.0f, 1.0f);
-                break;
-                break;
-            case VASynthRowType::Sidechain:
-                {
-                    auto& sends = instrument->getSends();
-                    sends.sidechainDuck = std::clamp(sends.sidechainDuck + valueDelta * delta, 0.0f, 1.0f);
                 }
                 break;
 
@@ -3970,31 +3763,7 @@ void InstrumentScreen::paintDXPresetUI(juce::Graphics& g) {
     drawTextRow(static_cast<int>(DXPresetRowType::Polyphony), "VOICES",
                 juce::String(dxParams.polyphony) + (dxParams.polyphony == 1 ? " (MONO)" : ""));
 
-    drawHeader("-- FX SENDS --");
-    drawSliderRow(static_cast<int>(DXPresetRowType::Reverb), "REVERB", sends.reverb,
-                  juce::String(static_cast<int>(sends.reverb * 100)) + "%");
-    drawSliderRow(static_cast<int>(DXPresetRowType::Delay), "DELAY", sends.delay,
-                  juce::String(static_cast<int>(sends.delay * 100)) + "%");
-    drawSliderRow(static_cast<int>(DXPresetRowType::Chorus), "CHORUS", sends.chorus,
-                  juce::String(static_cast<int>(sends.chorus * 100)) + "%");
-    drawSliderRow(static_cast<int>(DXPresetRowType::Drive), "DRIVE", inst->getChannelStrip().driveAmount,
-                  juce::String(static_cast<int>(inst->getChannelStrip().driveAmount * 100)) + "%");
-    drawSliderRow(static_cast<int>(DXPresetRowType::Sidechain), "SIDECHAIN", sends.sidechainDuck,
-                  juce::String(static_cast<int>(sends.sidechainDuck * 100)) + "%");
-
-    drawHeader("-- OUTPUT --");
-    drawSliderRow(static_cast<int>(DXPresetRowType::Volume), "VOLUME", inst->getVolume(),
-                  juce::String(static_cast<int>(inst->getVolume() * 100)) + "%");
-
-    float panNormalized = (inst->getPan() + 1.0f) / 2.0f;
-    juce::String panStr;
-    if (inst->getPan() < -0.01f)
-        panStr = "L" + juce::String(static_cast<int>(-inst->getPan() * 100));
-    else if (inst->getPan() > 0.01f)
-        panStr = "R" + juce::String(static_cast<int>(inst->getPan() * 100));
-    else
-        panStr = "C";
-    drawSliderRow(static_cast<int>(DXPresetRowType::Pan), "PAN", panNormalized, panStr);
+    // Volume and Pan removed - now in Mixer screen
 
     // Show total preset count
     area.removeFromTop(10);
@@ -4200,28 +3969,6 @@ bool InstrumentScreen::handleDXPresetKey(const juce::KeyPress& key, bool /*isEdi
                         dx7->setPolyphony(dxParams.polyphony);
                     }
                 }
-                break;
-
-            case DXPresetRowType::Reverb:
-                sends.reverb = std::clamp(sends.reverb + valueDelta * delta, 0.0f, 1.0f);
-                break;
-            case DXPresetRowType::Delay:
-                sends.delay = std::clamp(sends.delay + valueDelta * delta, 0.0f, 1.0f);
-                break;
-            case DXPresetRowType::Chorus:
-                sends.chorus = std::clamp(sends.chorus + valueDelta * delta, 0.0f, 1.0f);
-                break;
-            case DXPresetRowType::Drive:
-                instrument->getChannelStrip().driveAmount = std::clamp(instrument->getChannelStrip().driveAmount + valueDelta * delta, 0.0f, 1.0f);
-                break;
-            case DXPresetRowType::Sidechain:
-                sends.sidechainDuck = std::clamp(sends.sidechainDuck + valueDelta * delta, 0.0f, 1.0f);
-                break;
-            case DXPresetRowType::Volume:
-                instrument->setVolume(std::clamp(instrument->getVolume() + valueDelta * delta, 0.0f, 1.0f));
-                break;
-            case DXPresetRowType::Pan:
-                instrument->setPan(std::clamp(instrument->getPan() + valueDelta * delta, -1.0f, 1.0f));
                 break;
 
             default:

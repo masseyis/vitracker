@@ -44,12 +44,6 @@ enum class VASynthRowType {
     Lfo2,
     Env1,           // Multi-field: attack, decay, dest, amount
     Env2,
-    Reverb,         // FX sends
-    Delay,
-    Chorus,
-    Sidechain,
-    Volume,
-    Pan,
     NumVASynthRows
 };
 
@@ -68,12 +62,6 @@ enum class SamplerRowType {
     Lfo2,
     Env1,           // Multi-field: attack, decay, dest, amount
     Env2,
-    Reverb,         // FX sends
-    Delay,
-    Chorus,
-    Sidechain,
-    Volume,
-    Pan,
     NumSamplerRows
 };
 
@@ -91,12 +79,6 @@ enum class SlicerRowType {
     Lfo2,
     Env1,           // Multi-field: attack, decay, dest, amount
     Env2,
-    Reverb,         // FX sends
-    Delay,
-    Chorus,
-    Sidechain,
-    Volume,
-    Pan,
     NumSlicerRows
 };
 
@@ -105,13 +87,6 @@ enum class DXPresetRowType {
     Cartridge,      // DX7 cartridge/bank file selector
     Preset,         // Preset within the cartridge (0-31)
     Polyphony,      // Voice count (1-16)
-    Reverb,         // FX sends
-    Delay,
-    Chorus,
-    Drive,
-    Sidechain,
-    Volume,
-    Pan,
     NumDXPresetRows
 };
 
@@ -131,12 +106,6 @@ enum class InstrumentRowType {
     Lfo2,
     Env1,
     Env2,
-    Volume,     // Per-instrument mixer controls
-    Pan,
-    Reverb,
-    Delay,
-    Chorus,
-    Sidechain,
     NumRows
 };
 
