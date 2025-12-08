@@ -67,6 +67,7 @@ target_sources(Vitracker PRIVATE
     src/ui/ProjectScreen.cpp
     src/ui/InstrumentScreen.cpp
     src/ui/MixerScreen.cpp
+    src/ui/ChannelScreen.cpp
     src/ui/SongScreen.cpp
     src/ui/ChainScreen.cpp
     src/ui/WaveformDisplay.cpp
@@ -74,9 +75,14 @@ target_sources(Vitracker PRIVATE
     src/ui/SamplerScreen.cpp
     src/ui/HelpPopup.cpp
     src/ui/ChordPopup.cpp
+    src/ui/AudioSettingsPopup.cpp
     src/audio/Voice.cpp
     src/audio/AudioEngine.cpp
     src/audio/Effects.cpp
+    src/audio/BiquadFilter.cpp
+    src/audio/TransientShaper.cpp
+    src/audio/MultibandOTT.cpp
+    src/audio/ChannelStrip.cpp
     src/audio/PlaitsInstrument.cpp
     src/audio/SamplerVoice.cpp
     src/audio/SamplerInstrument.cpp

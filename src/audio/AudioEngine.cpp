@@ -320,6 +320,16 @@ void AudioEngine::prepareToPlay(int samplesPerBlockExpected, double sampleRate)
         }
     }
 
+    // Initialize channel strips
+    for (auto& strip : channelStrips_)
+    {
+        if (!strip)
+        {
+            strip = std::make_unique<ChannelStrip>();
+        }
+        strip->prepare(sampleRate, samplesPerBlockExpected);
+    }
+
     // Initialize legacy voices (can be removed later)
     for (auto& voice : voices_)
     {
@@ -598,7 +608,6 @@ void AudioEngine::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferTo
 
     // Render all instrument processors with per-instrument mixing
     float avgReverb = 0.0f, avgDelay = 0.0f, avgChorus = 0.0f;
-    float avgDrive = 0.0f;
     int activeCount = 0;
 
     for (int instIdx = 0; instIdx < NUM_INSTRUMENTS; ++instIdx)
@@ -646,6 +655,13 @@ void AudioEngine::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferTo
         // Render instrument to temp buffers
         processor->process(tempL.data(), tempR.data(), numSamples);
 
+        // Apply channel strip processing
+        if (instrument && channelStrips_[instIdx])
+        {
+            channelStrips_[instIdx]->updateParams(instrument->getChannelStrip());
+            channelStrips_[instIdx]->process(tempL.data(), tempR.data(), numSamples);
+        }
+
         // Apply volume and pan, mix into output
         // Pan law: constant power (sqrt)
         float leftGain = volume * std::sqrt((1.0f - pan) / 2.0f);
@@ -673,7 +689,6 @@ void AudioEngine::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferTo
             avgReverb += sends.reverb * volume;
             avgDelay += sends.delay * volume;
             avgChorus += sends.chorus * volume;
-            avgDrive += sends.drive * volume;
             activeCount++;
         }
     }
@@ -721,6 +736,13 @@ void AudioEngine::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferTo
         // Render sampler to temp buffers
         sampler->process(tempL.data(), tempR.data(), numSamples);
 
+        // Apply channel strip processing
+        if (instrument && channelStrips_[instIdx])
+        {
+            channelStrips_[instIdx]->updateParams(instrument->getChannelStrip());
+            channelStrips_[instIdx]->process(tempL.data(), tempR.data(), numSamples);
+        }
+
         // Apply volume and pan, mix into output
         float leftGain = volume * std::sqrt((1.0f - pan) / 2.0f);
         float rightGain = volume * std::sqrt((1.0f + pan) / 2.0f);
@@ -744,7 +766,6 @@ void AudioEngine::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferTo
         avgReverb += sends.reverb * volume;
         avgDelay += sends.delay * volume;
         avgChorus += sends.chorus * volume;
-        avgDrive += sends.drive * volume;
         activeCount++;
     }
 
@@ -791,6 +812,13 @@ void AudioEngine::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferTo
         // Render slicer to temp buffers
         slicer->process(tempL.data(), tempR.data(), numSamples);
 
+        // Apply channel strip processing
+        if (instrument && channelStrips_[instIdx])
+        {
+            channelStrips_[instIdx]->updateParams(instrument->getChannelStrip());
+            channelStrips_[instIdx]->process(tempL.data(), tempR.data(), numSamples);
+        }
+
         // Apply volume and pan, mix into output
         float leftGain = volume * std::sqrt((1.0f - pan) / 2.0f);
         float rightGain = volume * std::sqrt((1.0f + pan) / 2.0f);
@@ -814,7 +842,6 @@ void AudioEngine::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferTo
         avgReverb += sends.reverb * volume;
         avgDelay += sends.delay * volume;
         avgChorus += sends.chorus * volume;
-        avgDrive += sends.drive * volume;
         activeCount++;
     }
 
@@ -861,6 +888,13 @@ void AudioEngine::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferTo
         // Render VA synth to temp buffers
         vaSynth->process(tempL.data(), tempR.data(), numSamples);
 
+        // Apply channel strip processing
+        if (instrument && channelStrips_[instIdx])
+        {
+            channelStrips_[instIdx]->updateParams(instrument->getChannelStrip());
+            channelStrips_[instIdx]->process(tempL.data(), tempR.data(), numSamples);
+        }
+
         // Apply volume and pan, mix into output
         float leftGain = volume * std::sqrt((1.0f - pan) / 2.0f);
         float rightGain = volume * std::sqrt((1.0f + pan) / 2.0f);
@@ -884,7 +918,6 @@ void AudioEngine::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferTo
         avgReverb += sends.reverb * volume;
         avgDelay += sends.delay * volume;
         avgChorus += sends.chorus * volume;
-        avgDrive += sends.drive * volume;
         activeCount++;
     }
 
@@ -971,7 +1004,6 @@ void AudioEngine::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferTo
         avgReverb /= static_cast<float>(activeCount);
         avgDelay /= static_cast<float>(activeCount);
         avgChorus /= static_cast<float>(activeCount);
-        avgDrive /= static_cast<float>(activeCount);
     }
 
     // Update effect parameters from project settings
@@ -981,7 +1013,6 @@ void AudioEngine::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferTo
         effects_.reverb.setParams(mixer.reverbSize, mixer.reverbDamping, 1.0f);
         effects_.delay.setParams(mixer.delayTime, mixer.delayFeedback, 1.0f);
         effects_.chorus.setParams(mixer.chorusRate, mixer.chorusDepth, 1.0f);
-        effects_.drive.setParams(mixer.driveGain, mixer.driveTone);
         effects_.sidechain.setParams(mixer.sidechainAttack, mixer.sidechainRelease, mixer.sidechainRatio);
         effects_.djFilter.setPosition(mixer.djFilterPosition);
         effects_.limiter.setParams(mixer.limiterThreshold, mixer.limiterRelease);
@@ -997,8 +1028,8 @@ void AudioEngine::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferTo
             effects_.sidechain.feedSource(sourceLevel);
         }
 
-        // Apply reverb, delay, chorus, drive
-        effects_.process(outL[i], outR[i], avgReverb, avgDelay, avgChorus, avgDrive);
+        // Apply reverb, delay, chorus
+        effects_.process(outL[i], outR[i], avgReverb, avgDelay, avgChorus);
 
         // Apply sidechain ducking to entire output (all instruments except source are ducked)
         // The source instrument is NOT ducked - it triggers the ducking

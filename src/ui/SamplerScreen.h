@@ -22,7 +22,6 @@ public:
         SendReverb,
         SendDelay,
         SendChorus,
-        SendDrive,
         COUNT
     };
 

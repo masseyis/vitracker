@@ -1,6 +1,7 @@
 #include "App.h"
 #include "ui/PatternScreen.h"
 #include "ui/InstrumentScreen.h"
+#include "ui/ChannelScreen.h"
 #include "ui/MixerScreen.h"
 #include "ui/SongScreen.h"
 #include "ui/ChainScreen.h"
@@ -33,19 +34,18 @@ App::App()
     keyHandler_->onScreenSwitch = [this](int screen) {
         if (screen == -1)  // Previous screen (Shift+[)
         {
-            int prev = (currentScreen_ - 1 + 5) % 5;
+            int prev = (currentScreen_ - 1 + 6) % 6;
             switchScreen(prev);
         }
         else if (screen == -2)  // Next screen (Shift+])
         {
-            int next = (currentScreen_ + 1) % 5;
+            int next = (currentScreen_ + 1) % 6;
             switchScreen(next);
         }
-        else if (screen >= 1 && screen <= 5)
+        else if (screen >= 1 && screen <= 6)
         {
-            switchScreen(screen - 1);  // Number keys 1-5
+            switchScreen(screen - 1);  // Number keys 1-6
         }
-        // Key 6 does nothing
     };
     keyHandler_->onPlayStop = [this]() {
         if (audioEngine_.isPlaying())
@@ -75,12 +75,13 @@ App::App()
             screens_[currentScreen_]->navigate(dx, dy);
     };
 
-    // Create screens (1=Song, 2=Chain, 3=Pattern, 4=Instrument, 5=Mixer)
+    // Create screens (1=Song, 2=Chain, 3=Pattern, 4=Instrument, 5=Channel, 6=Mixer)
     screens_[0] = std::make_unique<ui::SongScreen>(project_, modeManager_);
     screens_[1] = std::make_unique<ui::ChainScreen>(project_, modeManager_);
     screens_[2] = std::make_unique<ui::PatternScreen>(project_, modeManager_);
     screens_[3] = std::make_unique<ui::InstrumentScreen>(project_, modeManager_);
-    screens_[4] = std::make_unique<ui::MixerScreen>(project_, modeManager_);
+    screens_[4] = std::make_unique<ui::ChannelScreen>(project_, modeManager_);
+    screens_[5] = std::make_unique<ui::MixerScreen>(project_, modeManager_);
 
     // Give screens access to audio engine for playhead display
     for (auto& screen : screens_)
@@ -97,6 +98,10 @@ App::App()
 
     // Initialize help popup (hidden by default, always on top)
     addChildComponent(helpPopup_);
+
+    // Initialize audio settings popup (hidden by default)
+    audioSettingsPopup_ = std::make_unique<ui::AudioSettingsPopup>(deviceManager_);
+    addChildComponent(audioSettingsPopup_.get());
 
     // Initialize Tip Me button (mouse-only, no keyboard focus)
     tipMeButton_.setColour(juce::TextButton::buttonColourId, juce::Colour(0xffff5e5b));
@@ -188,6 +193,11 @@ App::App()
             if (auto* instrumentScreen = dynamic_cast<ui::InstrumentScreen*>(screens_[3].get()))
             {
                 instrumentScreen->setCurrentInstrument(instrumentIndex);
+            }
+            // Also sync ChannelScreen
+            if (auto* channelScreen = dynamic_cast<ui::ChannelScreen*>(screens_[4].get()))
+            {
+                channelScreen->setCurrentInstrument(instrumentIndex);
             }
             switchScreen(3);  // Switch to Instrument screen
         };
@@ -519,7 +529,7 @@ void App::paint(juce::Graphics& g)
         g.setColour(juce::Colours::white);
         g.setFont(24.0f);
 
-        static const char* screenNames[] = {"SONG", "CHAIN", "PATTERN", "INSTRUMENT", "MIXER"};
+        static const char* screenNames[] = {"SONG", "CHAIN", "PATTERN", "INSTRUMENT", "CHANNEL", "MIXER"};
         g.drawText(juce::String(screenNames[currentScreen_]) + " (Coming Soon)",
                    getLocalBounds().reduced(0, STATUS_BAR_HEIGHT),
                    juce::Justification::centred, true);
@@ -542,6 +552,10 @@ void App::resized()
 
     // Help popup covers the whole window
     helpPopup_.setBounds(getLocalBounds());
+
+    // Audio settings popup covers the whole window (centered dialog inside)
+    if (audioSettingsPopup_)
+        audioSettingsPopup_->setBounds(getLocalBounds());
 
     // Position Tip Me button in status bar (right side)
     tipMeButton_.setBounds(statusBarArea.removeFromRight(70).reduced(4, 3));
@@ -566,6 +580,25 @@ void App::visibilityChanged()
 bool App::keyPressed(const juce::KeyPress& key, juce::Component* originatingComponent)
 {
     juce::ignoreUnused(originatingComponent);
+
+    // Handle audio settings popup toggle (~)
+    if (key.getTextCharacter() == '~' || key.getTextCharacter() == '`')
+    {
+        toggleAudioSettings();
+        return true;
+    }
+
+    // If audio settings is showing, Escape or ~ closes it
+    if (audioSettingsPopup_ && audioSettingsPopup_->isShowing())
+    {
+        if (key.getKeyCode() == juce::KeyPress::escapeKey)
+        {
+            hideAudioSettings();
+            return true;
+        }
+        // Allow typing in the settings dialog - don't block all keys
+        return false;
+    }
 
     // Handle help popup toggle
     if (key.getTextCharacter() == '?')
@@ -624,7 +657,7 @@ bool App::keyPressed(const juce::KeyPress& key, juce::Component* originatingComp
 
 void App::switchScreen(int screenIndex)
 {
-    if (screenIndex < 0 || screenIndex >= 5) return;  // Now 5 screens
+    if (screenIndex < 0 || screenIndex >= 6) return;  // Now 6 screens
     if (screenIndex == currentScreen_) return;
 
     // Exit tempo adjust mode when switching screens
@@ -666,8 +699,8 @@ void App::drawStatusBar(juce::Graphics& g, juce::Rectangle<int> area)
                area.removeFromLeft(120), juce::Justification::centredLeft, true);
 
     // Screen indicator (after mode)
-    static const char* screenKeys[] = {"1:SNG", "2:CHN", "3:PAT", "4:INS", "5:MIX"};
-    for (int i = 0; i < 5; ++i)
+    static const char* screenKeys[] = {"1:SNG", "2:CHN", "3:PAT", "4:INS", "5:CHS", "6:MIX"};
+    for (int i = 0; i < 6; ++i)
     {
         g.setColour(i == currentScreen_ ? juce::Colours::yellow : juce::Colours::grey);
         g.drawText(screenKeys[i], area.removeFromLeft(50), juce::Justification::centred, true);
@@ -801,6 +834,33 @@ void App::toggleHelp()
         hideHelp();
     else
         showHelp();
+}
+
+// Audio settings popup
+void App::showAudioSettings()
+{
+    if (audioSettingsPopup_)
+    {
+        audioSettingsPopup_->show();
+        audioSettingsPopup_->toFront(true);
+    }
+}
+
+void App::hideAudioSettings()
+{
+    if (audioSettingsPopup_)
+        audioSettingsPopup_->hide();
+}
+
+void App::toggleAudioSettings()
+{
+    if (audioSettingsPopup_)
+    {
+        if (audioSettingsPopup_->isShowing())
+            hideAudioSettings();
+        else
+            showAudioSettings();
+    }
 }
 
 // Tempo adjust mode
