@@ -157,6 +157,8 @@ void PlaitsInstrument::allNotesOff()
 {
     voiceAllocator_.AllNotesOff();
     activeVoiceCount_ = 0;
+    hasPendingFX_ = false;  // Stop tracker FX processing
+    lastArpNote_ = -1;  // Reset arpeggio tracking
 }
 
 void PlaitsInstrument::process(float* outL, float* outR, int numSamples)

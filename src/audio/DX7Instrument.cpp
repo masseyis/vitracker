@@ -271,6 +271,8 @@ void DX7Instrument::allNotesOff()
             voice.note->keyup();
         }
     }
+    hasPendingFX_ = false;  // Stop tracker FX processing
+    lastArpNote_ = -1;  // Reset arpeggio tracking
 }
 
 void DX7Instrument::process(float* outL, float* outR, int numSamples)
