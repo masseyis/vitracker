@@ -84,6 +84,7 @@ private:
     // Universal tracker FX
     UniversalTrackerFX trackerFX_;
     bool hasPendingFX_ = false;
+    int lastArpNote_ = -1;  // Track last arpeggio note for monophonic release
 };
 
 } // namespace audio

@@ -189,6 +189,7 @@ void DX7Instrument::noteOnWithFX(int note, float velocity, const model::Step& st
     // Trigger UniversalTrackerFX
     trackerFX_.triggerNote(note, velocity, step);
     hasPendingFX_ = true;
+    lastArpNote_ = note;  // Initialize tracking with base note
 
     // Check if any FX has a delay
     bool hasDelay = false;
@@ -281,6 +282,12 @@ void DX7Instrument::process(float* outL, float* outR, int numSamples)
     // Process tracker FX with callbacks
     if (hasPendingFX_) {
         auto onNoteOn = [this](int note, float velocity) {
+            // For arpeggio, release previous note to keep it monophonic
+            if (lastArpNote_ >= 0 && lastArpNote_ != note) {
+                noteOff(lastArpNote_);
+            }
+            lastArpNote_ = note;
+
             int velocityInt = static_cast<int>(velocity * 127.0f);
             velocityInt = std::clamp(velocityInt, 0, 127);
 
@@ -309,6 +316,7 @@ void DX7Instrument::process(float* outL, float* outR, int numSamples)
 
         auto onNoteOff = [this]() {
             allNotesOff();
+            lastArpNote_ = -1;  // Reset tracking
         };
 
         // Process FX timing and modulation

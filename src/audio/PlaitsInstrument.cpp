@@ -118,6 +118,7 @@ void PlaitsInstrument::noteOnWithFX(int note, float velocity, const model::Step&
     // Trigger UniversalTrackerFX
     trackerFX_.triggerNote(note, velocity, step);
     hasPendingFX_ = true;
+    lastArpNote_ = note;  // Initialize tracking with base note
 
     // If no delay, trigger note immediately
     // Otherwise, the process() method will trigger it after the delay
@@ -163,6 +164,12 @@ void PlaitsInstrument::process(float* outL, float* outR, int numSamples)
     // Process tracker FX with callbacks
     if (hasPendingFX_) {
         auto onNoteOn = [this](int note, float velocity) {
+            // For arpeggio, release previous note to keep it monophonic
+            if (lastArpNote_ >= 0 && lastArpNote_ != note) {
+                voiceAllocator_.NoteOff(lastArpNote_);
+            }
+            lastArpNote_ = note;
+
             float attackMs = mapAttack(attack_);
             float decayMs = mapDecay(decay_);
             voiceAllocator_.NoteOn(note, velocity, attackMs, decayMs);
@@ -178,6 +185,7 @@ void PlaitsInstrument::process(float* outL, float* outR, int numSamples)
         auto onNoteOff = [this]() {
             voiceAllocator_.AllNotesOff();
             activeVoiceCount_ = 0;
+            lastArpNote_ = -1;  // Reset tracking
         };
 
         // Process FX timing and modulation
