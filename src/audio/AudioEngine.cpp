@@ -111,6 +111,9 @@ void AudioEngine::triggerNote(int track, int note, int instrumentIndex, float ve
     if (instrument->getType() == model::InstrumentType::DXPreset)
     {
         // Handle DX7 preset instrument
+        // Sync parameters first to ensure preset is loaded
+        syncInstrumentParams(instrumentIndex);
+
         if (auto* dx7 = getDX7Processor(instrumentIndex))
         {
             dx7->noteOn(note, velocity);
