@@ -801,13 +801,35 @@ void InstrumentScreen::navigate(int dx, int dy)
     // Handle VA Synth navigation
     if (instrument && instrument->getType() == model::InstrumentType::VASynth) {
         if (dy != 0) {
-            vaSynthCursorRow_ = std::clamp(vaSynthCursorRow_ + dy, 0, kNumVASynthRows - 1);
+            // Up/down navigation within current column
+            if (vaSynthCursorCol_ == 0) {
+                // Left column: 0 to AmpRelease
+                int maxRow = static_cast<int>(VASynthRowType::AmpRelease);
+                vaSynthCursorRow_ = std::clamp(vaSynthCursorRow_ + dy, 0, maxRow);
+            } else {
+                // Right column: FilterAttack to Env2
+                int minRow = static_cast<int>(VASynthRowType::FilterAttack);
+                int maxRow = static_cast<int>(VASynthRowType::Env2);
+                vaSynthCursorRow_ = std::clamp(vaSynthCursorRow_ + dy, minRow, maxRow);
+            }
         }
         if (dx != 0) {
-            // Left/Right switches instruments in VASynth mode
-            int numInstruments = project_.getInstrumentCount();
-            currentInstrument_ = (currentInstrument_ + dx + numInstruments) % numInstruments;
-            setCurrentInstrument(currentInstrument_);
+            // Left/Right switches columns
+            if (dx < 0 && vaSynthCursorCol_ == 1) {
+                // Move to left column
+                vaSynthCursorCol_ = 0;
+                // Clamp row to left column range
+                int maxRow = static_cast<int>(VASynthRowType::AmpRelease);
+                vaSynthCursorRow_ = std::min(vaSynthCursorRow_, maxRow);
+            } else if (dx > 0 && vaSynthCursorCol_ == 0) {
+                // Move to right column
+                vaSynthCursorCol_ = 1;
+                // Ensure we're in right column range
+                int minRow = static_cast<int>(VASynthRowType::FilterAttack);
+                if (vaSynthCursorRow_ < minRow) {
+                    vaSynthCursorRow_ = minRow;
+                }
+            }
         }
         repaint();
         return;
@@ -866,15 +888,8 @@ input::InputContext InstrumentScreen::getInputContext() const
     // VA Synth has a two-column grid layout
     if (instrument->getType() == model::InstrumentType::VASynth)
     {
-        // Mod rows (LFO/ENV) are multi-field grids
-        auto rowType = static_cast<VASynthRowType>(vaSynthCursorRow_);
-        if (rowType == VASynthRowType::Lfo1 || rowType == VASynthRowType::Lfo2 ||
-            rowType == VASynthRowType::Env1 || rowType == VASynthRowType::Env2)
-        {
-            return input::InputContext::Grid;
-        }
-        // Non-mod rows are vertical params with horizontal editing
-        return input::InputContext::RowParams;
+        // All VA Synth uses Grid for column navigation
+        return input::InputContext::Grid;
     }
 
     // Sampler/Slicer/Plaits are vertical param lists with potential multi-field mod rows

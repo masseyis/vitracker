@@ -87,6 +87,7 @@ private:
     std::array<Voice, NUM_VOICES> voices_;
     std::array<Voice*, NUM_TRACKS> trackVoices_;  // Current voice per track
     std::array<int, NUM_TRACKS> trackInstruments_; // Current instrument per track
+    std::array<int, NUM_TRACKS> trackNotes_;       // Last note triggered per track (-1 = none)
 
     // New instrument processors (one per instrument slot)
     std::array<std::unique_ptr<PlaitsInstrument>, NUM_INSTRUMENTS> instrumentProcessors_;
