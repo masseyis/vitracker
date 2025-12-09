@@ -72,6 +72,15 @@ void AudioEngine::triggerNote(int track, int note, int instrumentIndex, float ve
     if (instrument->getType() == model::InstrumentType::Sampler)
     {
         // Handle Sampler instrument
+        // Release previous note on this track (same instrument)
+        if (trackInstruments_[track] == instrumentIndex)
+        {
+            if (auto* sampler = getSamplerProcessor(instrumentIndex))
+            {
+                sampler->noteOff(note);
+            }
+        }
+
         if (auto* sampler = getSamplerProcessor(instrumentIndex))
         {
             sampler->setInstrument(instrument);
@@ -85,6 +94,15 @@ void AudioEngine::triggerNote(int track, int note, int instrumentIndex, float ve
     if (instrument->getType() == model::InstrumentType::Slicer)
     {
         // Handle Slicer instrument
+        // Release previous note on this track (same instrument)
+        if (trackInstruments_[track] == instrumentIndex)
+        {
+            if (auto* slicer = getSlicerProcessor(instrumentIndex))
+            {
+                slicer->allNotesOff();
+            }
+        }
+
         if (auto* slicer = getSlicerProcessor(instrumentIndex))
         {
             slicer->setInstrument(instrument);
@@ -98,6 +116,15 @@ void AudioEngine::triggerNote(int track, int note, int instrumentIndex, float ve
     if (instrument->getType() == model::InstrumentType::VASynth)
     {
         // Handle VASynth instrument
+        // Release previous note on this track (same instrument)
+        if (trackInstruments_[track] == instrumentIndex)
+        {
+            if (auto* vaSynth = getVASynthProcessor(instrumentIndex))
+            {
+                vaSynth->noteOff(note);
+            }
+        }
+
         if (auto* vaSynth = getVASynthProcessor(instrumentIndex))
         {
             vaSynth->setInstrument(instrument);
@@ -111,6 +138,15 @@ void AudioEngine::triggerNote(int track, int note, int instrumentIndex, float ve
     if (instrument->getType() == model::InstrumentType::DXPreset)
     {
         // Handle DX7 preset instrument
+        // Release previous note on this track (same instrument)
+        if (trackInstruments_[track] == instrumentIndex)
+        {
+            if (auto* dx7 = getDX7Processor(instrumentIndex))
+            {
+                dx7->allNotesOff();
+            }
+        }
+
         // Sync parameters first to ensure preset is loaded
         syncInstrumentParams(instrumentIndex);
 
