@@ -1,6 +1,7 @@
 #pragma once
 
 #include "InstrumentProcessor.h"
+#include "UniversalTrackerFX.h"
 #include "../dsp/msfa/dx7note.h"
 #include "../dsp/msfa/lfo.h"
 #include "../dsp/msfa/fm_core.h"
@@ -50,6 +51,7 @@ public:
     const char* getPatchName() const;
     void setPolyphony(int voices);
     int getPolyphony() const { return polyphony_; }
+    void setTempo(double bpm);
 
     // Unpack a 128-byte packed patch to 156-byte unpacked format
     static void unpackPatch(const uint8_t* packed, uint8_t* unpacked);
@@ -78,6 +80,10 @@ private:
     FmCore fmCore_;
     Controllers controllers_;
     std::shared_ptr<TuningState> tuning_;
+
+    // Universal tracker FX
+    UniversalTrackerFX trackerFX_;
+    bool hasPendingFX_ = false;
 };
 
 } // namespace audio
