@@ -43,6 +43,16 @@ public:
         cutTick_ = -1;
         offTick_ = -1;
 
+        // Portamento
+        portamentoSpeed_ = 0;
+        portamentoTarget_ = note;
+        currentPitch_ = static_cast<float>(note);
+
+        // Vibrato
+        vibratoSpeed_ = 0;
+        vibratoDepth_ = 0;
+        vibratoPhase_ = 0.0f;
+
         // Process FX commands from step
         for (int i = 0; i < 3; ++i) {
             const auto* fx = (i == 0) ? &step.fx1 : (i == 1) ? &step.fx2 : &step.fx3;
@@ -53,6 +63,15 @@ public:
                     arpNotes_[0] = 0;
                     arpNotes_[1] = (fx->value >> 4) & 0x0F;
                     arpNotes_[2] = fx->value & 0x0F;
+                    break;
+
+                case model::FXType::POR:
+                    portamentoSpeed_ = fx->value;
+                    break;
+
+                case model::FXType::VIB:
+                    vibratoSpeed_ = (fx->value >> 4) & 0x0F;
+                    vibratoDepth_ = fx->value & 0x0F;
                     break;
 
                 case model::FXType::DLY:
@@ -112,12 +131,43 @@ public:
             return false;
         }
 
+        // Portamento - smooth pitch glide (per-sample)
+        if (portamentoSpeed_ > 0) {
+            float glideSpeed = portamentoSpeed_ / 255.0f * 0.1f;  // Scale to reasonable rate
+            if (currentPitch_ < portamentoTarget_) {
+                currentPitch_ = std::min(currentPitch_ + glideSpeed, static_cast<float>(portamentoTarget_));
+            } else if (currentPitch_ > portamentoTarget_) {
+                currentPitch_ = std::max(currentPitch_ - glideSpeed, static_cast<float>(portamentoTarget_));
+            }
+        }
+
+        // Vibrato - LFO pitch modulation (per-sample)
+        if (vibratoSpeed_ > 0 && vibratoDepth_ > 0) {
+            float lfoRate = vibratoSpeed_ / 16.0f * 8.0f;  // 0-8 Hz
+            vibratoPhase_ += (lfoRate * 2.0f * M_PI) / static_cast<float>(sampleRate_);
+            if (vibratoPhase_ > 2.0f * M_PI) vibratoPhase_ -= 2.0f * M_PI;
+        }
+
         return true;
     }
 
     // Get current arpeggio offset in semitones
     int getArpOffset() const {
         return arpNotes_[arpIndex_];
+    }
+
+    // Get modulated pitch (includes portamento glide and vibrato)
+    // Returns MIDI note as float with fractional cents
+    float getPitchModulation() const {
+        float pitch = currentPitch_;
+
+        // Add vibrato modulation
+        if (vibratoSpeed_ > 0 && vibratoDepth_ > 0) {
+            float vibrato = std::sin(vibratoPhase_) * (vibratoDepth_ / 16.0f);  // ±1 semitone max
+            pitch += vibrato;
+        }
+
+        return pitch;
     }
 
     // Check if note should retrigger (and clear flag)
@@ -177,6 +227,16 @@ private:
     int cutTick_ = -1;
     int offTick_ = -1;
     bool shouldReleaseNote_ = false;
+
+    // Portamento
+    int portamentoSpeed_ = 0;
+    int portamentoTarget_ = 60;
+    float currentPitch_ = 60.0f;
+
+    // Vibrato
+    int vibratoSpeed_ = 0;
+    int vibratoDepth_ = 0;
+    float vibratoPhase_ = 0.0f;
 };
 
 } // namespace audio
