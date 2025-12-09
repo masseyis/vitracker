@@ -866,15 +866,9 @@ input::InputContext InstrumentScreen::getInputContext() const
     // VA Synth has a two-column grid layout
     if (instrument->getType() == model::InstrumentType::VASynth)
     {
-        // Mod rows (LFO/ENV) are multi-field grids
-        auto rowType = static_cast<VASynthRowType>(vaSynthCursorRow_);
-        if (rowType == VASynthRowType::Lfo1 || rowType == VASynthRowType::Lfo2 ||
-            rowType == VASynthRowType::Env1 || rowType == VASynthRowType::Env2)
-        {
-            return input::InputContext::Grid;
-        }
-        // Non-mod rows are vertical params with horizontal editing
-        return input::InputContext::RowParams;
+        // All VA Synth rows use Grid context for column navigation
+        // Mod rows (LFO/ENV) also use field navigation within the grid
+        return input::InputContext::Grid;
     }
 
     // Sampler/Slicer/Plaits are vertical param lists with potential multi-field mod rows
