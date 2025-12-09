@@ -1,8 +1,10 @@
 #pragma once
 
 #include "../model/SamplerParams.h"
+#include "../model/Step.h"
 #include "../dsp/adsr_envelope.h"
 #include "../dsp/moog_filter.h"
+#include "TrackerFX.h"
 #include <JuceHeader.h>
 
 namespace audio {
@@ -13,8 +15,10 @@ public:
 
     void setSampleRate(double sampleRate);
     void setSampleData(const float* leftData, const float* rightData, size_t numSamples, int originalSampleRate);
+    void setTempo(float bpm);
 
     void trigger(int midiNote, float velocity, const model::SamplerParams& params);
+    void trigger(int midiNote, float velocity, const model::SamplerParams& params, const model::Step& step);
     void release();
 
     void render(float* leftOut, float* rightOut, int numSamples);
@@ -37,6 +41,7 @@ private:
 
     double playPosition_ = 0.0;
     double playbackRate_ = 1.0;
+    double basePlaybackRate_ = 1.0;  // Base rate without arpeggio
 
     dsp::AdsrEnvelope ampEnvelope_;
     dsp::AdsrEnvelope filterEnvelope_;
@@ -48,6 +53,9 @@ private:
 
     juce::Interpolators::Lagrange interpolatorL_;
     juce::Interpolators::Lagrange interpolatorR_;
+
+    // Tracker FX
+    TrackerFX trackerFX_;
 };
 
 } // namespace audio

@@ -104,6 +104,16 @@ void PlaitsInstrument::setSampleRate(double sampleRate)
 
 void PlaitsInstrument::noteOn(int note, float velocity)
 {
+    model::Step emptyStep;
+    noteOnWithFX(note, velocity, emptyStep);
+}
+
+void PlaitsInstrument::noteOnWithFX(int note, float velocity, const model::Step& step)
+{
+    // Plaits doesn't use TrackerFX (it's for synthesized sounds, not samples)
+    // But we need to implement the interface for consistency
+    (void)step;
+
     float attackMs = mapAttack(attack_);
     float decayMs = mapDecay(decay_);
 

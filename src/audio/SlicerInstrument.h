@@ -25,6 +25,7 @@ public:
     void noteOn(int note, float velocity) override;
     void noteOff(int note) override;
     void allNotesOff() override;
+    void noteOnWithFX(int note, float velocity, const model::Step& step) override;
     void process(float* outL, float* outR, int numSamples) override;
     const char* getTypeName() const override { return "Slicer"; }
 

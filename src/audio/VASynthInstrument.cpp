@@ -38,6 +38,11 @@ void VASynthInstrument::setSampleRate(double sampleRate) {
 }
 
 void VASynthInstrument::noteOn(int note, float velocity) {
+    model::Step emptyStep;
+    noteOnWithFX(note, velocity, emptyStep);
+}
+
+void VASynthInstrument::noteOnWithFX(int note, float velocity, const model::Step& step) {
     if (!instrument_) return;
 
     const auto& params = instrument_->getVAParams();
@@ -48,9 +53,9 @@ void VASynthInstrument::noteOn(int note, float velocity) {
         auto* voice = &voices_[0];
         if (voice->isActive()) {
             // Legato: don't reset envelopes
-            voice->trigger(note, velocity, params);
+            voice->trigger(note, velocity, params, step);
         } else {
-            voice->trigger(note, velocity, params);
+            voice->trigger(note, velocity, params, step);
         }
     } else {
         // Polyphonic mode
@@ -60,7 +65,7 @@ void VASynthInstrument::noteOn(int note, float velocity) {
         }
 
         if (voice) {
-            voice->trigger(note, velocity, params);
+            voice->trigger(note, velocity, params, step);
         }
     }
 
@@ -179,6 +184,10 @@ int64_t VASynthInstrument::getPlayheadPosition() const {
 void VASynthInstrument::setTempo(double bpm) {
     tempo_ = bpm;
     modMatrix_.setTempo(bpm);
+    // Update tempo for all voices for tracker FX timing
+    for (auto& voice : voices_) {
+        voice.setTempo(static_cast<float>(bpm));
+    }
 }
 
 void VASynthInstrument::updateModulationParams() {

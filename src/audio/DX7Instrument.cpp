@@ -172,6 +172,16 @@ int DX7Instrument::findVoiceForNote(int note)
 
 void DX7Instrument::noteOn(int note, float velocity)
 {
+    model::Step emptyStep;
+    noteOnWithFX(note, velocity, emptyStep);
+}
+
+void DX7Instrument::noteOnWithFX(int note, float velocity, const model::Step& step)
+{
+    // DX7 doesn't use TrackerFX (it's for FM synthesis, not samples)
+    // But we need to implement the interface for consistency
+    (void)step;
+
     DX7_LOG("noteOn() called: note=" << note << ", velocity=" << velocity);
 
     int velocityInt = static_cast<int>(velocity * 127.0f);

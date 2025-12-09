@@ -32,6 +32,7 @@ public:
     void init(double sampleRate) override;
     void setSampleRate(double sampleRate) override;
     void noteOn(int note, float velocity) override;
+    void noteOnWithFX(int note, float velocity, const model::Step& step) override;
     void noteOff(int note) override;
     void allNotesOff() override;
     void process(float* outL, float* outR, int numSamples) override;
