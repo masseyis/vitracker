@@ -4,7 +4,7 @@
 #include <iostream>
 
 // Debug logging for DX7
-#define DX7_DEBUG 1
+#define DX7_DEBUG 0
 #if DX7_DEBUG
 #define DX7_LOG(msg) std::cerr << "[DX7] " << msg << std::endl
 #else
