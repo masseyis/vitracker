@@ -6,6 +6,7 @@ AudioEngine::AudioEngine()
 {
     trackVoices_.fill(nullptr);
     trackInstruments_.fill(-1);
+    trackNotes_.fill(-1);
     trackChainPositions_.fill(0);
 
     // Create instrument processors for all slots
@@ -72,6 +73,15 @@ void AudioEngine::triggerNote(int track, int note, int instrumentIndex, float ve
     if (instrument->getType() == model::InstrumentType::Sampler)
     {
         // Handle Sampler instrument
+        // Release previous note only if retriggering the same note on the same track
+        if (trackInstruments_[track] == instrumentIndex && trackNotes_[track] == note)
+        {
+            if (auto* sampler = getSamplerProcessor(instrumentIndex))
+            {
+                sampler->noteOff(note);
+            }
+        }
+
         if (auto* sampler = getSamplerProcessor(instrumentIndex))
         {
             sampler->setInstrument(instrument);
@@ -79,12 +89,22 @@ void AudioEngine::triggerNote(int track, int note, int instrumentIndex, float ve
         }
 
         trackInstruments_[track] = instrumentIndex;
+        trackNotes_[track] = note;
         return;
     }
 
     if (instrument->getType() == model::InstrumentType::Slicer)
     {
         // Handle Slicer instrument
+        // Release previous note only if retriggering the same note (choke behavior)
+        if (trackInstruments_[track] == instrumentIndex && trackNotes_[track] == note)
+        {
+            if (auto* slicer = getSlicerProcessor(instrumentIndex))
+            {
+                slicer->allNotesOff();
+            }
+        }
+
         if (auto* slicer = getSlicerProcessor(instrumentIndex))
         {
             slicer->setInstrument(instrument);
@@ -92,12 +112,22 @@ void AudioEngine::triggerNote(int track, int note, int instrumentIndex, float ve
         }
 
         trackInstruments_[track] = instrumentIndex;
+        trackNotes_[track] = note;
         return;
     }
 
     if (instrument->getType() == model::InstrumentType::VASynth)
     {
         // Handle VASynth instrument
+        // Release previous note only if retriggering the same note on the same track
+        if (trackInstruments_[track] == instrumentIndex && trackNotes_[track] == note)
+        {
+            if (auto* vaSynth = getVASynthProcessor(instrumentIndex))
+            {
+                vaSynth->noteOff(note);
+            }
+        }
+
         if (auto* vaSynth = getVASynthProcessor(instrumentIndex))
         {
             vaSynth->setInstrument(instrument);
@@ -105,12 +135,22 @@ void AudioEngine::triggerNote(int track, int note, int instrumentIndex, float ve
         }
 
         trackInstruments_[track] = instrumentIndex;
+        trackNotes_[track] = note;
         return;
     }
 
     if (instrument->getType() == model::InstrumentType::DXPreset)
     {
         // Handle DX7 preset instrument
+        // Release previous note only if retriggering the same note on the same track
+        if (trackInstruments_[track] == instrumentIndex && trackNotes_[track] == note)
+        {
+            if (auto* dx7 = getDX7Processor(instrumentIndex))
+            {
+                dx7->allNotesOff();
+            }
+        }
+
         // Sync parameters first to ensure preset is loaded
         syncInstrumentParams(instrumentIndex);
 
@@ -120,6 +160,7 @@ void AudioEngine::triggerNote(int track, int note, int instrumentIndex, float ve
         }
 
         trackInstruments_[track] = instrumentIndex;
+        trackNotes_[track] = note;
         return;
     }
 
@@ -395,6 +436,7 @@ void AudioEngine::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferTo
         }
         trackVoices_.fill(nullptr);
         trackInstruments_.fill(-1);
+        trackNotes_.fill(-1);
     }
 
     if (pendingPlay_.load(std::memory_order_acquire))
