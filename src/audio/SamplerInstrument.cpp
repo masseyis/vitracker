@@ -99,6 +99,11 @@ void SamplerInstrument::process(float* outL, float* outR, int numSamples) {
 }
 
 void SamplerInstrument::noteOn(int midiNote, float velocity) {
+    model::Step emptyStep;
+    noteOnWithFX(midiNote, velocity, emptyStep);
+}
+
+void SamplerInstrument::noteOnWithFX(int midiNote, float velocity, const model::Step& step) {
     if (!hasSample() || !instrument_) return;
 
     auto* voice = findFreeVoice();
@@ -119,7 +124,7 @@ void SamplerInstrument::noteOn(int midiNote, float velocity) {
             static_cast<size_t>(sampleBuffer_.getNumSamples()),
             loadedSampleRate_
         );
-        voice->trigger(midiNote, velocity, params);
+        voice->trigger(midiNote, velocity, params, step);
 
         // Trigger modulation envelopes on first note after silence
         int newActiveCount = 0;
@@ -260,6 +265,10 @@ bool SamplerInstrument::loadSample(const juce::File& file) {
 void SamplerInstrument::setTempo(double bpm) {
     tempo_ = bpm;
     modMatrix_.setTempo(bpm);
+    // Update tempo for all voices for tracker FX timing
+    for (auto& voice : voices_) {
+        voice.setTempo(static_cast<float>(bpm));
+    }
 }
 
 void SamplerInstrument::updateModulationParams() {

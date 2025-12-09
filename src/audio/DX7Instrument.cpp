@@ -121,6 +121,11 @@ void DX7Instrument::init(double sampleRate)
         voice.active = false;
         voice.age = 0;
     }
+
+    // Initialize tracker FX
+    trackerFX_.setSampleRate(sampleRate);
+    trackerFX_.setTempo(120.0f);  // Default tempo
+
     DX7_LOG("init() complete - " << DX7_MAX_POLYPHONY << " voices created");
 }
 
@@ -130,6 +135,7 @@ void DX7Instrument::setSampleRate(double sampleRate)
         sampleRate_ = sampleRate;
         Env::init_sr(sampleRate);
         Lfo::init(sampleRate);
+        trackerFX_.setSampleRate(sampleRate);
     }
 }
 
@@ -172,57 +178,82 @@ int DX7Instrument::findVoiceForNote(int note)
 
 void DX7Instrument::noteOn(int note, float velocity)
 {
-    DX7_LOG("noteOn() called: note=" << note << ", velocity=" << velocity);
+    model::Step emptyStep;
+    noteOnWithFX(note, velocity, emptyStep);
+}
 
-    int velocityInt = static_cast<int>(velocity * 127.0f);
-    velocityInt = std::clamp(velocityInt, 0, 127);
-    DX7_LOG("  velocityInt=" << velocityInt);
+void DX7Instrument::noteOnWithFX(int note, float velocity, const model::Step& step)
+{
+    DX7_LOG("noteOnWithFX() called: note=" << note << ", velocity=" << velocity);
 
-    int voiceIdx = findFreeVoice();
-    Voice& voice = voices_[voiceIdx];
-    DX7_LOG("  using voice " << voiceIdx);
+    // Trigger UniversalTrackerFX
+    trackerFX_.triggerNote(note, velocity, step);
+    hasPendingFX_ = true;
+    lastArpNote_ = note;  // Initialize tracking with base note
 
-    // Guard against uninitialized voices
-    if (!voice.note) {
-        DX7_LOG("  ERROR: voice.note is null!");
-        return;
+    // Check if any FX has a delay
+    bool hasDelay = false;
+    for (int i = 0; i < 3; ++i) {
+        const auto* fx = (i == 0) ? &step.fx1 : (i == 1) ? &step.fx2 : &step.fx3;
+        if (fx->type == model::FXType::DLY) {
+            hasDelay = true;
+            break;
+        }
     }
 
-    // Dump patch data for debugging
-    int algo = currentPatch_[134];
-    int feedback = currentPatch_[135];
-    DX7_LOG("  patch algorithm=" << algo << " feedback=" << feedback);
+    // If no delay, trigger note immediately
+    // Otherwise, the process() method will trigger it after the delay
+    if (!hasDelay) {
+        int velocityInt = static_cast<int>(velocity * 127.0f);
+        velocityInt = std::clamp(velocityInt, 0, 127);
+        DX7_LOG("  velocityInt=" << velocityInt);
 
-    // Dump all 6 operators' output levels and EG data
-    for (int op = 0; op < 6; ++op) {
-        int off = op * 21;
-        DX7_LOG("  Op" << (6-op) << ": OL=" << (int)currentPatch_[off+16]
-                << " R1-4=" << (int)currentPatch_[off+0] << "," << (int)currentPatch_[off+1]
-                << "," << (int)currentPatch_[off+2] << "," << (int)currentPatch_[off+3]
-                << " L1-4=" << (int)currentPatch_[off+4] << "," << (int)currentPatch_[off+5]
-                << "," << (int)currentPatch_[off+6] << "," << (int)currentPatch_[off+7]
-                << " mode=" << (int)currentPatch_[off+17] << " coarse=" << (int)currentPatch_[off+18]
-                << " fine=" << (int)currentPatch_[off+19]);
-    }
+        int voiceIdx = findFreeVoice();
+        Voice& voice = voices_[voiceIdx];
+        DX7_LOG("  using voice " << voiceIdx);
 
-    // Initialize the voice with current patch
-    DX7_LOG("  initializing voice with patch (algo=" << algo << ")");
-    voice.note->init(currentPatch_, note, velocityInt, 0, &controllers_);
-    voice.midiNote = note;
-    voice.active = true;
-    voice.age = voiceCounter_++;
+        // Guard against uninitialized voices
+        if (!voice.note) {
+            DX7_LOG("  ERROR: voice.note is null!");
+            return;
+        }
 
-    // Trigger LFO only on first note (when no other voices are playing)
-    // The DX7 has a global LFO shared across all voices
-    int activeVoices = 0;
-    for (const auto& v : voices_) {
-        if (v.active) activeVoices++;
+        // Dump patch data for debugging
+        int algo = currentPatch_[134];
+        int feedback = currentPatch_[135];
+        DX7_LOG("  patch algorithm=" << algo << " feedback=" << feedback);
+
+        // Dump all 6 operators' output levels and EG data
+        for (int op = 0; op < 6; ++op) {
+            int off = op * 21;
+            DX7_LOG("  Op" << (6-op) << ": OL=" << (int)currentPatch_[off+16]
+                    << " R1-4=" << (int)currentPatch_[off+0] << "," << (int)currentPatch_[off+1]
+                    << "," << (int)currentPatch_[off+2] << "," << (int)currentPatch_[off+3]
+                    << " L1-4=" << (int)currentPatch_[off+4] << "," << (int)currentPatch_[off+5]
+                    << "," << (int)currentPatch_[off+6] << "," << (int)currentPatch_[off+7]
+                    << " mode=" << (int)currentPatch_[off+17] << " coarse=" << (int)currentPatch_[off+18]
+                    << " fine=" << (int)currentPatch_[off+19]);
+        }
+
+        // Initialize the voice with current patch
+        DX7_LOG("  initializing voice with patch (algo=" << algo << ")");
+        voice.note->init(currentPatch_, note, velocityInt, 0, &controllers_);
+        voice.midiNote = note;
+        voice.active = true;
+        voice.age = voiceCounter_++;
+
+        // Trigger LFO only on first note (when no other voices are playing)
+        // The DX7 has a global LFO shared across all voices
+        int activeVoices = 0;
+        for (const auto& v : voices_) {
+            if (v.active) activeVoices++;
+        }
+        if (activeVoices == 1) {  // Only this new voice is active
+            lfo_.keydown();
+            DX7_LOG("  LFO triggered (first voice)");
+        }
+        DX7_LOG("  noteOn complete, voice active");
     }
-    if (activeVoices == 1) {  // Only this new voice is active
-        lfo_.keydown();
-        DX7_LOG("  LFO triggered (first voice)");
-    }
-    DX7_LOG("  noteOn complete, voice active");
 }
 
 void DX7Instrument::noteOff(int note)
@@ -247,6 +278,55 @@ void DX7Instrument::process(float* outL, float* outR, int numSamples)
     static int processCallCount = 0;
     static int activeVoiceCount = 0;
     static float maxSampleEver = 0.0f;
+
+    // Process tracker FX with callbacks
+    if (hasPendingFX_) {
+        auto onNoteOn = [this](int note, float velocity) {
+            // For arpeggio, release previous note to keep it monophonic
+            if (lastArpNote_ >= 0 && lastArpNote_ != note) {
+                noteOff(lastArpNote_);
+            }
+            lastArpNote_ = note;
+
+            int velocityInt = static_cast<int>(velocity * 127.0f);
+            velocityInt = std::clamp(velocityInt, 0, 127);
+
+            int voiceIdx = findFreeVoice();
+            Voice& voice = voices_[voiceIdx];
+
+            if (!voice.note) {
+                DX7_LOG("  ERROR: voice.note is null in callback!");
+                return;
+            }
+
+            voice.note->init(currentPatch_, note, velocityInt, 0, &controllers_);
+            voice.midiNote = note;
+            voice.active = true;
+            voice.age = voiceCounter_++;
+
+            // Trigger LFO on first note
+            int activeVoices = 0;
+            for (const auto& v : voices_) {
+                if (v.active) activeVoices++;
+            }
+            if (activeVoices == 1) {
+                lfo_.keydown();
+            }
+        };
+
+        auto onNoteOff = [this]() {
+            allNotesOff();
+            lastArpNote_ = -1;  // Reset tracking
+        };
+
+        // Process FX timing and modulation
+        float currentPitch = trackerFX_.process(numSamples, onNoteOn, onNoteOff);
+
+        // If FX becomes inactive (cut), clear pending flag
+        if (currentPitch < 0.0f && !trackerFX_.isActive()) {
+            hasPendingFX_ = false;
+        }
+    }
 
     // Process in N-sample blocks (N = 64 in msfa)
     constexpr int blockSize = N;
@@ -481,6 +561,11 @@ const char* DX7Instrument::getPatchName() const
 void DX7Instrument::setPolyphony(int voices)
 {
     polyphony_ = std::clamp(voices, 1, DX7_MAX_POLYPHONY);
+}
+
+void DX7Instrument::setTempo(double bpm)
+{
+    trackerFX_.setTempo(static_cast<float>(bpm));
 }
 
 void DX7Instrument::getState(void* data, int maxSize) const

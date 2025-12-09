@@ -85,7 +85,7 @@ void AudioEngine::triggerNote(int track, int note, int instrumentIndex, float ve
         if (auto* sampler = getSamplerProcessor(instrumentIndex))
         {
             sampler->setInstrument(instrument);
-            sampler->noteOn(note, velocity);
+            sampler->noteOnWithFX(note, velocity, step);
         }
 
         trackInstruments_[track] = instrumentIndex;
@@ -108,7 +108,7 @@ void AudioEngine::triggerNote(int track, int note, int instrumentIndex, float ve
         if (auto* slicer = getSlicerProcessor(instrumentIndex))
         {
             slicer->setInstrument(instrument);
-            slicer->noteOn(note, velocity);
+            slicer->noteOnWithFX(note, velocity, step);
         }
 
         trackInstruments_[track] = instrumentIndex;
@@ -131,7 +131,7 @@ void AudioEngine::triggerNote(int track, int note, int instrumentIndex, float ve
         if (auto* vaSynth = getVASynthProcessor(instrumentIndex))
         {
             vaSynth->setInstrument(instrument);
-            vaSynth->noteOn(note, velocity);
+            vaSynth->noteOnWithFX(note, velocity, step);
         }
 
         trackInstruments_[track] = instrumentIndex;
@@ -156,7 +156,7 @@ void AudioEngine::triggerNote(int track, int note, int instrumentIndex, float ve
 
         if (auto* dx7 = getDX7Processor(instrumentIndex))
         {
-            dx7->noteOn(note, velocity);
+            dx7->noteOnWithFX(note, velocity, step);
         }
 
         trackInstruments_[track] = instrumentIndex;
@@ -180,13 +180,10 @@ void AudioEngine::triggerNote(int track, int note, int instrumentIndex, float ve
     // Trigger note on instrument processor
     if (auto* processor = instrumentProcessors_[instrumentIndex].get())
     {
-        processor->noteOn(note, velocity);
+        processor->noteOnWithFX(note, velocity, step);
     }
 
     trackInstruments_[track] = instrumentIndex;
-
-    // Legacy voice for FX processing (optional - can be removed later)
-    juce::ignoreUnused(step);
 }
 
 void AudioEngine::releaseNote(int track)

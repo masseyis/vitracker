@@ -1,6 +1,8 @@
 #pragma once
 
 #include "../model/SlicerParams.h"
+#include "../model/Step.h"
+#include "TrackerFX.h"
 
 namespace audio {
 
@@ -11,9 +13,11 @@ public:
     void setSampleRate(double sampleRate);
     void setSampleData(const float* leftData, const float* rightData, size_t numSamples, int originalSampleRate);
     void setPlaybackSpeed(float speed) { speed_ = speed; }
+    void setTempo(float bpm);
 
     // Trigger a specific slice (sliceIndex maps from MIDI note)
     void trigger(int sliceIndex, float velocity, const model::SlicerParams& params);
+    void trigger(int sliceIndex, float velocity, const model::SlicerParams& params, const model::Step& step);
     void release();
 
     void render(float* leftOut, float* rightOut, int numSamples);
@@ -40,7 +44,11 @@ private:
 
     // Playback rate for sample rate conversion only (no pitch shift)
     double playbackRate_ = 1.0;
+    double basePlaybackRate_ = 1.0;  // Base rate without arpeggio
     float speed_ = 1.0f;  // Speed multiplier from time-stretch params
+
+    // Tracker FX
+    TrackerFX trackerFX_;
 };
 
 } // namespace audio

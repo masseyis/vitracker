@@ -6,6 +6,7 @@
 #include "../dsp/va_oscillator.h"
 #include "../dsp/va_filter.h"
 #include "../model/VAParams.h"
+#include "TrackerFX.h"
 #include <cmath>
 
 namespace audio {
@@ -25,7 +26,12 @@ public:
         ampEnv_.init(sampleRate);
         filterEnv_.init(sampleRate);
         lfo_.init(sampleRate);
+        trackerFX_.setSampleRate(sampleRate);
         reset();
+    }
+
+    void setTempo(float bpm) {
+        trackerFX_.setTempo(bpm);
     }
 
     void reset() {
@@ -44,9 +50,17 @@ public:
     }
 
     void trigger(int midiNote, float velocity, const model::VAParams& params) {
+        model::Step emptyStep;
+        trigger(midiNote, velocity, params, emptyStep);
+    }
+
+    void trigger(int midiNote, float velocity, const model::VAParams& params, const model::Step& step) {
         note_ = midiNote;
         velocity_ = velocity;
         active_ = true;
+
+        // Trigger FX processor
+        trackerFX_.triggerNote(midiNote, velocity, step);
 
         // Calculate base frequency
         targetFreq_ = midiNoteToFreq(midiNote);
@@ -90,6 +104,23 @@ public:
 
     // Process a single sample
     float process(const model::VAParams& params) {
+        // Process tracker FX (handles note delay, cut, off, retrigger)
+        if (!trackerFX_.processSample()) {
+            // FX says note should not play (delay or cut)
+            return 0.0f;
+        }
+
+        // Check for note off trigger from FX
+        if (trackerFX_.shouldReleaseNote()) {
+            release();
+        }
+
+        // Check for retrigger from FX
+        if (trackerFX_.shouldRetrigger()) {
+            ampEnv_.trigger();
+            filterEnv_.trigger();
+        }
+
         if (!isActive()) {
             active_ = false;
             return 0.0f;
@@ -98,12 +129,19 @@ public:
         // Apply glide
         currentFreq_ += (targetFreq_ - currentFreq_) * glideRate_;
 
+        // Get arpeggio offset from FX and apply to frequency
+        int arpOffset = trackerFX_.getArpOffset();
+        float arpFreq = currentFreq_;
+        if (arpOffset != 0) {
+            arpFreq = midiNoteToFreq(note_ + arpOffset);
+        }
+
         // Process LFO
         float lfoValue = lfo_.process();
 
         // Apply LFO pitch modulation
         float pitchMod = 1.0f + lfoValue * params.lfo.toPitch * 0.5f;  // +/- 50% = 1 octave
-        float modulatedFreq = currentFreq_ * pitchMod;
+        float modulatedFreq = arpFreq * pitchMod;
 
         // Update oscillator frequencies with individual tuning
         updateOscFrequencies(modulatedFreq, params);
@@ -269,6 +307,9 @@ private:
     float targetFreq_ = 440.0f;
     float currentFreq_ = 440.0f;
     float glideRate_ = 1.0f;
+
+    // Tracker FX
+    TrackerFX trackerFX_;
 };
 
 } // namespace audio

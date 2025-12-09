@@ -117,6 +117,11 @@ int SlicerInstrument::midiNoteToSliceIndex(int midiNote) const {
 }
 
 void SlicerInstrument::noteOn(int midiNote, float velocity) {
+    model::Step emptyStep;
+    noteOnWithFX(midiNote, velocity, emptyStep);
+}
+
+void SlicerInstrument::noteOnWithFX(int midiNote, float velocity, const model::Step& step) {
     if (!hasSample() || !instrument_) return;
 
     int sliceIndex = midiNoteToSliceIndex(midiNote);
@@ -167,7 +172,7 @@ void SlicerInstrument::noteOn(int midiNote, float velocity) {
             loadedSampleRate_
         );
         voice->setPlaybackSpeed(playbackSpeed);
-        voice->trigger(sliceIndex, velocity, params);
+        voice->trigger(sliceIndex, velocity, params, step);
 
         // Trigger modulation envelopes on first note after silence
         int newActiveCount = 0;
@@ -823,6 +828,10 @@ static float mapDecayMs(float normalized) {
 void SlicerInstrument::setTempo(double bpm) {
     tempo_ = bpm;
     modMatrix_.setTempo(bpm);
+    // Update tempo for all voices for tracker FX timing
+    for (auto& voice : voices_) {
+        voice.setTempo(static_cast<float>(bpm));
+    }
 }
 
 void SlicerInstrument::updateModulationParams() {

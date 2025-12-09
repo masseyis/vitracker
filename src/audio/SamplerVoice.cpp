@@ -14,6 +14,11 @@ void SamplerVoice::setSampleRate(double sampleRate) {
     filterEnvelope_.setSampleRate(static_cast<float>(sampleRate));
     filterL_.Init(static_cast<float>(sampleRate));
     filterR_.Init(static_cast<float>(sampleRate));
+    trackerFX_.setSampleRate(sampleRate);
+}
+
+void SamplerVoice::setTempo(float bpm) {
+    trackerFX_.setTempo(bpm);
 }
 
 void SamplerVoice::setSampleData(const float* leftData, const float* rightData, size_t numSamples, int originalSampleRate) {
@@ -24,7 +29,15 @@ void SamplerVoice::setSampleData(const float* leftData, const float* rightData, 
 }
 
 void SamplerVoice::trigger(int midiNote, float velocity, const model::SamplerParams& params) {
+    model::Step emptyStep;
+    trigger(midiNote, velocity, params, emptyStep);
+}
+
+void SamplerVoice::trigger(int midiNote, float velocity, const model::SamplerParams& params, const model::Step& step) {
     if (!sampleDataL_ || sampleLength_ == 0) return;
+
+    // Trigger FX processor
+    trackerFX_.triggerNote(midiNote, velocity, step);
 
     currentNote_ = midiNote;
     rootNote_ = params.rootNote;
@@ -33,14 +46,17 @@ void SamplerVoice::trigger(int midiNote, float velocity, const model::SamplerPar
     playPosition_ = 0.0;
 
     // Base playback rate for sample rate conversion
-    playbackRate_ = static_cast<double>(originalSampleRate_) / sampleRate_;
+    basePlaybackRate_ = static_cast<double>(originalSampleRate_) / sampleRate_;
 
     // Apply auto-repitch ratio if enabled (transposes sample to nearest C)
-    playbackRate_ *= static_cast<double>(params.pitchRatio);
+    basePlaybackRate_ *= static_cast<double>(params.pitchRatio);
 
     // Apply pitch shift based on MIDI note vs root note (for keyboard playback)
     double semitones = midiNote - rootNote_;
-    playbackRate_ *= std::pow(2.0, semitones / 12.0);
+    basePlaybackRate_ *= std::pow(2.0, semitones / 12.0);
+
+    // Set initial playback rate (will be modulated by arpeggio in render)
+    playbackRate_ = basePlaybackRate_;
 
     // Set up envelopes
     ampEnvelope_.setAttack(params.ampEnvelope.attack);
@@ -81,12 +97,41 @@ void SamplerVoice::render(float* leftOut, float* rightOut, int numSamples) {
     }
 
     for (int i = 0; i < numSamples; ++i) {
+        // Process tracker FX (handles note delay, cut, off, retrigger)
+        if (!trackerFX_.processSample()) {
+            // FX says note should not play (delay or cut)
+            leftOut[i] = 0.0f;
+            rightOut[i] = 0.0f;
+            continue;
+        }
+
+        // Check for note off trigger from FX
+        if (trackerFX_.shouldReleaseNote()) {
+            release();
+        }
+
+        // Check for retrigger from FX
+        if (trackerFX_.shouldRetrigger()) {
+            ampEnvelope_.trigger();
+            filterEnvelope_.trigger();
+            playPosition_ = 0.0;  // Reset sample position
+        }
+
         // Check if we've reached end of sample
         if (playPosition_ >= static_cast<double>(sampleLength_ - 1)) {
             active_ = false;
             leftOut[i] = 0.0f;
             rightOut[i] = 0.0f;
             continue;
+        }
+
+        // Apply arpeggio offset to playback rate
+        int arpOffset = trackerFX_.getArpOffset();
+        if (arpOffset != 0) {
+            // Adjust playback rate based on arpeggio semitone offset
+            playbackRate_ = basePlaybackRate_ * std::pow(2.0, arpOffset / 12.0);
+        } else {
+            playbackRate_ = basePlaybackRate_;
         }
 
         // Linear interpolation for sample playback

@@ -8,6 +8,11 @@ SlicerVoice::SlicerVoice() = default;
 
 void SlicerVoice::setSampleRate(double sampleRate) {
     sampleRate_ = sampleRate;
+    trackerFX_.setSampleRate(sampleRate);
+}
+
+void SlicerVoice::setTempo(float bpm) {
+    trackerFX_.setTempo(bpm);
 }
 
 void SlicerVoice::setSampleData(const float* leftData, const float* rightData, size_t numSamples, int originalSampleRate) {
@@ -16,11 +21,21 @@ void SlicerVoice::setSampleData(const float* leftData, const float* rightData, s
     sampleLength_ = numSamples;
     originalSampleRate_ = originalSampleRate;
     // Sample rate conversion: play at correct speed regardless of output sample rate
-    playbackRate_ = static_cast<double>(originalSampleRate) / sampleRate_;
+    basePlaybackRate_ = static_cast<double>(originalSampleRate) / sampleRate_;
+    playbackRate_ = basePlaybackRate_;
 }
 
 void SlicerVoice::trigger(int sliceIndex, float velocity, const model::SlicerParams& params) {
+    model::Step emptyStep;
+    trigger(sliceIndex, velocity, params, emptyStep);
+}
+
+void SlicerVoice::trigger(int sliceIndex, float velocity, const model::SlicerParams& params, const model::Step& step) {
     if (!sampleDataL_ || sampleLength_ == 0) return;
+
+    // Trigger FX processor
+    // Note: SlicerVoice uses slice index, not MIDI note. For FX purposes, use slice index as "note"
+    trackerFX_.triggerNote(sliceIndex, velocity, step);
 
     const auto& slices = params.slicePoints;
 
@@ -71,12 +86,42 @@ void SlicerVoice::render(float* leftOut, float* rightOut, int numSamples) {
     }
 
     for (int i = 0; i < numSamples; ++i) {
+        // Process tracker FX (handles note delay, cut, off, retrigger)
+        if (!trackerFX_.processSample()) {
+            // FX says note should not play (delay or cut)
+            leftOut[i] = 0.0f;
+            rightOut[i] = 0.0f;
+            continue;
+        }
+
+        // Check for note off trigger from FX (not used in slicer - slices are one-shot)
+        if (trackerFX_.shouldReleaseNote()) {
+            active_ = false;
+            leftOut[i] = 0.0f;
+            rightOut[i] = 0.0f;
+            continue;
+        }
+
+        // Check for retrigger from FX
+        if (trackerFX_.shouldRetrigger()) {
+            playPosition_ = static_cast<double>(sliceStart_);  // Reset to start of slice
+        }
+
         // Check if we've reached end of slice
         if (playPosition_ >= static_cast<double>(sliceEnd_)) {
             active_ = false;
             leftOut[i] = 0.0f;
             rightOut[i] = 0.0f;
             continue;
+        }
+
+        // Apply arpeggio offset to playback rate
+        int arpOffset = trackerFX_.getArpOffset();
+        if (arpOffset != 0) {
+            // Adjust playback rate based on arpeggio semitone offset
+            playbackRate_ = basePlaybackRate_ * std::pow(2.0, arpOffset / 12.0);
+        } else {
+            playbackRate_ = basePlaybackRate_;
         }
 
         // Linear interpolation for sample playback
