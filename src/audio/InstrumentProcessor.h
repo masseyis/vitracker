@@ -2,6 +2,7 @@
 
 #include <string>
 #include <cstdint>
+#include "../model/Step.h"
 
 namespace audio {
 
@@ -19,6 +20,13 @@ public:
     virtual void noteOn(int note, float velocity) = 0;
     virtual void noteOff(int note) = 0;
     virtual void allNotesOff() = 0;
+
+    // Note handling with FX commands (default implementation ignores FX)
+    virtual void noteOnWithFX(int note, float velocity, const model::Step& step) {
+        // Default: ignore FX and just trigger note
+        (void)step;
+        noteOn(note, velocity);
+    }
 
     // Audio processing
     virtual void process(float* outL, float* outR, int numSamples) = 0;
