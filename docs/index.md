@@ -1,6 +1,6 @@
 # Vitracker User Manual
 
-A vim-modal music tracker with multiple synthesis engines including Mutable Instruments Plaits, VA synthesis, sampling, and beat slicing.
+A keyboard-driven music tracker with multiple synthesis engines including Mutable Instruments Plaits, VA synthesis, sampling, and beat slicing. Navigate with vim-style `hjkl` keys or arrows.
 
 <p align="center">
   <a href="https://github.com/masseyis/vitracker"><img src="https://img.shields.io/badge/GitHub-View%20Source-181717?logo=github" alt="GitHub" /></a>
@@ -21,21 +21,20 @@ A vim-modal music tracker with multiple synthesis engines including Mutable Inst
 
 1. [Overview](#overview)
 2. [Screens](#screens)
-3. [Modes](#modes)
-4. [Global Keys](#global-keys)
-5. [Pattern Screen](#pattern-screen)
-6. [Chain Screen](#chain-screen)
-7. [Song Screen](#song-screen)
-8. [Instrument Screen](#instrument-screen)
-9. [Mixer Screen](#mixer-screen)
-10. [Commands](#commands)
-11. [Plaits Engines](#plaits-engines)
+3. [Global Keys](#global-keys)
+4. [Pattern Screen](#pattern-screen)
+5. [Chain Screen](#chain-screen)
+6. [Song Screen](#song-screen)
+7. [Instrument Screen](#instrument-screen)
+8. [Mixer Screen](#mixer-screen)
+9. [Commands](#commands)
+10. [Plaits Engines](#plaits-engines)
 
 ---
 
 ## Overview
 
-Vitracker is a music tracker with vim-style modal editing. Like vim, it has distinct modes for navigation and editing, allowing fast, keyboard-driven workflow.
+Vitracker is a keyboard-driven music tracker designed for fast, efficient workflow. Navigate with vim-style `hjkl` keys or arrow keys, and use single-key shortcuts for common operations.
 
 ### Structure Hierarchy
 
@@ -72,57 +71,15 @@ Switch between screens using number keys `1-6` or `{`/`}` for previous/next.
 
 ---
 
-## Modes
-
-Vitracker has four modes, shown in the status bar at the bottom.
-
-### Normal Mode
-
-Default mode for navigation and triggering actions.
-
-- Arrow keys navigate
-- Single-key commands (y, p, d, etc.)
-- Press `i` to enter Edit mode
-- Press `v` to enter Visual mode
-- Press `:` to enter Command mode
-
-### Edit Mode
-
-For entering and modifying data.
-
-- Arrow keys adjust values (not navigate)
-- Type notes directly (C, D, E, F, G, A, B)
-- Press `Esc` to return to Normal mode
-
-### Visual Mode
-
-For selecting regions.
-
-- Arrow keys extend selection
-- `y` to yank (copy)
-- `d` to delete
-- `<` / `>` to transpose selection
-- Press `Esc` to cancel selection
-
-### Command Mode
-
-For executing commands.
-
-- Type command after `:`
-- Press `Enter` to execute
-- Press `Esc` to cancel
-
----
-
 ## Global Keys
 
-These keys work in Normal mode across all screens.
+These keys work across all screens.
 
 ### Navigation
 
 | Key | Action |
 |-----|--------|
-| `Arrow keys` | Navigate cursor |
+| `Arrow keys` or `hjkl` | Navigate cursor |
 | `1-6` | Switch to screen 1-6 |
 | `{` | Previous screen |
 | `}` | Next screen |
@@ -136,16 +93,15 @@ These keys work in Normal mode across all screens.
 |-----|--------|
 | `Space` | Play/Stop |
 
-### Mode Switching
+### Selection & Commands
 
 | Key | Action |
 |-----|--------|
-| `i` | Enter Edit mode |
-| `v` | Enter Visual mode |
-| `:` | Enter Command mode |
-| `Esc` | Return to Normal mode |
+| `v` | Start selection (visual mode) |
+| `:` | Enter command mode |
+| `Esc` | Cancel selection/command |
 
-### Editing (Normal Mode)
+### Editing
 
 | Key | Action |
 |-----|--------|
@@ -196,19 +152,14 @@ Each step contains:
 - **Volume** (00-FF, or `..` for default)
 - **FX1, FX2, FX3** (effect commands)
 
-### Entering Notes (Edit Mode)
+### Entering Notes
 
-1. Press `i` to enter Edit mode
-2. Type note letter: `C`, `D`, `E`, `F`, `G`, `A`, `B`
-3. Optional: `#` for sharp, `b` for flat
-4. Type octave: `0-9`
-5. Arrow keys move to next field (instrument, volume, FX)
-6. Press `Esc` when done
-
-### Quick Note Entry (Normal Mode)
-
-- Type `A-G` directly to enter note at cursor
+- Type note letter `A-G` to enter note at cursor
+- Use `#` for sharp, `b` for flat
+- Use `Alt+Up/Down` to adjust pitch by scale degree
+- Use `Shift+Up/Down` to adjust pitch by octave
 - Instrument is auto-filled from last used
+- Press `.` for note-off
 
 ### Pattern Navigation
 
@@ -486,12 +437,13 @@ Each engine responds differently to the Harmonics, Timbre, and Morph parameters.
 
 - Use `[`/`]` to quickly switch patterns/chains/instruments
 - `Enter` drills down: Song → Chain → Pattern → Instrument
-- `Alt+arrows` for quick edits without leaving Normal mode
+- `Alt+arrows` for quick value edits
+- `hjkl` keys work like arrow keys for vim users
 
 ### Live Performance
 
 - Mute/solo instruments in Mixer (keys `m`/`s`)
-- Use Song mode for arrangement, Pattern mode for loops
+- Use Song screen for arrangement, Pattern screen for loops
 - Scale lock ensures transpose stays musical
 
 ### Sound Design
@@ -506,20 +458,14 @@ Each engine responds differently to the Harmonics, Timbre, and Morph parameters.
 
 ## Keyboard Reference Card
 
-### Modes
-```
-Normal ──i──> Edit ──Esc──> Normal
-Normal ──v──> Visual ──Esc──> Normal
-Normal ──:──> Command ──Enter/Esc──> Normal
-```
-
 ### Quick Reference
 ```
-Navigation:     ↑↓←→      Mode Switch:    i v : Esc
-Screens:        1-6 { }   Transport:      Space
-Edit Values:    Alt+↑↓←→  Clipboard:      y p d
-Undo/Redo:      u Ctrl+R  New/Rename:     Shift+N r
-Next/Prev:      [ ]       Drill Down:     Enter
+Navigation:     ↑↓←→ or hjkl   Transport:      Space
+Screens:        1-6 { }        Selection:      v
+Edit Values:    Alt+↑↓←→       Clipboard:      y p d
+Undo/Redo:      u Ctrl+R       Commands:       :
+Next/Prev:      [ ]            Drill Down:     Enter
+New/Rename:     Shift+N r      Cancel:         Esc
 ```
 
 ### Commands

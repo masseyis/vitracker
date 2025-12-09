@@ -1,6 +1,6 @@
 # Vitracker
 
-A vim-modal music tracker with multiple synthesis engines including Mutable Instruments Plaits, VA synthesis, sampling, and beat slicing.
+A keyboard-driven music tracker with multiple synthesis engines including Mutable Instruments Plaits, VA synthesis, sampling, and beat slicing. Navigate with vim-style `hjkl` keys or arrows.
 
 [![Build Status](https://github.com/masseyis/vitracker/actions/workflows/ci.yml/badge.svg)](https://github.com/masseyis/vitracker/actions)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
@@ -12,7 +12,7 @@ A vim-modal music tracker with multiple synthesis engines including Mutable Inst
 
 ## What is Vitracker?
 
-Vitracker is a desktop music tracker application inspired by classic trackers like LSDJ and Renoise, with vim-style modal navigation. It features:
+Vitracker is a desktop music tracker application inspired by classic trackers like LSDJ and Renoise, designed for fast keyboard-driven workflow with vim-style `hjkl` navigation. It features:
 
 - **Multiple Synthesis Engines**
   - **Plaits** - All 16 synthesis engines from Mutable Instruments' Plaits module
@@ -47,12 +47,12 @@ Vitracker uses a hierarchical structure:
 | Key | Action |
 |-----|--------|
 | `1-5` | Switch screens (Song, Chain, Pattern, Instrument, Mixer) |
-| `Arrow keys` | Navigate |
+| `Arrow keys` or `hjkl` | Navigate |
 | `Space` | Play/Stop |
 | `t` | Tempo adjust mode (arrows ±1, Shift ±10) |
 | `g / G` | Cycle groove forward/backward |
-| `v` | Enter Visual mode (selection) |
-| `:` | Enter Command mode |
+| `v` | Start selection |
+| `:` | Enter command mode |
 | `?` | Show help popup for current screen |
 | `Esc` | Close help / Cancel |
 
