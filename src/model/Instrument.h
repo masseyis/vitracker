@@ -7,6 +7,7 @@
 #include "SamplerParams.h"
 #include "SlicerParams.h"
 #include "VAParams.h"
+#include "DXParams.h"
 
 namespace model {
 
@@ -14,7 +15,8 @@ enum class InstrumentType {
     Plaits,
     Sampler,
     Slicer,
-    VASynth
+    VASynth,
+    DXPreset
 };
 
 // LFO parameter structure
@@ -117,6 +119,9 @@ public:
     VAParams& getVAParams() { return vaParams_; }
     const VAParams& getVAParams() const { return vaParams_; }
 
+    DXParams& getDXParams() { return dxParams_; }
+    const DXParams& getDXParams() const { return dxParams_; }
+
     ChannelStripParams& getChannelStrip() { return channelStrip_; }
     const ChannelStripParams& getChannelStrip() const { return channelStrip_; }
 
@@ -143,6 +148,7 @@ private:
     SamplerParams samplerParams_;
     SlicerParams slicerParams_;
     VAParams vaParams_;
+    DXParams dxParams_;
     ChannelStripParams channelStrip_;
 
     // Mixer state

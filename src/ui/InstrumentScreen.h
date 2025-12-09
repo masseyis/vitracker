@@ -8,6 +8,8 @@
 #include "SliceWaveformDisplay.h"
 #include "../audio/SlicerInstrument.h"
 #include "../audio/VASynthInstrument.h"
+#include "../audio/DX7Instrument.h"
+#include "../model/DX7PresetBank.h"
 
 namespace ui {
 
@@ -42,12 +44,6 @@ enum class VASynthRowType {
     Lfo2,
     Env1,           // Multi-field: attack, decay, dest, amount
     Env2,
-    Reverb,         // FX sends
-    Delay,
-    Chorus,
-    Sidechain,
-    Volume,
-    Pan,
     NumVASynthRows
 };
 
@@ -66,12 +62,6 @@ enum class SamplerRowType {
     Lfo2,
     Env1,           // Multi-field: attack, decay, dest, amount
     Env2,
-    Reverb,         // FX sends
-    Delay,
-    Chorus,
-    Sidechain,
-    Volume,
-    Pan,
     NumSamplerRows
 };
 
@@ -89,13 +79,15 @@ enum class SlicerRowType {
     Lfo2,
     Env1,           // Multi-field: attack, decay, dest, amount
     Env2,
-    Reverb,         // FX sends
-    Delay,
-    Chorus,
-    Sidechain,
-    Volume,
-    Pan,
     NumSlicerRows
+};
+
+// DX Preset-specific row types (simple preset browser)
+enum class DXPresetRowType {
+    Cartridge,      // DX7 cartridge/bank file selector
+    Preset,         // Preset within the cartridge (0-31)
+    Polyphony,      // Voice count (1-16)
+    NumDXPresetRows
 };
 
 // Row types for InstrumentScreen
@@ -114,12 +106,6 @@ enum class InstrumentRowType {
     Lfo2,
     Env1,
     Env2,
-    Volume,     // Per-instrument mixer controls
-    Pan,
-    Reverb,
-    Delay,
-    Chorus,
-    Sidechain,
     NumRows
 };
 
@@ -184,6 +170,10 @@ private:
     bool handleVASynthKey(const juce::KeyPress& key, bool isEditMode);
     void paintVASynthUI(juce::Graphics& g);
 
+    // DX Preset-specific methods
+    bool handleDXPresetKey(const juce::KeyPress& key, bool isEditMode);
+    void paintDXPresetUI(juce::Graphics& g);
+
     bool editingName_ = false;
     std::string nameBuffer_;
 
@@ -228,11 +218,18 @@ private:
     int vaSynthCursorRow_ = 0;
     int vaSynthCursorField_ = 0;  // For multi-field rows (LFO/ENV)
     int vaSynthCursorCol_ = 0;    // 0=left column, 1=right column
+    int dxPresetCursorRow_ = 0;
+
+    // DX7 preset bank
+    model::DX7PresetBank dxPresetBank_;
+    int currentDXCartridge_ = -1;   // -1 = no cartridge loaded
+    int currentDXPreset_ = 0;       // 0-31 within cartridge
 
     static constexpr int kNumRows = static_cast<int>(InstrumentRowType::NumRows);
     static constexpr int kNumSamplerRows = static_cast<int>(SamplerRowType::NumSamplerRows);
     static constexpr int kNumSlicerRows = static_cast<int>(SlicerRowType::NumSlicerRows);
     static constexpr int kNumVASynthRows = static_cast<int>(VASynthRowType::NumVASynthRows);
+    static constexpr int kNumDXPresetRows = static_cast<int>(DXPresetRowType::NumDXPresetRows);
     static constexpr int kRowHeight = 24;
     static constexpr int kShortcutWidth = 16;  // Width for jump key indicator
     static constexpr int kLabelWidth = 80;

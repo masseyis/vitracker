@@ -7,6 +7,7 @@
 #include "SamplerInstrument.h"
 #include "SlicerInstrument.h"
 #include "VASynthInstrument.h"
+#include "DX7Instrument.h"
 #include "ChannelStrip.h"
 #include "../model/Project.h"
 #include "../model/Groove.h"
@@ -66,6 +67,7 @@ public:
     SamplerInstrument* getSamplerProcessor(int index);
     SlicerInstrument* getSlicerProcessor(int index);
     VASynthInstrument* getVASynthProcessor(int index);
+    DX7Instrument* getDX7Processor(int index);
 
 private:
     Voice* allocateVoice(int note);
@@ -91,6 +93,7 @@ private:
     std::array<std::unique_ptr<SamplerInstrument>, NUM_INSTRUMENTS> samplerProcessors_;
     std::array<std::unique_ptr<SlicerInstrument>, NUM_INSTRUMENTS> slicerProcessors_;
     std::array<std::unique_ptr<VASynthInstrument>, NUM_INSTRUMENTS> vaSynthProcessors_;
+    std::array<std::unique_ptr<DX7Instrument>, NUM_INSTRUMENTS> dx7Processors_;
 
     // Per-instrument channel strip processing
     std::array<std::unique_ptr<ChannelStrip>, NUM_INSTRUMENTS> channelStrips_;

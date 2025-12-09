@@ -15,6 +15,7 @@ AudioEngine::AudioEngine()
         samplerProcessors_[i] = std::make_unique<SamplerInstrument>();
         slicerProcessors_[i] = std::make_unique<SlicerInstrument>();
         vaSynthProcessors_[i] = std::make_unique<VASynthInstrument>();
+        dx7Processors_[i] = std::make_unique<DX7Instrument>();
     }
 }
 
@@ -56,6 +57,17 @@ void AudioEngine::triggerNote(int track, int note, int instrumentIndex, float ve
     auto* instrument = project_->getInstrument(instrumentIndex);
     if (!instrument) return;
 
+    // Debug: log ALL triggerNote calls with instrument type
+    static int triggerNoteCount = 0;
+    if (triggerNoteCount++ < 50) { // First 50 calls only
+        std::cerr << "[AudioEngine] triggerNote #" << triggerNoteCount
+                  << ": track=" << track << " note=" << note
+                  << " inst=" << instrumentIndex
+                  << " type=" << static_cast<int>(instrument->getType())
+                  << " (DXPreset=" << static_cast<int>(model::InstrumentType::DXPreset) << ")"
+                  << std::endl;
+    }
+
     // Check instrument type and route to appropriate processor
     if (instrument->getType() == model::InstrumentType::Sampler)
     {
@@ -90,6 +102,25 @@ void AudioEngine::triggerNote(int track, int note, int instrumentIndex, float ve
         {
             vaSynth->setInstrument(instrument);
             vaSynth->noteOn(note, velocity);
+        }
+
+        trackInstruments_[track] = instrumentIndex;
+        return;
+    }
+
+    if (instrument->getType() == model::InstrumentType::DXPreset)
+    {
+        // Handle DX7 preset instrument
+        std::cerr << "[AudioEngine] DXPreset triggerNote: track=" << track
+                  << " note=" << note << " inst=" << instrumentIndex << std::endl;
+        if (auto* dx7 = getDX7Processor(instrumentIndex))
+        {
+            std::cerr << "[AudioEngine] Calling dx7->noteOn()" << std::endl;
+            dx7->noteOn(note, velocity);
+        }
+        else
+        {
+            std::cerr << "[AudioEngine] WARNING: getDX7Processor returned null!" << std::endl;
         }
 
         trackInstruments_[track] = instrumentIndex;
@@ -163,6 +194,18 @@ void AudioEngine::releaseNote(int track)
                 if (auto* vaSynth = getVASynthProcessor(instrumentIndex))
                 {
                     vaSynth->allNotesOff();
+                }
+                trackInstruments_[track] = -1;
+                trackVoices_[track] = nullptr;
+                return;
+            }
+
+            if (instrument && instrument->getType() == model::InstrumentType::DXPreset)
+            {
+                // Handle DX7 preset instrument
+                if (auto* dx7 = getDX7Processor(instrumentIndex))
+                {
+                    dx7->allNotesOff();
                 }
                 trackInstruments_[track] = -1;
                 trackVoices_[track] = nullptr;
@@ -268,6 +311,15 @@ void AudioEngine::prepareToPlay(int samplesPerBlockExpected, double sampleRate)
         }
     }
 
+    // Initialize all DX7 processors
+    for (auto& dx7 : dx7Processors_)
+    {
+        if (dx7)
+        {
+            dx7->init(sampleRate);
+        }
+    }
+
     // Initialize channel strips
     for (auto& strip : channelStrips_)
     {
@@ -330,6 +382,13 @@ void AudioEngine::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferTo
         {
             if (vaSynth)
                 vaSynth->allNotesOff();
+        }
+
+        // Release all DX7 processors
+        for (auto& dx7 : dx7Processors_)
+        {
+            if (dx7)
+                dx7->allNotesOff();
         }
 
         // Legacy: Release all voices
@@ -862,6 +921,84 @@ void AudioEngine::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferTo
         activeCount++;
     }
 
+    // Process DX7 preset instruments
+    static int dx7ProcessCallCount = 0;
+    for (int instIdx = 0; instIdx < NUM_INSTRUMENTS; ++instIdx)
+    {
+        auto& dx7 = dx7Processors_[instIdx];
+        if (!dx7) continue;
+
+        // Get instrument model for mixer settings
+        model::Instrument* instrument = project_ ? project_->getInstrument(instIdx) : nullptr;
+
+        // Only process if this is a DXPreset type instrument
+        if (!instrument || instrument->getType() != model::InstrumentType::DXPreset)
+            continue;
+
+        // Log periodically when DX7 is being processed (every 1000 calls)
+        if (dx7ProcessCallCount++ % 1000 == 0)
+        {
+            std::cerr << "[AudioEngine] Processing DX7 inst=" << instIdx
+                      << " (call #" << dx7ProcessCallCount << ")" << std::endl;
+        }
+
+        // Determine if this instrument should play
+        bool shouldPlay = true;
+        float volume = 1.0f;
+        float pan = 0.0f;
+
+        // Check mute/solo
+        if (anySoloed)
+        {
+            shouldPlay = instrument->isSoloed();
+        }
+        else
+        {
+            shouldPlay = !instrument->isMuted();
+        }
+
+        if (!shouldPlay)
+        {
+            continue;
+        }
+
+        volume = instrument->getVolume();
+        pan = instrument->getPan();
+
+        // Clear temp buffers
+        std::fill(tempL.begin(), tempL.begin() + numSamples, 0.0f);
+        std::fill(tempR.begin(), tempR.begin() + numSamples, 0.0f);
+
+        // Render DX7 to temp buffers
+        dx7->process(tempL.data(), tempR.data(), numSamples);
+
+        // Apply volume and pan, mix into output
+        float leftGain = volume * std::sqrt((1.0f - pan) / 2.0f);
+        float rightGain = volume * std::sqrt((1.0f + pan) / 2.0f);
+
+        for (int i = 0; i < numSamples; ++i)
+        {
+            float monoSample = (tempL[i] + tempR[i]) * 0.5f;
+            outL[i] += monoSample * leftGain * 2.0f;
+            outR[i] += monoSample * rightGain * 2.0f;
+
+            // Capture sidechain source audio
+            if (instIdx == sidechainSourceInst)
+            {
+                sidechainSourceL[i] += monoSample * leftGain * 2.0f;
+                sidechainSourceR[i] += monoSample * rightGain * 2.0f;
+            }
+        }
+
+        // Accumulate send levels
+        const auto& sends = instrument->getSends();
+        avgReverb += sends.reverb * volume;
+        avgDelay += sends.delay * volume;
+        avgChorus += sends.chorus * volume;
+        // Note: drive is now part of ChannelStrip (per-instrument insert), not a send
+        activeCount++;
+    }
+
     if (activeCount > 0)
     {
         avgReverb /= static_cast<float>(activeCount);
@@ -1320,6 +1457,13 @@ VASynthInstrument* AudioEngine::getVASynthProcessor(int index)
 {
     if (index >= 0 && index < NUM_INSTRUMENTS)
         return vaSynthProcessors_[index].get();
+    return nullptr;
+}
+
+DX7Instrument* AudioEngine::getDX7Processor(int index)
+{
+    if (index >= 0 && index < NUM_INSTRUMENTS)
+        return dx7Processors_[index].get();
     return nullptr;
 }
 

@@ -187,6 +187,9 @@ InstrumentScreen::InstrumentScreen(model::Project& project, input::ModeManager& 
     samplerWaveformDisplay_ = std::make_unique<WaveformDisplay>();
     addChildComponent(samplerWaveformDisplay_.get());
 
+    // Load DX7 presets from bundled resources (or fall back to built-in presets)
+    dxPresetBank_.loadBundledPresets();
+
     // Start playhead update timer (30Hz for smooth animation)
     startTimer(33);
 }
@@ -274,16 +277,17 @@ void InstrumentScreen::drawTypeSelector(juce::Graphics& g, juce::Rectangle<int> 
     g.setColour(fgColor.darker(0.5f));
     g.drawText("TYPE:", area.removeFromLeft(50), juce::Justification::centredLeft);
 
-    const char* typeNames[] = {"Plaits", "Sampler", "Slicer", "VASynth"};
+    const char* typeNames[] = {"Plaits", "Sampler", "Slicer", "VASynth", "DX7"};
     const model::InstrumentType types[] = {
         model::InstrumentType::Plaits,
         model::InstrumentType::Sampler,
         model::InstrumentType::Slicer,
-        model::InstrumentType::VASynth
+        model::InstrumentType::VASynth,
+        model::InstrumentType::DXPreset
     };
 
-    for (int i = 0; i < 4; ++i) {
-        auto buttonArea = area.removeFromLeft(70);
+    for (int i = 0; i < 5; ++i) {
+        auto buttonArea = area.removeFromLeft(60);
         bool isSelected = (types[i] == currentType);
 
         if (isSelected) {
@@ -349,6 +353,12 @@ void InstrumentScreen::paint(juce::Graphics& g)
     // Check if this is a VA synth instrument and render VA synth UI
     if (instrument && instrument->getType() == model::InstrumentType::VASynth) {
         paintVASynthUI(g);
+        return;
+    }
+
+    // Check if this is a DX Preset instrument and render DX preset UI
+    if (instrument && instrument->getType() == model::InstrumentType::DXPreset) {
+        paintDXPresetUI(g);
         return;
     }
 
@@ -557,53 +567,6 @@ void InstrumentScreen::drawRow(juce::Graphics& g, juce::Rectangle<int> area, int
                 value = params.filter.resonance;
                 if (processor) modValue = processor->getModulatedResonance();
                 valueText = juce::String(static_cast<int>(value * 127));
-            }
-            break;
-
-        case InstrumentRowType::Reverb:
-            label = "REVERB";
-            value = sends.reverb;
-            valueText = juce::String(static_cast<int>(value * 100)) + "%";
-            break;
-
-        case InstrumentRowType::Delay:
-            label = "DELAY";
-            value = sends.delay;
-            valueText = juce::String(static_cast<int>(value * 100)) + "%";
-            break;
-
-        case InstrumentRowType::Chorus:
-            label = "CHORUS";
-            value = sends.chorus;
-            valueText = juce::String(static_cast<int>(value * 100)) + "%";
-            break;
-
-            valueText = juce::String(static_cast<int>(value * 100)) + "%";
-            break;
-
-        case InstrumentRowType::Sidechain:
-            label = "SIDECHAIN";
-            value = sends.sidechainDuck;
-            valueText = juce::String(static_cast<int>(value * 100)) + "%";
-            break;
-
-        case InstrumentRowType::Volume:
-            label = "VOLUME";
-            value = instrument->getVolume();
-            valueText = juce::String(static_cast<int>(value * 100)) + "%";
-            break;
-
-        case InstrumentRowType::Pan:
-            label = "PAN";
-            {
-                float pan = instrument->getPan();
-                value = (pan + 1.0f) / 2.0f;  // Convert -1..1 to 0..1 for display
-                if (pan < -0.01f)
-                    valueText = "L" + juce::String(static_cast<int>(-pan * 100));
-                else if (pan > 0.01f)
-                    valueText = "R" + juce::String(static_cast<int>(pan * 100));
-                else
-                    valueText = "C";
             }
             break;
 
@@ -850,6 +813,21 @@ void InstrumentScreen::navigate(int dx, int dy)
         return;
     }
 
+    // Handle DX Preset navigation
+    if (instrument && instrument->getType() == model::InstrumentType::DXPreset) {
+        if (dy != 0) {
+            dxPresetCursorRow_ = std::clamp(dxPresetCursorRow_ + dy, 0, kNumDXPresetRows - 1);
+        }
+        if (dx != 0) {
+            // Left/Right switches instruments in DXPreset mode
+            int numInstruments = project_.getInstrumentCount();
+            currentInstrument_ = (currentInstrument_ + dx + numInstruments) % numInstruments;
+            setCurrentInstrument(currentInstrument_);
+        }
+        repaint();
+        return;
+    }
+
     // Plaits navigation (original behavior)
     if (dx != 0 && !isModRow(cursorRow_))
     {
@@ -1053,6 +1031,11 @@ bool InstrumentScreen::handleEditKey(const juce::KeyPress& key)
     // Check if this is a VA synth instrument and handle VA synth keys
     if (instrument && instrument->getType() == model::InstrumentType::VASynth) {
         return handleVASynthKey(key, true);
+    }
+
+    // Check if this is a DX Preset instrument and handle DX preset keys
+    if (instrument && instrument->getType() == model::InstrumentType::DXPreset) {
+        return handleDXPresetKey(key, true);
     }
 
     // Handle standard actions via KeyAction
@@ -1295,25 +1278,6 @@ void InstrumentScreen::setRowValue(int row, float delta)
             break;
         case InstrumentRowType::Resonance:
             clamp01(params.filter.resonance, delta);
-            break;
-        case InstrumentRowType::Reverb:
-            clamp01(sends.reverb, delta);
-            break;
-        case InstrumentRowType::Delay:
-            clamp01(sends.delay, delta);
-            break;
-        case InstrumentRowType::Chorus:
-            clamp01(sends.chorus, delta);
-            break;
-            break;
-        case InstrumentRowType::Sidechain:
-            clamp01(sends.sidechainDuck, delta);
-            break;
-        case InstrumentRowType::Volume:
-            instrument->setVolume(instrument->getVolume() + delta);
-            break;
-        case InstrumentRowType::Pan:
-            instrument->setPan(instrument->getPan() + delta);
             break;
         default:
             break;
@@ -1890,29 +1854,6 @@ bool InstrumentScreen::handleSamplerKey(const juce::KeyPress& key, bool /*isEdit
             case SamplerRowType::Resonance:
                 params.filter.resonance = std::clamp(params.filter.resonance + delta * step, 0.0f, 1.0f);
                 break;
-            // FX sends
-            case SamplerRowType::Reverb:
-                params.modulation.fxSends.reverb = std::clamp(params.modulation.fxSends.reverb + delta * step, 0.0f, 1.0f);
-                break;
-            case SamplerRowType::Delay:
-                params.modulation.fxSends.delay = std::clamp(params.modulation.fxSends.delay + delta * step, 0.0f, 1.0f);
-                break;
-            case SamplerRowType::Chorus:
-                params.modulation.fxSends.chorus = std::clamp(params.modulation.fxSends.chorus + delta * step, 0.0f, 1.0f);
-                break;
-                break;
-            case SamplerRowType::Sidechain:
-                {
-                    auto& sends = instrument->getSends();
-                    sends.sidechainDuck = std::clamp(sends.sidechainDuck + delta * step, 0.0f, 1.0f);
-                }
-                break;
-            case SamplerRowType::Volume:
-                instrument->setVolume(std::clamp(instrument->getVolume() + delta * step, 0.0f, 1.0f));
-                break;
-            case SamplerRowType::Pan:
-                instrument->setPan(std::clamp(instrument->getPan() + delta * step, -1.0f, 1.0f));
-                break;
             default:
                 break;
         }
@@ -2146,37 +2087,7 @@ void InstrumentScreen::paintSamplerUI(juce::Graphics& g) {
     // Row 12: ENV2
     drawSamplerModRow(static_cast<int>(SamplerRowType::Env2), "ENV2", nullptr, &params.modulation.env2);
 
-    // FX sends section header
-    contentArea.removeFromTop(8);
-    g.setColour(fgColor.darker(0.3f));
-    g.drawText("-- FX SENDS --", contentArea.removeFromTop(16), juce::Justification::centredLeft);
-    contentArea.removeFromTop(4);
-
-    // FX send rows use the same slider style
-    drawSamplerSliderRow(static_cast<int>(SamplerRowType::Reverb), "REVERB", params.modulation.fxSends.reverb, juce::String(static_cast<int>(params.modulation.fxSends.reverb * 100)) + "%");
-    drawSamplerSliderRow(static_cast<int>(SamplerRowType::Delay), "DELAY", params.modulation.fxSends.delay, juce::String(static_cast<int>(params.modulation.fxSends.delay * 100)) + "%");
-    drawSamplerSliderRow(static_cast<int>(SamplerRowType::Chorus), "CHORUS", params.modulation.fxSends.chorus, juce::String(static_cast<int>(params.modulation.fxSends.chorus * 100)) + "%");
-    drawSamplerSliderRow(static_cast<int>(SamplerRowType::Sidechain), "SIDECHAIN", inst->getSends().sidechainDuck, juce::String(static_cast<int>(inst->getSends().sidechainDuck * 100)) + "%");
-
-    // Volume & Pan section header
-    contentArea.removeFromTop(8);
-    g.setColour(fgColor.darker(0.3f));
-    g.drawText("-- OUTPUT --", contentArea.removeFromTop(16), juce::Justification::centredLeft);
-    contentArea.removeFromTop(4);
-
-    // Volume
-    float vol = inst->getVolume();
-    juce::String volStr = juce::String(static_cast<int>(vol * 100.0f)) + "%";
-    drawSamplerSliderRow(static_cast<int>(SamplerRowType::Volume), "VOLUME", vol, volStr);
-
-    // Pan
-    float pan = inst->getPan();
-    float panNorm = (pan + 1.0f) / 2.0f;  // Convert -1..1 to 0..1 for bar
-    juce::String panStr;
-    if (pan < -0.01f) panStr = "L" + juce::String(static_cast<int>(-pan * 100));
-    else if (pan > 0.01f) panStr = "R" + juce::String(static_cast<int>(pan * 100));
-    else panStr = "C";
-    drawSamplerSliderRow(static_cast<int>(SamplerRowType::Pan), "PAN", panNorm, panStr);
+    // Volume and Pan removed - now in Mixer screen
 
     // Pitch ratio display
     contentArea.removeFromTop(8);
@@ -2421,37 +2332,8 @@ void InstrumentScreen::paintSlicerUI(juce::Graphics& g) {
     drawSlicerModRow(static_cast<int>(SlicerRowType::Env1), "ENV1", nullptr, &params.modulation.env1);
     drawSlicerModRow(static_cast<int>(SlicerRowType::Env2), "ENV2", nullptr, &params.modulation.env2);
 
-    // FX sends section header
-    contentArea.removeFromTop(8);
-    g.setColour(fgColor.darker(0.3f));
-    g.drawText("-- FX SENDS --", contentArea.removeFromTop(16), juce::Justification::centredLeft);
-    contentArea.removeFromTop(4);
-
-    // FX send rows use slider style
-    drawSlicerSliderRow(static_cast<int>(SlicerRowType::Reverb), "REVERB", params.modulation.fxSends.reverb, juce::String(static_cast<int>(params.modulation.fxSends.reverb * 100)) + "%");
-    drawSlicerSliderRow(static_cast<int>(SlicerRowType::Delay), "DELAY", params.modulation.fxSends.delay, juce::String(static_cast<int>(params.modulation.fxSends.delay * 100)) + "%");
-    drawSlicerSliderRow(static_cast<int>(SlicerRowType::Chorus), "CHORUS", params.modulation.fxSends.chorus, juce::String(static_cast<int>(params.modulation.fxSends.chorus * 100)) + "%");
-    drawSlicerSliderRow(static_cast<int>(SlicerRowType::Sidechain), "SIDECHAIN", inst->getSends().sidechainDuck, juce::String(static_cast<int>(inst->getSends().sidechainDuck * 100)) + "%");
-
     // Output section header
-    contentArea.removeFromTop(8);
-    g.setColour(fgColor.darker(0.3f));
-    g.drawText("-- OUTPUT --", contentArea.removeFromTop(16), juce::Justification::centredLeft);
-    contentArea.removeFromTop(4);
-
-    // Volume
-    float vol = inst->getVolume();
-    juce::String volStr = juce::String(static_cast<int>(vol * 100.0f)) + "%";
-    drawSlicerSliderRow(static_cast<int>(SlicerRowType::Volume), "VOLUME", vol, volStr);
-
-    // Pan
-    float pan = inst->getPan();
-    float panNorm = (pan + 1.0f) / 2.0f;  // Convert -1..1 to 0..1 for bar
-    juce::String panStr;
-    if (pan < -0.01f) panStr = "L" + juce::String(static_cast<int>(-pan * 100));
-    else if (pan > 0.01f) panStr = "R" + juce::String(static_cast<int>(pan * 100));
-    else panStr = "C";
-    drawSlicerSliderRow(static_cast<int>(SlicerRowType::Pan), "PAN", panNorm, panStr);
+    // Volume and Pan removed - now in Mixer screen
 
     // Check lazy chop status
     audio::SlicerInstrument* slicer = nullptr;
@@ -2839,29 +2721,6 @@ bool InstrumentScreen::handleSlicerKey(const juce::KeyPress& key, bool /*isEditM
             case SlicerRowType::Polyphony:
                 params.polyphony = std::clamp(params.polyphony + delta, 1, 8);
                 break;
-            // FX sends
-            case SlicerRowType::Reverb:
-                params.modulation.fxSends.reverb = std::clamp(params.modulation.fxSends.reverb + delta * step, 0.0f, 1.0f);
-                break;
-            case SlicerRowType::Delay:
-                params.modulation.fxSends.delay = std::clamp(params.modulation.fxSends.delay + delta * step, 0.0f, 1.0f);
-                break;
-            case SlicerRowType::Chorus:
-                params.modulation.fxSends.chorus = std::clamp(params.modulation.fxSends.chorus + delta * step, 0.0f, 1.0f);
-                break;
-                break;
-            case SlicerRowType::Sidechain:
-                {
-                    auto& sends = inst->getSends();
-                    sends.sidechainDuck = std::clamp(sends.sidechainDuck + delta * step, 0.0f, 1.0f);
-                }
-                break;
-            case SlicerRowType::Volume:
-                inst->setVolume(std::clamp(inst->getVolume() + delta * step, 0.0f, 1.0f));
-                break;
-            case SlicerRowType::Pan:
-                inst->setPan(std::clamp(inst->getPan() + delta * step, -1.0f, 1.0f));
-                break;
             default:
                 break;
         }
@@ -2976,7 +2835,7 @@ void InstrumentScreen::cycleInstrumentType(bool reverse) {
     model::InstrumentType newType;
 
     if (!reverse) {
-        // Forward: Plaits -> Sampler -> Slicer -> VASynth -> Plaits
+        // Forward: Plaits -> Sampler -> Slicer -> VASynth -> DXPreset -> Plaits
         switch (currentType) {
             case model::InstrumentType::Plaits:
                 newType = model::InstrumentType::Sampler;
@@ -2988,6 +2847,9 @@ void InstrumentScreen::cycleInstrumentType(bool reverse) {
                 newType = model::InstrumentType::VASynth;
                 break;
             case model::InstrumentType::VASynth:
+                newType = model::InstrumentType::DXPreset;
+                break;
+            case model::InstrumentType::DXPreset:
                 newType = model::InstrumentType::Plaits;
                 break;
             default:
@@ -2995,9 +2857,12 @@ void InstrumentScreen::cycleInstrumentType(bool reverse) {
                 break;
         }
     } else {
-        // Reverse: Plaits -> VASynth -> Slicer -> Sampler -> Plaits
+        // Reverse: Plaits -> DXPreset -> VASynth -> Slicer -> Sampler -> Plaits
         switch (currentType) {
             case model::InstrumentType::Plaits:
+                newType = model::InstrumentType::DXPreset;
+                break;
+            case model::InstrumentType::DXPreset:
                 newType = model::InstrumentType::VASynth;
                 break;
             case model::InstrumentType::VASynth:
@@ -3031,6 +2896,23 @@ void InstrumentScreen::cycleInstrumentType(bool reverse) {
         }
     }
 
+    // Initialize DX7 processor with first preset when switching to DXPreset type
+    if (newType == model::InstrumentType::DXPreset && audioEngine_) {
+        auto& dxParams = instrument->getDXParams();
+        if (dxPresetBank_.getPresetCount() > 0 && dxParams.presetIndex < 0) {
+            dxParams.presetIndex = 0;  // Start with first preset
+        }
+        // Load the preset into the DX7 processor
+        auto* dx7 = audioEngine_->getDX7Processor(currentInstrument_);
+        if (dx7 && dxParams.presetIndex >= 0) {
+            const auto* preset = dxPresetBank_.getPreset(dxParams.presetIndex);
+            if (preset) {
+                dx7->loadPackedPatch(preset->packedData.data());
+                dx7->setPolyphony(dxParams.polyphony);
+            }
+        }
+    }
+
     repaint();
 }
 
@@ -3054,6 +2936,24 @@ void InstrumentScreen::setCurrentInstrument(int index) {
             samplerWaveformDisplay_->setVisible(type == model::InstrumentType::Sampler);
             if (type == model::InstrumentType::Sampler) {
                 updateSamplerDisplay();
+            }
+        }
+
+        // Sync DX7 processor with preset when switching to a DXPreset instrument
+        if (type == model::InstrumentType::DXPreset && audioEngine_) {
+            auto& dxParams = inst->getDXParams();
+            // Ensure a preset is selected
+            if (dxPresetBank_.getPresetCount() > 0 && dxParams.presetIndex < 0) {
+                dxParams.presetIndex = 0;
+            }
+            // Load the preset into the DX7 processor
+            auto* dx7 = audioEngine_->getDX7Processor(index);
+            if (dx7 && dxParams.presetIndex >= 0) {
+                const auto* preset = dxPresetBank_.getPreset(dxParams.presetIndex);
+                if (preset) {
+                    dx7->loadPackedPatch(preset->packedData.data());
+                    dx7->setPolyphony(dxParams.polyphony);
+                }
             }
         }
     }
@@ -3279,19 +3179,7 @@ void InstrumentScreen::paintVASynthUI(juce::Graphics& g) {
                static_cast<int>(modParams.env2.attack * 100), static_cast<int>(modParams.env2.decay * 100),
                modParams.env2.destIndex, modParams.env2.amount);
 
-    drawHeader(rightCol, "-- FX SENDS --");
-    drawSliderRow(rightCol, static_cast<int>(VASynthRowType::Reverb), "REVERB", modParams.fxSends.reverb, juce::String(static_cast<int>(modParams.fxSends.reverb * 100)) + "%");
-    drawSliderRow(rightCol, static_cast<int>(VASynthRowType::Delay), "DELAY", modParams.fxSends.delay, juce::String(static_cast<int>(modParams.fxSends.delay * 100)) + "%");
-    drawSliderRow(rightCol, static_cast<int>(VASynthRowType::Chorus), "CHORUS", modParams.fxSends.chorus, juce::String(static_cast<int>(modParams.fxSends.chorus * 100)) + "%");
-    drawSliderRow(rightCol, static_cast<int>(VASynthRowType::Sidechain), "SIDECHAIN", inst->getSends().sidechainDuck, juce::String(static_cast<int>(inst->getSends().sidechainDuck * 100)) + "%");
-
-    drawHeader(rightCol, "-- OUTPUT --");
-    drawSliderRow(rightCol, static_cast<int>(VASynthRowType::Volume), "VOLUME", params.masterLevel, juce::String(static_cast<int>(params.masterLevel * 100)) + "%");
-    float pan = inst->getPan();
-    float panNorm = (pan + 1.0f) / 2.0f;  // Convert -1..1 to 0..1 for bar display
-    juce::String panStr = pan < -0.01f ? ("L" + juce::String(static_cast<int>(-pan * 100)))
-                        : pan > 0.01f ? ("R" + juce::String(static_cast<int>(pan * 100))) : "C";
-    drawSliderRow(rightCol, static_cast<int>(VASynthRowType::Pan), "PAN", panNorm, panStr);
+    // Volume and Pan removed - now in Mixer screen
 }
 
 bool InstrumentScreen::handleVASynthKey(const juce::KeyPress& key, bool /*isEditMode*/) {
@@ -3408,8 +3296,8 @@ bool InstrumentScreen::handleVASynthKey(const juce::KeyPress& key, bool /*isEdit
                 int maxRow = static_cast<int>(VASynthRowType::AmpRelease);
                 vaSynthCursorRow_ = std::min(maxRow, vaSynthCursorRow_ + 1);
             } else {
-                // Right column: max is Pan
-                int maxRow = static_cast<int>(VASynthRowType::Pan);
+                // Right column: max is Env2
+                int maxRow = static_cast<int>(VASynthRowType::Env2);
                 vaSynthCursorRow_ = std::min(maxRow, vaSynthCursorRow_ + 1);
             }
             vaSynthCursorField_ = 0;
@@ -3446,10 +3334,10 @@ bool InstrumentScreen::handleVASynthKey(const juce::KeyPress& key, bool /*isEdit
             if (vaSynthCursorCol_ == 0) {
                 vaSynthCursorCol_ = 1;
                 // Map to corresponding row in right column (preserve relative position)
-                // Left column has 19 rows (0-18), right has 17 (19-35)
+                // Left column has 19 rows (0-18), right has rows from FilterAttack to Env2
                 int leftMax = static_cast<int>(VASynthRowType::AmpRelease);
                 int rightMin = static_cast<int>(VASynthRowType::FilterAttack);
-                int rightMax = static_cast<int>(VASynthRowType::Pan);
+                int rightMax = static_cast<int>(VASynthRowType::Env2);
                 int rightRange = rightMax - rightMin;
                 // Map proportionally
                 float ratio = static_cast<float>(vaSynthCursorRow_) / static_cast<float>(leftMax);
@@ -3573,12 +3461,6 @@ bool InstrumentScreen::handleVASynthKey(const juce::KeyPress& key, bool /*isEdit
                     params.polyphony = std::clamp(params.polyphony + valueDelta, 1, 16);
                 }
                 break;
-            case VASynthRowType::Volume:
-                clampFloat(params.masterLevel, valueDelta * delta);
-                break;
-            case VASynthRowType::Pan:
-                instrument->setPan(std::clamp(instrument->getPan() + valueDelta * delta, -1.0f, 1.0f));
-                break;
 
             // Modulation rows - 4 fields each
             case VASynthRowType::Lfo1:
@@ -3623,24 +3505,6 @@ bool InstrumentScreen::handleVASynthKey(const juce::KeyPress& key, bool /*isEdit
                         case 2: env.destIndex = std::clamp(env.destIndex + valueDelta, 0, 8); break;
                         case 3: env.amount = static_cast<int8_t>(std::clamp(static_cast<int>(env.amount) + valueDelta, -64, 63)); break;
                     }
-                }
-                break;
-
-            // FX Sends
-            case VASynthRowType::Reverb:
-                params.modulation.fxSends.reverb = std::clamp(params.modulation.fxSends.reverb + valueDelta * delta, 0.0f, 1.0f);
-                break;
-            case VASynthRowType::Delay:
-                params.modulation.fxSends.delay = std::clamp(params.modulation.fxSends.delay + valueDelta * delta, 0.0f, 1.0f);
-                break;
-            case VASynthRowType::Chorus:
-                params.modulation.fxSends.chorus = std::clamp(params.modulation.fxSends.chorus + valueDelta * delta, 0.0f, 1.0f);
-                break;
-                break;
-            case VASynthRowType::Sidechain:
-                {
-                    auto& sends = instrument->getSends();
-                    sends.sidechainDuck = std::clamp(sends.sidechainDuck + valueDelta * delta, 0.0f, 1.0f);
                 }
                 break;
 
@@ -3785,6 +3649,336 @@ std::vector<HelpSection> InstrumentScreen::getHelpContent() const
     }});
 
     return sections;
+}
+
+// ============================================================================
+// DX Preset UI Implementation
+// ============================================================================
+
+void InstrumentScreen::paintDXPresetUI(juce::Graphics& g) {
+    auto area = getLocalBounds();
+    area.removeFromTop(30);  // Instrument tabs
+    area.removeFromTop(26);  // Type selector
+
+    auto* inst = project_.getInstrument(currentInstrument_);
+    if (!inst || inst->getType() != model::InstrumentType::DXPreset) return;
+
+    const auto& dxParams = inst->getDXParams();
+    auto& sends = inst->getSends();
+
+    // Header bar
+    auto headerArea = area.removeFromTop(30);
+    g.setColour(headerColor);
+    g.fillRect(headerArea);
+
+    g.setColour(fgColor);
+    g.setFont(18.0f);
+    juce::String title = "DX7: ";
+    if (editingName_)
+        title += juce::String(nameBuffer_) + "_";
+    else
+        title += juce::String(inst->getName());
+    g.drawText(title, headerArea.reduced(10, 0), juce::Justification::centredLeft, true);
+
+    area = area.reduced(5, 2);
+
+    constexpr int kRowH = 24;
+    constexpr int kDXBarWidth = 180;
+
+    // Lambda to draw a simple row (text value only)
+    auto drawTextRow = [&](int rowIndex, const char* label, const juce::String& value) {
+        auto rowArea = area.removeFromTop(kRowH);
+        bool isSelected = (rowIndex == dxPresetCursorRow_);
+
+        if (isSelected) {
+            g.setColour(highlightColor.withAlpha(0.3f));
+            g.fillRect(rowArea);
+        }
+
+        g.setColour(isSelected ? cursorColor : fgColor);
+        g.setFont(14.0f);
+        g.drawText(label, rowArea.removeFromLeft(kLabelWidth), juce::Justification::centredLeft);
+        g.drawText(value, rowArea, juce::Justification::centredLeft);
+    };
+
+    // Lambda to draw a slider row (with bar)
+    auto drawSliderRow = [&](int rowIndex, const char* label, float value, const juce::String& valueText) {
+        auto rowArea = area.removeFromTop(kRowH);
+        bool isSelected = (rowIndex == dxPresetCursorRow_);
+
+        if (isSelected) {
+            g.setColour(highlightColor.withAlpha(0.3f));
+            g.fillRect(rowArea);
+        }
+
+        g.setColour(isSelected ? cursorColor : fgColor);
+        g.setFont(14.0f);
+        g.drawText(label, rowArea.removeFromLeft(kLabelWidth), juce::Justification::centredLeft);
+
+        // Slider bar
+        int barX = rowArea.getX();
+        int barY = rowArea.getY() + (kRowH - 10) / 2;
+        g.setColour(juce::Colour(0xff303030));
+        g.fillRect(barX, barY, kDXBarWidth, 10);
+        g.setColour(isSelected ? cursorColor : juce::Colour(0xff4a9090));
+        g.fillRect(barX, barY, static_cast<int>(kDXBarWidth * value), 10);
+
+        // Value text
+        g.setColour(isSelected ? cursorColor : fgColor);
+        g.setFont(14.0f);
+        g.drawText(valueText, barX + kDXBarWidth + 8, rowArea.getY(), 60, kRowH, juce::Justification::centredLeft);
+    };
+
+    // Lambda for section headers
+    auto drawHeader = [&](const char* text) {
+        area.removeFromTop(4);
+        g.setColour(fgColor.darker(0.5f));
+        g.setFont(12.0f);
+        g.drawText(text, area.removeFromTop(16), juce::Justification::centredLeft);
+    };
+
+    // Get preset info
+    const auto& presets = dxPresetBank_.getPresets();
+    int presetIndex = dxParams.presetIndex;
+    juce::String cartridgeName = "No cartridge";
+    juce::String presetName = "INIT";
+    int presetInBank = 0;
+
+    if (presetIndex >= 0 && presetIndex < static_cast<int>(presets.size())) {
+        const auto& preset = presets[static_cast<size_t>(presetIndex)];
+        cartridgeName = juce::String(preset.bankName);
+        presetName = juce::String(preset.name);
+        presetInBank = preset.patchIndex;
+    }
+
+    // Draw rows
+    drawHeader("-- PRESET --");
+    drawTextRow(static_cast<int>(DXPresetRowType::Cartridge), "CARTRIDGE", cartridgeName);
+
+    // Preset row with index
+    juce::String presetStr = juce::String(presetInBank + 1) + ". " + presetName;
+    drawTextRow(static_cast<int>(DXPresetRowType::Preset), "PRESET", presetStr);
+
+    drawHeader("-- VOICE --");
+    drawTextRow(static_cast<int>(DXPresetRowType::Polyphony), "VOICES",
+                juce::String(dxParams.polyphony) + (dxParams.polyphony == 1 ? " (MONO)" : ""));
+
+    // Volume and Pan removed - now in Mixer screen
+
+    // Show total preset count
+    area.removeFromTop(10);
+    g.setColour(fgColor.darker(0.3f));
+    g.setFont(12.0f);
+    g.drawText("Total presets: " + juce::String(static_cast<int>(presets.size())),
+               area.removeFromTop(16), juce::Justification::centredLeft);
+}
+
+bool InstrumentScreen::handleDXPresetKey(const juce::KeyPress& key, bool /*isEditMode*/) {
+    // Use centralized key translation
+    auto action = input::KeyHandler::translateKey(key, getInputContext());
+
+    auto* instrument = project_.getInstrument(currentInstrument_);
+    if (!instrument || instrument->getType() != model::InstrumentType::DXPreset) return false;
+
+    // Handle actions from translateKey()
+    switch (action.action)
+    {
+        case input::KeyAction::PatternPrev:
+            // '[' switch to previous instrument
+            {
+                int numInstruments = project_.getInstrumentCount();
+                if (numInstruments > 0)
+                    currentInstrument_ = (currentInstrument_ - 1 + numInstruments) % numInstruments;
+            }
+            repaint();
+            return true;
+
+        case input::KeyAction::PatternNext:
+            // ']' switch to next instrument
+            {
+                int numInstruments = project_.getInstrumentCount();
+                if (numInstruments > 0)
+                    currentInstrument_ = (currentInstrument_ + 1) % numInstruments;
+            }
+            repaint();
+            return true;
+
+        default:
+            break;
+    }
+
+    auto& dxParams = instrument->getDXParams();
+    auto& sends = instrument->getSends();
+    const auto& presets = dxPresetBank_.getPresets();
+    int numPresets = static_cast<int>(presets.size());
+
+    // Navigation actions
+    switch (action.action)
+    {
+        case input::KeyAction::NavUp:
+            dxPresetCursorRow_ = std::max(0, dxPresetCursorRow_ - 1);
+            repaint();
+            return true;
+
+        case input::KeyAction::NavDown:
+            dxPresetCursorRow_ = std::min(kNumDXPresetRows - 1, dxPresetCursorRow_ + 1);
+            repaint();
+            return true;
+
+        default:
+            break;
+    }
+
+    // Handle edit actions for value adjustment
+    int valueDelta = 0;
+    bool isCoarse = false;
+    switch (action.action)
+    {
+        case input::KeyAction::Edit1Inc:
+        case input::KeyAction::Edit2Inc:
+        case input::KeyAction::ZoomIn:
+        case input::KeyAction::NavRight:
+            valueDelta = 1;
+            break;
+        case input::KeyAction::Edit1Dec:
+        case input::KeyAction::Edit2Dec:
+        case input::KeyAction::ZoomOut:
+        case input::KeyAction::NavLeft:
+            valueDelta = -1;
+            break;
+        case input::KeyAction::ShiftEdit1Inc:
+        case input::KeyAction::ShiftEdit2Inc:
+            valueDelta = 1;
+            isCoarse = true;
+            break;
+        case input::KeyAction::ShiftEdit1Dec:
+        case input::KeyAction::ShiftEdit2Dec:
+            valueDelta = -1;
+            isCoarse = true;
+            break;
+
+        default:
+            break;
+    }
+
+    float delta = isCoarse ? 0.01f : 0.05f;
+
+    if (valueDelta != 0) {
+        switch (static_cast<DXPresetRowType>(dxPresetCursorRow_)) {
+            case DXPresetRowType::Cartridge:
+                // Navigate between cartridges (banks)
+                // Find all unique bank names
+                if (numPresets > 0) {
+                    std::vector<std::string> bankNames;
+                    for (const auto& p : presets) {
+                        if (std::find(bankNames.begin(), bankNames.end(), p.bankName) == bankNames.end()) {
+                            bankNames.push_back(p.bankName);
+                        }
+                    }
+
+                    if (!bankNames.empty()) {
+                        // Find current bank index
+                        std::string currentBank;
+                        if (dxParams.presetIndex >= 0 && dxParams.presetIndex < numPresets) {
+                            currentBank = presets[static_cast<size_t>(dxParams.presetIndex)].bankName;
+                        }
+
+                        int bankIdx = 0;
+                        for (size_t i = 0; i < bankNames.size(); ++i) {
+                            if (bankNames[i] == currentBank) {
+                                bankIdx = static_cast<int>(i);
+                                break;
+                            }
+                        }
+
+                        // Navigate to next/prev bank
+                        bankIdx = (bankIdx + valueDelta + static_cast<int>(bankNames.size())) % static_cast<int>(bankNames.size());
+
+                        // Find first preset in new bank
+                        for (int i = 0; i < numPresets; ++i) {
+                            if (presets[static_cast<size_t>(i)].bankName == bankNames[static_cast<size_t>(bankIdx)]) {
+                                dxParams.presetIndex = i;
+                                break;
+                            }
+                        }
+
+                        // Update DX7Instrument with new patch
+                        if (audioEngine_) {
+                            auto* dx7 = audioEngine_->getDX7Processor(currentInstrument_);
+                            if (dx7 && dxParams.presetIndex >= 0) {
+                                const auto* preset = dxPresetBank_.getPreset(dxParams.presetIndex);
+                                if (preset) {
+                                    dx7->loadPackedPatch(preset->packedData.data());
+                                }
+                            }
+                        }
+                    }
+                }
+                break;
+
+            case DXPresetRowType::Preset:
+                // Navigate within current cartridge
+                if (numPresets > 0) {
+                    std::string currentBank;
+                    if (dxParams.presetIndex >= 0 && dxParams.presetIndex < numPresets) {
+                        currentBank = presets[static_cast<size_t>(dxParams.presetIndex)].bankName;
+                    }
+
+                    // Find presets in same bank
+                    std::vector<int> bankPresets;
+                    for (int i = 0; i < numPresets; ++i) {
+                        if (presets[static_cast<size_t>(i)].bankName == currentBank) {
+                            bankPresets.push_back(i);
+                        }
+                    }
+
+                    if (!bankPresets.empty()) {
+                        // Find current position in bank
+                        int posInBank = 0;
+                        for (size_t i = 0; i < bankPresets.size(); ++i) {
+                            if (bankPresets[i] == dxParams.presetIndex) {
+                                posInBank = static_cast<int>(i);
+                                break;
+                            }
+                        }
+
+                        // Navigate
+                        int step = isCoarse ? 8 : 1;
+                        posInBank = (posInBank + valueDelta * step + static_cast<int>(bankPresets.size())) % static_cast<int>(bankPresets.size());
+                        dxParams.presetIndex = bankPresets[static_cast<size_t>(posInBank)];
+
+                        // Update DX7Instrument with new patch
+                        if (audioEngine_) {
+                            auto* dx7 = audioEngine_->getDX7Processor(currentInstrument_);
+                            if (dx7) {
+                                const auto* preset = dxPresetBank_.getPreset(dxParams.presetIndex);
+                                if (preset) {
+                                    dx7->loadPackedPatch(preset->packedData.data());
+                                }
+                            }
+                        }
+                    }
+                }
+                break;
+
+            case DXPresetRowType::Polyphony:
+                dxParams.polyphony = std::clamp(dxParams.polyphony + valueDelta, 1, 16);
+                if (audioEngine_) {
+                    auto* dx7 = audioEngine_->getDX7Processor(currentInstrument_);
+                    if (dx7) {
+                        dx7->setPolyphony(dxParams.polyphony);
+                    }
+                }
+                break;
+
+            default:
+                break;
+        }
+        repaint();
+        return true;
+    }
+
+    return false;
 }
 
 } // namespace ui
