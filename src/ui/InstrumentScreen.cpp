@@ -2907,6 +2907,9 @@ void InstrumentScreen::cycleInstrumentType(bool reverse) {
         if (dx7 && dxParams.presetIndex >= 0) {
             const auto* preset = dxPresetBank_.getPreset(dxParams.presetIndex);
             if (preset) {
+                // Copy preset data into DXParams for persistence
+                std::copy(preset->packedData.begin(), preset->packedData.end(),
+                         dxParams.packedPatch.begin());
                 dx7->loadPackedPatch(preset->packedData.data());
                 dx7->setPolyphony(dxParams.polyphony);
             }
@@ -2951,6 +2954,9 @@ void InstrumentScreen::setCurrentInstrument(int index) {
             if (dx7 && dxParams.presetIndex >= 0) {
                 const auto* preset = dxPresetBank_.getPreset(dxParams.presetIndex);
                 if (preset) {
+                    // Copy preset data into DXParams for persistence
+                    std::copy(preset->packedData.begin(), preset->packedData.end(),
+                             dxParams.packedPatch.begin());
                     dx7->loadPackedPatch(preset->packedData.data());
                     dx7->setPolyphony(dxParams.polyphony);
                 }
@@ -3902,12 +3908,15 @@ bool InstrumentScreen::handleDXPresetKey(const juce::KeyPress& key, bool /*isEdi
                             }
                         }
 
-                        // Update DX7Instrument with new patch
+                        // Update DX7Instrument with new patch and store in DXParams
                         if (audioEngine_) {
                             auto* dx7 = audioEngine_->getDX7Processor(currentInstrument_);
                             if (dx7 && dxParams.presetIndex >= 0) {
                                 const auto* preset = dxPresetBank_.getPreset(dxParams.presetIndex);
                                 if (preset) {
+                                    // Copy preset data into DXParams for persistence
+                                    std::copy(preset->packedData.begin(), preset->packedData.end(),
+                                             dxParams.packedPatch.begin());
                                     dx7->loadPackedPatch(preset->packedData.data());
                                 }
                             }
@@ -3947,12 +3956,15 @@ bool InstrumentScreen::handleDXPresetKey(const juce::KeyPress& key, bool /*isEdi
                         posInBank = (posInBank + valueDelta * step + static_cast<int>(bankPresets.size())) % static_cast<int>(bankPresets.size());
                         dxParams.presetIndex = bankPresets[static_cast<size_t>(posInBank)];
 
-                        // Update DX7Instrument with new patch
+                        // Update DX7Instrument with new patch and store in DXParams
                         if (audioEngine_) {
                             auto* dx7 = audioEngine_->getDX7Processor(currentInstrument_);
                             if (dx7) {
                                 const auto* preset = dxPresetBank_.getPreset(dxParams.presetIndex);
                                 if (preset) {
+                                    // Copy preset data into DXParams for persistence
+                                    std::copy(preset->packedData.begin(), preset->packedData.end(),
+                                             dxParams.packedPatch.begin());
                                     dx7->loadPackedPatch(preset->packedData.data());
                                 }
                             }

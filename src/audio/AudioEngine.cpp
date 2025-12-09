@@ -111,16 +111,9 @@ void AudioEngine::triggerNote(int track, int note, int instrumentIndex, float ve
     if (instrument->getType() == model::InstrumentType::DXPreset)
     {
         // Handle DX7 preset instrument
-        std::cerr << "[AudioEngine] DXPreset triggerNote: track=" << track
-                  << " note=" << note << " inst=" << instrumentIndex << std::endl;
         if (auto* dx7 = getDX7Processor(instrumentIndex))
         {
-            std::cerr << "[AudioEngine] Calling dx7->noteOn()" << std::endl;
             dx7->noteOn(note, velocity);
-        }
-        else
-        {
-            std::cerr << "[AudioEngine] WARNING: getDX7Processor returned null!" << std::endl;
         }
 
         trackInstruments_[track] = instrumentIndex;
@@ -1380,8 +1373,30 @@ void AudioEngine::syncInstrumentParams(int instrumentIndex)
     if (instrumentIndex < 0 || instrumentIndex >= NUM_INSTRUMENTS) return;
 
     auto* instrument = project_->getInstrument(instrumentIndex);
+    if (!instrument) return;
+
+    // Handle DX7 preset instrument separately
+    if (instrument->getType() == model::InstrumentType::DXPreset)
+    {
+        auto* dx7 = getDX7Processor(instrumentIndex);
+        if (!dx7) return;
+
+        const auto& dxParams = instrument->getDXParams();
+
+        // Load the preset if we have valid preset index (packedPatch will be populated by UI)
+        if (dxParams.presetIndex >= 0)
+        {
+            dx7->loadPackedPatch(dxParams.packedPatch.data());
+        }
+
+        // Set polyphony
+        dx7->setPolyphony(dxParams.polyphony);
+        return;
+    }
+
+    // Handle Plaits instrument
     auto* processor = instrumentProcessors_[instrumentIndex].get();
-    if (!instrument || !processor) return;
+    if (!processor) return;
 
     // Sync basic parameters from model::Instrument to PlaitsInstrument
     const auto& params = instrument->getParams();
