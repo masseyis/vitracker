@@ -1,6 +1,7 @@
 #pragma once
 
 #include "InstrumentProcessor.h"
+#include "UniversalTrackerFX.h"
 #include "../dsp/voice_allocator.h"
 #include "../dsp/modulation_matrix.h"
 #include "../dsp/moog_filter.h"
@@ -147,6 +148,10 @@ private:
     static constexpr int kMaxBlockSize = 512;
     std::array<float, kMaxBlockSize> tempBufferL_;
     std::array<float, kMaxBlockSize> tempBufferR_;
+
+    // Universal tracker FX
+    UniversalTrackerFX trackerFX_;
+    bool hasPendingFX_ = false;
 };
 
 } // namespace audio

@@ -93,6 +93,10 @@ void PlaitsInstrument::init(double sampleRate)
     filter_.SetResonance(resonance_);
 
     modMatrix_.SetTempo(tempo_);
+
+    // Initialize tracker FX
+    trackerFX_.setSampleRate(sampleRate);
+    trackerFX_.setTempo(static_cast<float>(tempo_));
 }
 
 void PlaitsInstrument::setSampleRate(double sampleRate)
@@ -100,6 +104,7 @@ void PlaitsInstrument::setSampleRate(double sampleRate)
     sampleRate_ = sampleRate;
     voiceAllocator_.Init(sampleRate, polyphony_);
     filter_.SetSampleRate(static_cast<float>(sampleRate));
+    trackerFX_.setSampleRate(sampleRate);
 }
 
 void PlaitsInstrument::noteOn(int note, float velocity)
@@ -110,22 +115,35 @@ void PlaitsInstrument::noteOn(int note, float velocity)
 
 void PlaitsInstrument::noteOnWithFX(int note, float velocity, const model::Step& step)
 {
-    // Plaits doesn't use TrackerFX (it's for synthesized sounds, not samples)
-    // But we need to implement the interface for consistency
-    (void)step;
+    // Trigger UniversalTrackerFX
+    trackerFX_.triggerNote(note, velocity, step);
+    hasPendingFX_ = true;
 
-    float attackMs = mapAttack(attack_);
-    float decayMs = mapDecay(decay_);
-
-    voiceAllocator_.NoteOn(note, velocity, attackMs, decayMs);
-
-    // Trigger modulation envelopes on first note
-    int newActiveCount = voiceAllocator_.activeVoiceCount();
-    if (activeVoiceCount_ == 0 && newActiveCount > 0)
-    {
-        modMatrix_.TriggerEnvelopes();
+    // If no delay, trigger note immediately
+    // Otherwise, the process() method will trigger it after the delay
+    bool hasDelay = false;
+    for (int i = 0; i < 3; ++i) {
+        const auto* fx = (i == 0) ? &step.fx1 : (i == 1) ? &step.fx2 : &step.fx3;
+        if (fx->type == model::FXType::DLY) {
+            hasDelay = true;
+            break;
+        }
     }
-    activeVoiceCount_ = newActiveCount;
+
+    if (!hasDelay) {
+        float attackMs = mapAttack(attack_);
+        float decayMs = mapDecay(decay_);
+
+        voiceAllocator_.NoteOn(note, velocity, attackMs, decayMs);
+
+        // Trigger modulation envelopes on first note
+        int newActiveCount = voiceAllocator_.activeVoiceCount();
+        if (activeVoiceCount_ == 0 && newActiveCount > 0)
+        {
+            modMatrix_.TriggerEnvelopes();
+        }
+        activeVoiceCount_ = newActiveCount;
+    }
 }
 
 void PlaitsInstrument::noteOff(int note)
@@ -142,6 +160,35 @@ void PlaitsInstrument::allNotesOff()
 
 void PlaitsInstrument::process(float* outL, float* outR, int numSamples)
 {
+    // Process tracker FX with callbacks
+    if (hasPendingFX_) {
+        auto onNoteOn = [this](int note, float velocity) {
+            float attackMs = mapAttack(attack_);
+            float decayMs = mapDecay(decay_);
+            voiceAllocator_.NoteOn(note, velocity, attackMs, decayMs);
+
+            // Trigger modulation envelopes on first note
+            int newActiveCount = voiceAllocator_.activeVoiceCount();
+            if (activeVoiceCount_ == 0 && newActiveCount > 0) {
+                modMatrix_.TriggerEnvelopes();
+            }
+            activeVoiceCount_ = newActiveCount;
+        };
+
+        auto onNoteOff = [this]() {
+            voiceAllocator_.AllNotesOff();
+            activeVoiceCount_ = 0;
+        };
+
+        // Process FX timing and modulation
+        float currentPitch = trackerFX_.process(numSamples, onNoteOn, onNoteOff);
+
+        // If FX becomes inactive (cut), clear pending flag
+        if (currentPitch < 0.0f && !trackerFX_.isActive()) {
+            hasPendingFX_ = false;
+        }
+    }
+
     // Process in chunks to avoid buffer overflow
     int samplesRemaining = numSamples;
     int offset = 0;
@@ -272,6 +319,7 @@ void PlaitsInstrument::setTempo(double bpm)
 {
     tempo_ = bpm;
     modMatrix_.SetTempo(bpm);
+    trackerFX_.setTempo(static_cast<float>(bpm));
 }
 
 const char* PlaitsInstrument::getParameterName(int index) const
