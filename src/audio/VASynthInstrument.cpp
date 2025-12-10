@@ -1,10 +1,24 @@
 // VASynthInstrument implementation
 
 #include "VASynthInstrument.h"
+#include "Voice.h"
 #include <cmath>
 #include <algorithm>
 
 namespace audio {
+
+std::unique_ptr<Voice> VASynthInstrument::createVoice() {
+    auto voice = std::make_unique<VASynthVoice>();
+    voice->setSampleRate(sampleRate_);
+    updateVoiceParameters(voice.get());
+    return voice;
+}
+
+void VASynthInstrument::updateVoiceParameters(Voice* voice) {
+    if (!instrument_) return;
+    auto* vaVoice = static_cast<VASynthVoice*>(voice);
+    vaVoice->updateParameters(instrument_->getVAParams());
+}
 
 // Map 0-1 to milliseconds for attack (1ms to 2000ms, exponential)
 static float mapAttackMs(float normalized) {

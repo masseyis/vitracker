@@ -1,9 +1,20 @@
 #include "PlaitsInstrument.h"
+#include "Voice.h"
 #include <cmath>
 #include <cstring>
 #include <algorithm>
 
 namespace audio {
+
+std::unique_ptr<audio::Voice> PlaitsInstrument::createVoice() {
+    // TODO: Implement PlaitsVoice class
+    return nullptr;
+}
+
+void PlaitsInstrument::updateVoiceParameters(audio::Voice* voice) {
+    // TODO: Implement parameter update for PlaitsVoice
+    (void)voice;
+}
 
 static const char* kEngineNames[16] = {
     "Virtual Analog",

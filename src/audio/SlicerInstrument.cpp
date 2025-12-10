@@ -1,10 +1,21 @@
 #include "SlicerInstrument.h"
+#include "Voice.h"
 #include "../dsp/AudioAnalysis.h"
 #include <rubberband/RubberBandStretcher.h>
 #include <algorithm>
 #include <cmath>
 
 namespace audio {
+
+std::unique_ptr<audio::Voice> SlicerInstrument::createVoice() {
+    // TODO: Implement SlicerVoice as Voice subclass
+    return nullptr;
+}
+
+void SlicerInstrument::updateVoiceParameters(audio::Voice* voice) {
+    // TODO: Implement parameter update for SlicerVoice
+    (void)voice;
+}
 
 SlicerInstrument::SlicerInstrument() {
     formatManager_.registerBasicFormats();

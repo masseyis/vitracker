@@ -88,6 +88,7 @@ target_sources(Vitracker PRIVATE
     src/audio/SamplerInstrument.cpp
     src/audio/SlicerVoice.cpp
     src/audio/SlicerInstrument.cpp
+    src/audio/VASynthVoice.cpp
     src/audio/VASynthInstrument.cpp
     src/audio/DX7Instrument.cpp
     ${DSP_SOURCES}

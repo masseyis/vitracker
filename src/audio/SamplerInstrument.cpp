@@ -1,9 +1,20 @@
 #include "SamplerInstrument.h"
+#include "Voice.h"
 #include "../dsp/AudioAnalysis.h"
 #include <cmath>
 #include <algorithm>
 
 namespace audio {
+
+std::unique_ptr<audio::Voice> SamplerInstrument::createVoice() {
+    // TODO: Implement SamplerVoice as Voice subclass
+    return nullptr;
+}
+
+void SamplerInstrument::updateVoiceParameters(audio::Voice* voice) {
+    // TODO: Implement parameter update for SamplerVoice
+    (void)voice;
+}
 
 // Map 0-1 to milliseconds for attack (1ms to 2000ms, exponential)
 static float mapAttackMs(float normalized) {

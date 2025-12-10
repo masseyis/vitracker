@@ -1,4 +1,5 @@
 #include "DX7Instrument.h"
+#include "Voice.h"
 #include <algorithm>
 #include <cmath>
 #include <iostream>
@@ -12,6 +13,17 @@
 #endif
 
 namespace audio {
+
+std::unique_ptr<audio::Voice> DX7Instrument::createVoice() {
+    // TODO: Implement DX7Voice class
+    // For now, return nullptr to allow compilation
+    return nullptr;
+}
+
+void DX7Instrument::updateVoiceParameters(audio::Voice* voice) {
+    // TODO: Implement parameter update for DX7Voice
+    (void)voice;
+}
 
 // DX7 init patch - a simple sine wave (algorithm 32, single carrier)
 // Structure: 6 ops × 21 bytes + 8 pitch EG + 9 global + 10 name = 156 bytes
