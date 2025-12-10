@@ -3,287 +3,51 @@
 
 #pragma once
 
+#include "Voice.h"
 #include "../dsp/va_oscillator.h"
 #include "../dsp/va_filter.h"
 #include "../model/VAParams.h"
-#include "TrackerFX.h"
 #include <cmath>
 
 namespace audio {
 
-class VASynthVoice {
+class VASynthVoice : public Voice {
 public:
     VASynthVoice() = default;
-    ~VASynthVoice() = default;
+    ~VASynthVoice() override = default;
 
-    void init(float sampleRate) {
-        sampleRate_ = sampleRate;
-        osc1_.init(sampleRate);
-        osc2_.init(sampleRate);
-        osc3_.init(sampleRate);
-        noise_.reset();
-        filter_.init(sampleRate);
-        ampEnv_.init(sampleRate);
-        filterEnv_.init(sampleRate);
-        lfo_.init(sampleRate);
-        trackerFX_.setSampleRate(sampleRate);
-        reset();
-    }
+    // Voice interface implementation
+    void noteOn(int note, float velocity) override;
+    void noteOff() override;
+    void process(float* outL, float* outR, int numSamples,
+                float pitchMod = 0.0f,
+                float cutoffMod = 0.0f,
+                float volumeMod = 1.0f,
+                float panMod = 0.5f) override;
+    bool isActive() const override;
+    int getCurrentNote() const override { return note_; }
+    void setSampleRate(double sampleRate) override;
 
-    void setTempo(float bpm) {
-        trackerFX_.setTempo(bpm);
-    }
-
-    void reset() {
-        osc1_.reset();
-        osc2_.reset();
-        osc3_.reset();
-        filter_.reset();
-        ampEnv_.reset();
-        filterEnv_.reset();
-        lfo_.reset();
-        active_ = false;
-        note_ = -1;
-        velocity_ = 0.0f;
-        targetFreq_ = 440.0f;
-        currentFreq_ = 440.0f;
-    }
-
-    void trigger(int midiNote, float velocity, const model::VAParams& params) {
-        model::Step emptyStep;
-        trigger(midiNote, velocity, params, emptyStep);
-    }
-
-    void trigger(int midiNote, float velocity, const model::VAParams& params, const model::Step& step) {
-        note_ = midiNote;
-        velocity_ = velocity;
-        active_ = true;
-
-        // Trigger FX processor
-        trackerFX_.triggerNote(midiNote, velocity, step);
-
-        // Calculate base frequency
-        targetFreq_ = midiNoteToFreq(midiNote);
-
-        // Handle glide
-        if (params.glide > 0.0f && currentFreq_ > 0.0f) {
-            // Exponential glide
-            glideRate_ = 1.0f - std::exp(-1.0f / (params.glide * sampleRate_ * 0.5f));
-        } else {
-            currentFreq_ = targetFreq_;
-            glideRate_ = 1.0f;
-        }
-
-        // Update oscillator parameters
-        updateOscParams(params);
-
-        // Update filter parameters
-        updateFilterParams(params);
-
-        // Update envelope parameters
-        updateEnvelopeParams(params);
-
-        // Trigger envelopes
-        ampEnv_.trigger();
-        filterEnv_.trigger();
-
-        // Reset LFO on note trigger (optional, could be free-running)
-        lfo_.reset();
-    }
-
-    void release() {
-        ampEnv_.release();
-        filterEnv_.release();
-    }
-
-    bool isActive() const {
-        return active_ && ampEnv_.isActive();
-    }
-
-    int getNote() const { return note_; }
-
-    // Process a single sample
-    float process(const model::VAParams& params) {
-        // Process tracker FX (handles note delay, cut, off, retrigger)
-        if (!trackerFX_.processSample()) {
-            // FX says note should not play (delay or cut)
-            return 0.0f;
-        }
-
-        // Check for note off trigger from FX
-        if (trackerFX_.shouldReleaseNote()) {
-            release();
-        }
-
-        // Check for retrigger from FX
-        if (trackerFX_.shouldRetrigger()) {
-            ampEnv_.trigger();
-            filterEnv_.trigger();
-        }
-
-        if (!isActive()) {
-            active_ = false;
-            return 0.0f;
-        }
-
-        // Apply glide
-        currentFreq_ += (targetFreq_ - currentFreq_) * glideRate_;
-
-        // Get arpeggio offset from FX and apply to frequency
-        int arpOffset = trackerFX_.getArpOffset();
-        float arpFreq = currentFreq_;
-        if (arpOffset != 0) {
-            arpFreq = midiNoteToFreq(note_ + arpOffset);
-        }
-
-        // Process LFO
-        float lfoValue = lfo_.process();
-
-        // Apply LFO pitch modulation
-        float pitchMod = 1.0f + lfoValue * params.lfo.toPitch * 0.5f;  // +/- 50% = 1 octave
-        float modulatedFreq = arpFreq * pitchMod;
-
-        // Update oscillator frequencies with individual tuning
-        updateOscFrequencies(modulatedFreq, params);
-
-        // Apply LFO to pulse width
-        float pwMod = lfoValue * params.lfo.toPW * 0.4f;
-
-        // Mix oscillators
-        float mix = 0.0f;
-
-        if (params.osc1.enabled) {
-            osc1_.setPulseWidth(params.osc1.pulseWidth + pwMod);
-            mix += osc1_.process() * params.osc1.level;
-        }
-
-        if (params.osc2.enabled) {
-            osc2_.setPulseWidth(params.osc2.pulseWidth + pwMod);
-            mix += osc2_.process() * params.osc2.level;
-        }
-
-        if (params.osc3.enabled) {
-            osc3_.setPulseWidth(params.osc3.pulseWidth + pwMod);
-            mix += osc3_.process() * params.osc3.level;
-        }
-
-        // Add noise
-        if (params.noiseLevel > 0.0f) {
-            mix += noise_.process() * params.noiseLevel;
-        }
-
-        // Normalize mix level
-        mix *= 0.33f;
-
-        // Process envelopes
-        float ampEnvValue = ampEnv_.process();
-        float filterEnvValue = filterEnv_.process();
-
-        // Calculate filter cutoff with modulation
-        float baseCutoff = params.filter.cutoff;
-        float envMod = filterEnvValue * params.filter.envAmount;
-        float lfoMod = lfoValue * params.lfo.toFilter * 0.5f;
-        float keyTrack = (static_cast<float>(note_) - 60.0f) / 60.0f * params.filter.keyTrack;
-
-        float finalCutoff = baseCutoff + envMod + lfoMod + keyTrack;
-        finalCutoff = std::clamp(finalCutoff, 0.0f, 1.0f);
-
-        // Update filter
-        filter_.setCutoffNormalized(finalCutoff);
-        filter_.setResonance(params.filter.resonance);
-
-        // Filter the signal
-        float filtered = filter_.process(mix);
-
-        // Apply amplitude envelope and velocity
-        float output = filtered * ampEnvValue * velocity_ * params.masterLevel;
-
-        return output;
-    }
-
-    void setSampleRate(float sampleRate) {
-        sampleRate_ = sampleRate;
-        osc1_.init(sampleRate);
-        osc2_.init(sampleRate);
-        osc3_.init(sampleRate);
-        filter_.init(sampleRate);
-        ampEnv_.init(sampleRate);
-        filterEnv_.init(sampleRate);
-        lfo_.init(sampleRate);
-    }
+    // VASynth-specific interface for parameter updates
+    void updateParameters(const model::VAParams& params);
 
 private:
-    void updateOscParams(const model::VAParams& params) {
-        osc1_.setWaveform(static_cast<dsp::VAOscWaveform>(params.osc1.waveform));
-        osc1_.setPulseWidth(params.osc1.pulseWidth);
+    void init(float sampleRate);
+    void reset();
+    void updateOscParams(const model::VAParams& params);
+    void updateOscFrequencies(float baseFreq, const model::VAParams& params);
+    void updateFilterParams(const model::VAParams& params);
+    void updateEnvelopeParams(const model::VAParams& params);
 
-        osc2_.setWaveform(static_cast<dsp::VAOscWaveform>(params.osc2.waveform));
-        osc2_.setPulseWidth(params.osc2.pulseWidth);
+    // Process a single sample with modulation
+    float processSample(const model::VAParams& params, float pitchMod, float cutoffMod);
 
-        osc3_.setWaveform(static_cast<dsp::VAOscWaveform>(params.osc3.waveform));
-        osc3_.setPulseWidth(params.osc3.pulseWidth);
+    float midiNoteToFreq(float note) const;
+    float getOctaveMultiplier(int octave) const;
+    float getSemitoneMultiplier(int semitones) const;
+    float getCentsMultiplier(float cents) const;
 
-        // Set LFO waveform
-        lfo_.setWaveform(static_cast<dsp::VAOscWaveform>(params.lfo.shapeIndex));
-    }
-
-    void updateOscFrequencies(float baseFreq, const model::VAParams& params) {
-        // OSC1
-        float freq1 = baseFreq * getOctaveMultiplier(params.osc1.octave);
-        freq1 *= getSemitoneMultiplier(params.osc1.semitones);
-        freq1 *= getCentsMultiplier(params.osc1.cents);
-        osc1_.setFrequency(freq1);
-
-        // OSC2
-        float freq2 = baseFreq * getOctaveMultiplier(params.osc2.octave);
-        freq2 *= getSemitoneMultiplier(params.osc2.semitones);
-        freq2 *= getCentsMultiplier(params.osc2.cents);
-        osc2_.setFrequency(freq2);
-
-        // OSC3
-        float freq3 = baseFreq * getOctaveMultiplier(params.osc3.octave);
-        freq3 *= getSemitoneMultiplier(params.osc3.semitones);
-        freq3 *= getCentsMultiplier(params.osc3.cents);
-        osc3_.setFrequency(freq3);
-
-        // LFO frequency (fixed rate for now, could be tempo-synced)
-        float lfoFreq = 0.5f + params.lfo.rateIndex * 0.5f;  // 0.5Hz to 8Hz
-        lfo_.setFrequency(lfoFreq);
-    }
-
-    void updateFilterParams(const model::VAParams& params) {
-        filter_.setCutoffNormalized(params.filter.cutoff);
-        filter_.setResonance(params.filter.resonance);
-    }
-
-    void updateEnvelopeParams(const model::VAParams& params) {
-        ampEnv_.setAttack(params.ampEnv.attack);
-        ampEnv_.setDecay(params.ampEnv.decay);
-        ampEnv_.setSustain(params.ampEnv.sustain);
-        ampEnv_.setRelease(params.ampEnv.release);
-
-        filterEnv_.setAttack(params.filterEnv.attack);
-        filterEnv_.setDecay(params.filterEnv.decay);
-        filterEnv_.setSustain(params.filterEnv.sustain);
-        filterEnv_.setRelease(params.filterEnv.release);
-    }
-
-    float midiNoteToFreq(int note) const {
-        return 440.0f * std::pow(2.0f, (note - 69) / 12.0f);
-    }
-
-    float getOctaveMultiplier(int octave) const {
-        return std::pow(2.0f, static_cast<float>(octave));
-    }
-
-    float getSemitoneMultiplier(int semitones) const {
-        return std::pow(2.0f, semitones / 12.0f);
-    }
-
-    float getCentsMultiplier(float cents) const {
-        return std::pow(2.0f, cents / 1200.0f);
-    }
-
+    // Member variables
     float sampleRate_ = 48000.0f;
 
     // Oscillators
@@ -308,8 +72,8 @@ private:
     float currentFreq_ = 440.0f;
     float glideRate_ = 1.0f;
 
-    // Tracker FX
-    TrackerFX trackerFX_;
+    // Cached parameters for current processing block
+    model::VAParams params_;
 };
 
 } // namespace audio
