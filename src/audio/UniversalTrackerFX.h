@@ -128,8 +128,9 @@ public:
                     }
                 }
 
-                // Arpeggio - cycle through notes each tick (starting from tick 1)
-                if (active_ && tickCounter_ > 0 && (arpNotes_[1] != 0 || arpNotes_[2] != 0)) {
+                // Arpeggio - cycle through notes every 2 ticks (starting from tick 2)
+                // This gives a more musical arpeggio speed at typical BPMs
+                if (active_ && tickCounter_ > 0 && tickCounter_ % 2 == 0 && (arpNotes_[1] != 0 || arpNotes_[2] != 0)) {
                     arpIndex_ = (arpIndex_ + 1) % 3;
                     currentNote_ = baseNote_ + arpNotes_[arpIndex_];
                     // Always trigger on arpeggio tick, even if same note

@@ -115,6 +115,12 @@ void PlaitsInstrument::noteOn(int note, float velocity)
 
 void PlaitsInstrument::noteOnWithFX(int note, float velocity, const model::Step& step)
 {
+    // If there's already pending FX, stop all voices first to avoid overlap
+    if (hasPendingFX_) {
+        voiceAllocator_.AllNotesOff();
+        activeVoiceCount_ = 0;
+    }
+
     // Trigger UniversalTrackerFX
     trackerFX_.triggerNote(note, velocity, step);
     hasPendingFX_ = true;
@@ -185,9 +191,13 @@ void PlaitsInstrument::process(float* outL, float* outR, int numSamples)
         };
 
         auto onNoteOff = [this]() {
-            voiceAllocator_.AllNotesOff();
-            activeVoiceCount_ = 0;
-            lastArpNote_ = -1;  // Reset tracking
+            // Only release the last triggered note, not all voices
+            // This allows chords (multiple tracks with same instrument) to work
+            if (lastArpNote_ >= 0) {
+                voiceAllocator_.NoteOff(lastArpNote_);
+                activeVoiceCount_ = voiceAllocator_.activeVoiceCount();
+            }
+            lastArpNote_ = -1;
         };
 
         // Process FX timing and modulation

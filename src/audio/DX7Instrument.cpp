@@ -186,6 +186,11 @@ void DX7Instrument::noteOnWithFX(int note, float velocity, const model::Step& st
 {
     DX7_LOG("noteOnWithFX() called: note=" << note << ", velocity=" << velocity);
 
+    // If there's already pending FX, stop all voices first to avoid overlap
+    if (hasPendingFX_) {
+        allNotesOff();
+    }
+
     // Trigger UniversalTrackerFX
     trackerFX_.triggerNote(note, velocity, step);
     hasPendingFX_ = true;
@@ -317,8 +322,12 @@ void DX7Instrument::process(float* outL, float* outR, int numSamples)
         };
 
         auto onNoteOff = [this]() {
-            allNotesOff();
-            lastArpNote_ = -1;  // Reset tracking
+            // Only release the last triggered note, not all voices
+            // This allows chords (multiple tracks with same instrument) to work
+            if (lastArpNote_ >= 0) {
+                noteOff(lastArpNote_);
+            }
+            lastArpNote_ = -1;
         };
 
         // Process FX timing and modulation
@@ -385,15 +394,15 @@ void DX7Instrument::process(float* outL, float* outR, int numSamples)
 
         // Convert int32 to float and copy to output (mono for now)
         // DX7 output is in Q24 format (24-bit fixed point)
-        // Scale by max polyphony to prevent distortion when multiple voices play
-        // Using sqrt provides a reasonable balance between volume loss and distortion
+        // Scale conservatively to prevent distortion - DX7 voices can be very loud
         constexpr float baseScale = 1.0f / (1 << 24);
-        float voiceScale = (activeVoiceCount > 1) ? (1.0f / std::sqrt(static_cast<float>(activeVoiceCount))) : 1.0f;
-        float scale = baseScale * voiceScale;
+        // Apply more aggressive polyphony scaling to prevent clipping
+        float voiceScale = 1.0f / static_cast<float>(std::max(1, activeVoiceCount));
+        // Additional headroom scaling factor
+        constexpr float headroomScale = 0.5f;
+        float scale = baseScale * voiceScale * headroomScale;
         for (int i = 0; i < samplesToProcess; ++i) {
             float sample = static_cast<float>(buf[i]) * scale;
-            // Soft clip to prevent harsh clipping
-            sample = std::tanh(sample);
             outL[samplesProcessed + i] = sample;
             outR[samplesProcessed + i] = sample;
 

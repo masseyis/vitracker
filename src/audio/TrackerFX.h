@@ -105,8 +105,9 @@ public:
             sampleCounter_ -= samplesPerTick_;
             tickCounter_++;
 
-            // Arpeggio cycles through notes each tick
-            if (arpNotes_[1] != 0 || arpNotes_[2] != 0) {
+            // Arpeggio cycles through notes every 2 ticks
+            // This gives a more musical arpeggio speed at typical BPMs
+            if ((arpNotes_[1] != 0 || arpNotes_[2] != 0) && tickCounter_ % 2 == 0) {
                 arpIndex_ = (arpIndex_ + 1) % 3;
             }
 
