@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Voice.h"
+#include "UniversalTrackerFX.h"
 #include "Effects.h"
 #include "InstrumentProcessor.h"
 #include "PlaitsInstrument.h"
@@ -18,6 +19,20 @@
 #include <memory>
 
 namespace audio {
+
+// Track structure - owns voice and tracker FX
+struct Track {
+    std::unique_ptr<Voice> voice;          // Owned voice instance
+    UniversalTrackerFX trackerFX;          // FX processor
+    int currentInstrumentIndex = -1;       // Which instrument params to use
+    model::InstrumentType currentInstrumentType = model::InstrumentType::Plaits;  // Which type of voice
+    bool hasPendingFX = false;             // Whether FX is active
+
+    void triggerNote(int note, float velocity, const model::Step& step,
+                    InstrumentProcessor* instrument);
+    void process(float* outL, float* outR, int numSamples,
+                InstrumentProcessor* instrument);
+};
 
 class AudioEngine : public juce::AudioSource
 {
@@ -64,13 +79,14 @@ public:
     // Access instrument processor for UI
     PlaitsInstrument* getInstrumentProcessor(int index);
     const PlaitsInstrument* getInstrumentProcessor(int index) const;
+    PlaitsInstrument* getPlaitsProcessor(int index);
     SamplerInstrument* getSamplerProcessor(int index);
     SlicerInstrument* getSlicerProcessor(int index);
     VASynthInstrument* getVASynthProcessor(int index);
     DX7Instrument* getDX7Processor(int index);
 
 private:
-    Voice* allocateVoice(int note);
+    // Voice* allocateVoice(int note);  // Disabled - Voice is now abstract
     void advancePlayhead();
     void advanceChain();
     void advanceAllChains();  // Advance all song columns
@@ -83,9 +99,11 @@ private:
 
     model::Project* project_ = nullptr;
 
-    // Legacy voice pool (kept for FX processing)
-    std::array<Voice, NUM_VOICES> voices_;
-    std::array<Voice*, NUM_TRACKS> trackVoices_;  // Current voice per track
+    // Track array (voice-per-track architecture)
+    std::array<Track, NUM_TRACKS> tracks_;
+
+    // Legacy tracking (kept temporarily for old trigger methods)
+    // Will be removed after full migration to Track system
     std::array<int, NUM_TRACKS> trackInstruments_; // Current instrument per track
     std::array<int, NUM_TRACKS> trackNotes_;       // Last note triggered per track (-1 = none)
 

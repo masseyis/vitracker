@@ -4,6 +4,7 @@
 #include "voice_allocator.h"
 #include <algorithm>
 #include <cstring>
+#include <cmath>
 
 void VoiceAllocator::Init(double hostSampleRate, int polyphony)
 {
@@ -66,6 +67,14 @@ void VoiceAllocator::Process(float* leftOutput, float* rightOutput, size_t size)
     std::memset(leftOutput, 0, size * sizeof(float));
     std::memset(rightOutput, 0, size * sizeof(float));
 
+    // Count active voices for gain compensation
+    int activeCount = 0;
+    for (size_t i = 0; i < static_cast<size_t>(polyphony_); ++i) {
+        if (voices_[i].active()) {
+            activeCount++;
+        }
+    }
+
     // Update shared parameters and process each active voice
     for (size_t i = 0; i < static_cast<size_t>(polyphony_); ++i) {
         voices_[i].set_engine(engine_);
@@ -77,6 +86,17 @@ void VoiceAllocator::Process(float* leftOutput, float* rightOutput, size_t size)
 
         if (voices_[i].active()) {
             voices_[i].Process(leftOutput, rightOutput, size);
+        }
+    }
+
+    // Apply polyphony gain compensation to prevent clipping
+    // Use linear scaling divided by voice count for sufficient headroom
+    if (activeCount > 0) {
+        // Linear scaling with extra headroom factor
+        float gainCompensation = 0.7f / static_cast<float>(activeCount);
+        for (size_t i = 0; i < size; ++i) {
+            leftOutput[i] *= gainCompensation;
+            rightOutput[i] *= gainCompensation;
         }
     }
 }

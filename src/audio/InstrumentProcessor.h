@@ -2,8 +2,13 @@
 
 #include <string>
 #include <cstdint>
+#include <memory>
+#include "../model/Step.h"
 
 namespace audio {
+
+// Forward declaration
+class Voice;
 
 // Base class for all instrument types (Plaits, Sampler, etc.)
 class InstrumentProcessor
@@ -15,12 +20,27 @@ public:
     virtual void init(double sampleRate) = 0;
     virtual void setSampleRate(double sampleRate) = 0;
 
-    // Note handling
+    // Voice-per-track interface
+    // Create a new voice instance for a track
+    virtual std::unique_ptr<Voice> createVoice() = 0;
+
+    // Update voice parameters from current instrument state
+    // Called before processing to sync voice with instrument params
+    virtual void updateVoiceParameters(Voice* voice) = 0;
+
+    // Note handling (legacy - will be removed in later tasks)
     virtual void noteOn(int note, float velocity) = 0;
     virtual void noteOff(int note) = 0;
     virtual void allNotesOff() = 0;
 
-    // Audio processing
+    // Note handling with FX commands (legacy - will be removed)
+    virtual void noteOnWithFX(int note, float velocity, const model::Step& step) {
+        // Default: ignore FX and just trigger note
+        (void)step;
+        noteOn(note, velocity);
+    }
+
+    // Audio processing (legacy - will be removed)
     virtual void process(float* outL, float* outR, int numSamples) = 0;
 
     // Instrument type identification

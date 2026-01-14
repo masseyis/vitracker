@@ -21,9 +21,16 @@ public:
     // InstrumentProcessor interface
     void init(double sampleRate) override;
     void setSampleRate(double sampleRate) override;
+
+    // Voice-per-track interface
+    std::unique_ptr<audio::Voice> createVoice() override;
+    void updateVoiceParameters(audio::Voice* voice) override;
+
+    // Legacy methods
     void noteOn(int note, float velocity) override;
     void noteOff(int note) override;
     void allNotesOff() override;
+    void noteOnWithFX(int note, float velocity, const model::Step& step) override;
     void process(float* outL, float* outR, int numSamples) override;
     const char* getTypeName() const override { return "Sampler"; }
 

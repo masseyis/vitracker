@@ -1,74 +1,36 @@
 #pragma once
 
-#include "plaits/dsp/voice.h"
-#include "../model/Instrument.h"
-#include "../model/Step.h"
-#include <memory>
-#include <cmath>
-
 namespace audio {
 
+// Base interface for all voice types
+// Voice owns synthesis state (envelopes, oscillator phase, internal LFOs)
+// Track owns sequencing state (TrackerFX, modulation calculation)
 class Voice
 {
 public:
-    Voice();
-    ~Voice();
+    virtual ~Voice() = default;
 
-    void init();
-    void setSampleRate(double sampleRate) { sampleRate_ = sampleRate; }
-    void noteOn(int note, float velocity, const model::Instrument& instrument);
-    void noteOff();
+    // Note control
+    virtual void noteOn(int note, float velocity) = 0;
+    virtual void noteOff() = 0;
 
-    void render(float* outL, float* outR, int numSamples);
+    // Audio rendering with tracker FX modulation
+    // pitchMod: semitones offset from current note (for POR/VIB)
+    // cutoffMod: 0-1 normalized (for CUT command, ignored if no filter)
+    // volumeMod: 0-1 normalized (for VOL command)
+    // panMod: 0-1 normalized, 0=left, 0.5=center, 1=right (for PAN command)
+    virtual void process(float* outL, float* outR, int numSamples,
+                        float pitchMod = 0.0f,
+                        float cutoffMod = 0.0f,
+                        float volumeMod = 1.0f,
+                        float panMod = 0.5f) = 0;
 
-    bool isActive() const { return active_; }
-    int getNote() const { return currentNote_; }
-    uint64_t getStartTime() const { return startTime_; }
+    // State queries
+    virtual bool isActive() const = 0;
+    virtual int getCurrentNote() const = 0;
 
-    // Send levels for effects (read by AudioEngine)
-    float getReverbSend() const { return reverbSend_; }
-    float getDelaySend() const { return delaySend_; }
-    float getChorusSend() const { return chorusSend_; }
-    float getSidechainSend() const { return sidechainSend_; }
-
-    // FX command processing
-    void setFX(model::FXType type, uint8_t value);
-    void processFX();
-    void setPortamentoTarget(int targetNote) { portamentoTarget_ = targetNote; }
-
-private:
-    plaits::Voice plaitsVoice_;
-    plaits::Patch patch_;
-    plaits::Modulations modulations_;
-
-    float outBuffer_[24];
-    float auxBuffer_[24];
-
-    char sharedBuffer_[16384];
-
-    bool active_ = false;
-    int currentNote_ = -1;
-    uint64_t startTime_ = 0;
-
-    float reverbSend_ = 0.0f;
-    float delaySend_ = 0.0f;
-    float chorusSend_ = 0.0f;
-    float sidechainSend_ = 0.0f;
-
-    // FX state
-    double sampleRate_ = 48000.0;
-    float currentPitch_ = 0.0f;
-    float portamentoTarget_ = 0.0f;
-    float portamentoSpeed_ = 0.0f;
-    float vibratoPhase_ = 0.0f;
-    float vibratoSpeed_ = 0.0f;
-    float vibratoDepth_ = 0.0f;
-    int arpIndex_ = 0;
-    int arpNotes_[3] = {0, 0, 0};
-    int arpTicks_ = 0;
-    float volumeSlide_ = 0.0f;
-
-    static uint64_t globalTime_;
+    // Sample rate management
+    virtual void setSampleRate(double sampleRate) = 0;
 };
 
 } // namespace audio

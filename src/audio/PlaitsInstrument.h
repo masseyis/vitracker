@@ -1,6 +1,7 @@
 #pragma once
 
 #include "InstrumentProcessor.h"
+#include "UniversalTrackerFX.h"
 #include "../dsp/voice_allocator.h"
 #include "../dsp/modulation_matrix.h"
 #include "../dsp/moog_filter.h"
@@ -53,7 +54,14 @@ public:
     // InstrumentProcessor interface
     void init(double sampleRate) override;
     void setSampleRate(double sampleRate) override;
+
+    // Voice-per-track interface
+    std::unique_ptr<audio::Voice> createVoice() override;
+    void updateVoiceParameters(audio::Voice* voice) override;
+
+    // Legacy methods
     void noteOn(int note, float velocity) override;
+    void noteOnWithFX(int note, float velocity, const model::Step& step) override;
     void noteOff(int note) override;
     void allNotesOff() override;
     void process(float* outL, float* outR, int numSamples) override;
@@ -146,6 +154,11 @@ private:
     static constexpr int kMaxBlockSize = 512;
     std::array<float, kMaxBlockSize> tempBufferL_;
     std::array<float, kMaxBlockSize> tempBufferR_;
+
+    // Universal tracker FX
+    UniversalTrackerFX trackerFX_;
+    bool hasPendingFX_ = false;
+    int lastArpNote_ = -1;  // Track last arpeggio note for monophonic release
 };
 
 } // namespace audio

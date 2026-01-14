@@ -542,14 +542,15 @@ void InstrumentScreen::drawRow(juce::Graphics& g, juce::Rectangle<int> area, int
             }
             break;
 
-        case InstrumentRowType::Polyphony:
-            label = "VOICES";
-            {
-                int poly = params.polyphony;
-                value = static_cast<float>(poly - 1) / 15.0f;
-                valueText = juce::String(poly);
-            }
-            break;
+        // Voice-per-track architecture: polyphony removed for Plaits, one voice per track
+        // case InstrumentRowType::Polyphony:
+        //     label = "VOICES";
+        //     {
+        //         int poly = params.polyphony;
+        //         value = static_cast<float>(poly - 1) / 15.0f;
+        //         valueText = juce::String(poly);
+        //     }
+        //     break;
 
         case InstrumentRowType::Cutoff:
             label = "CUTOFF";
@@ -1285,9 +1286,10 @@ void InstrumentScreen::setRowValue(int row, float delta)
         case InstrumentRowType::Decay:
             clamp01(params.decay, delta);
             break;
-        case InstrumentRowType::Polyphony:
-            clampInt(params.polyphony, delta > 0 ? 1 : -1, 1, 16);
-            break;
+        // Voice-per-track architecture: polyphony control removed for Plaits
+        // case InstrumentRowType::Polyphony:
+        //     clampInt(params.polyphony, delta > 0 ? 1 : -1, 1, 16);
+        //     break;
         case InstrumentRowType::Cutoff:
             clamp01(params.filter.cutoff, delta);
             break;
@@ -3185,8 +3187,9 @@ void InstrumentScreen::paintVASynthUI(juce::Graphics& g) {
 
     drawHeader(rightCol, "-- VOICE --");
     drawSliderRow(rightCol, static_cast<int>(VASynthRowType::Glide), "GLIDE", params.glide, juce::String(static_cast<int>(params.glide * 100)) + "%");
-    juce::String polyStr = params.monoMode ? "MONO" : juce::String(params.polyphony);
-    drawRow(rightCol, static_cast<int>(VASynthRowType::Polyphony), "VOICES", polyStr);
+    // Voice-per-track architecture: polyphony removed, one voice per track
+    // juce::String polyStr = params.monoMode ? "MONO" : juce::String(params.polyphony);
+    // drawRow(rightCol, static_cast<int>(VASynthRowType::Polyphony), "VOICES", polyStr);
 
     drawHeader(rightCol, "-- MODULATION --");
     drawModRow(rightCol, static_cast<int>(VASynthRowType::Lfo1), "LFO1", false,
@@ -3468,20 +3471,21 @@ bool InstrumentScreen::handleVASynthKey(const juce::KeyPress& key, bool /*isEdit
             case VASynthRowType::Glide:
                 clampFloat(params.glide, valueDelta * delta);
                 break;
-            case VASynthRowType::Polyphony:
-                // Left decreases (towards mono), Right increases
-                if (params.monoMode && valueDelta > 0) {
-                    // Switch from mono to poly (1 voice)
-                    params.monoMode = false;
-                    params.polyphony = 1;
-                } else if (!params.monoMode && params.polyphony == 1 && valueDelta < 0) {
-                    // Switch from 1 voice to mono
-                    params.monoMode = true;
-                } else if (!params.monoMode) {
-                    // Adjust voice count
-                    params.polyphony = std::clamp(params.polyphony + valueDelta, 1, 16);
-                }
-                break;
+            // Voice-per-track architecture: polyphony control removed
+            // case VASynthRowType::Polyphony:
+            //     // Left decreases (towards mono), Right increases
+            //     if (params.monoMode && valueDelta > 0) {
+            //         // Switch from mono to poly (1 voice)
+            //         params.monoMode = false;
+            //         params.polyphony = 1;
+            //     } else if (!params.monoMode && params.polyphony == 1 && valueDelta < 0) {
+            //         // Switch from 1 voice to mono
+            //         params.monoMode = true;
+            //     } else if (!params.monoMode) {
+            //         // Adjust voice count
+            //         params.polyphony = std::clamp(params.polyphony + valueDelta, 1, 16);
+            //     }
+            //     break;
 
             // Modulation rows - 4 fields each
             case VASynthRowType::Lfo1:

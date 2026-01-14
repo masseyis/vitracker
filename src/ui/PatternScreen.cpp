@@ -540,7 +540,7 @@ bool PatternScreen::handleEditKey(const juce::KeyPress& key)
                         if (fx && fx->type != model::FXType::None)
                         {
                             int currentType = static_cast<int>(fx->type);
-                            int numTypes = 7;  // None + 6 types
+                            int numTypes = 10;  // None + 9 types (ARP, POR, VIB, VOL, PAN, DLY, RET, CUT, OFF)
                             int newType = (currentType + direction + numTypes) % numTypes;
                             if (newType == 0) newType = (direction > 0) ? 1 : numTypes - 1;  // Skip None
                             fx->type = static_cast<model::FXType>(newType);
@@ -843,7 +843,7 @@ bool PatternScreen::handleEditKey(const juce::KeyPress& key)
             {
                 int delta = isVerticalEditInc ? 1 : -1;
                 int currentType = static_cast<int>(fx->type);
-                int numTypes = 7;  // None + 6 types
+                int numTypes = 10;  // None + 9 types (ARP, POR, VIB, VOL, PAN, DLY, RET, CUT, OFF)
                 int newType = (currentType + delta + numTypes) % numTypes;
                 fx->type = static_cast<model::FXType>(newType);
                 repaint();

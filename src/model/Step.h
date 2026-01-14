@@ -9,12 +9,15 @@ namespace model {
 enum class FXType : uint8_t
 {
     None = 0,
-    ARP,   // Arpeggio - value = semitones (high nibble up, low nibble down)
-    POR,   // Portamento - value = speed
-    VIB,   // Vibrato - value = speed/depth
-    VOL,   // Volume slide - value = up/down amount
-    PAN,   // Pan - value = position
-    DLY    // Retrigger/delay - value = ticks
+    ARP,   // Arpeggio - value = semitones (high nibble = 1st, low nibble = 2nd)
+    POR,   // Portamento/Tone Slide - value = speed
+    VIB,   // Vibrato - value = speed/depth (high nibble = speed, low = depth)
+    VOL,   // Volume slide - value = up/down amount (high nibble = up, low = down)
+    PAN,   // Pan - value = position (00 = left, 80 = center, FF = right)
+    DLY,   // Note Delay - value = ticks to delay note trigger (for microtiming/strum)
+    RET,   // Retrigger Note - value = ticks between retriggers (drum rolls/stutter)
+    CUT,   // Note Cut - value = ticks before cutting note
+    OFF    // Note Off - value = ticks before releasing note
 };
 
 struct FXCommand
@@ -27,7 +30,7 @@ struct FXCommand
 
     std::string toString() const {
         if (type == FXType::None) return "....";
-        static const char* names[] = {"....", "ARP", "POR", "VIB", "VOL", "PAN", "DLY"};
+        static const char* names[] = {"....", "ARP", "POR", "VIB", "VOL", "PAN", "DLY", "RET", "CUT", "OFF"};
         char buf[8];
         snprintf(buf, sizeof(buf), "%s%02X", names[static_cast<int>(type)], value);
         return buf;
