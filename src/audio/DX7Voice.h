@@ -10,8 +10,8 @@
 class Dx7Note;
 class Lfo;
 class FmCore;
-struct Controllers;
-struct TuningState;
+class Controllers;
+class TuningState;
 std::shared_ptr<TuningState> createStandardTuning();
 
 namespace audio {

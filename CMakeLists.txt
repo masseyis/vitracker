@@ -139,6 +139,7 @@ enable_testing()
 add_executable(DX7InstrumentTest
     tests/DX7InstrumentTest.cpp
     src/audio/DX7Instrument.cpp
+    src/audio/DX7Voice.cpp
     ${DSP_SOURCES}
 )
 
