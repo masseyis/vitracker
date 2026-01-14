@@ -2,1526 +2,1642 @@
 
 namespace audio {
 
-AudioEngine::AudioEngine()
-{
-    trackVoices_.fill(nullptr);
-    trackInstruments_.fill(-1);
-    trackNotes_.fill(-1);
-    trackChainPositions_.fill(0);
+// Track implementation
+void Track::triggerNote(int note, float velocity, const model::Step &step,
+                        InstrumentProcessor *instrument) {
+  if (!instrument)
+    return;
 
-    // Create instrument processors for all slots
-    for (int i = 0; i < NUM_INSTRUMENTS; ++i)
-    {
-        instrumentProcessors_[i] = std::make_unique<PlaitsInstrument>();
-        samplerProcessors_[i] = std::make_unique<SamplerInstrument>();
-        slicerProcessors_[i] = std::make_unique<SlicerInstrument>();
-        vaSynthProcessors_[i] = std::make_unique<VASynthInstrument>();
-        dx7Processors_[i] = std::make_unique<DX7Instrument>();
+  // Note: Voice creation happens in AudioEngine::triggerNote based on
+  // instrument index This method just handles the tracker FX and note
+  // triggering
+
+  // Stop previous note if active
+  if (voice && voice->isActive()) {
+    voice->noteOff();
+  }
+
+  // Start tracker FX
+  trackerFX.triggerNote(note, velocity, step);
+  hasPendingFX = true;
+
+  // Check if we need to trigger immediately
+  // DLY delays the initial trigger
+  // POR doesn't retrigger - it just updates the portamento target
+  bool hasDelay = false;
+  bool hasPortamento = false;
+  for (int i = 0; i < 3; ++i) {
+    const auto *fx = (i == 0) ? &step.fx1 : (i == 1) ? &step.fx2 : &step.fx3;
+    if (fx->type == model::FXType::DLY) {
+      hasDelay = true;
     }
+    if (fx->type == model::FXType::POR) {
+      hasPortamento = true;
+    }
+  }
+
+  // Trigger the voice immediately unless there's a delay or portamento
+  // POR doesn't retrigger - the voice keeps playing and glides to the new pitch
+  if (!hasDelay && !hasPortamento && voice) {
+    instrument->updateVoiceParameters(voice.get());
+    voice->noteOn(note, velocity);
+  }
+}
+
+void Track::process(float *outL, float *outR, int numSamples,
+                    InstrumentProcessor *instrument) {
+  if (!voice || !hasPendingFX || !instrument) {
+    // Clear output if no voice/FX
+    std::fill_n(outL, numSamples, 0.0f);
+    std::fill_n(outR, numSamples, 0.0f);
+    return;
+  }
+
+  // Callbacks for tracker FX timing events
+  auto onNoteOn = [&](int n, float vel) {
+    // Don't call noteOff() before re-triggering - just re-trigger directly
+    // This allows envelopes to restart from their current position
+    instrument->updateVoiceParameters(voice.get());
+    voice->noteOn(n, vel);
+  };
+
+  auto onNoteOff = [&]() {
+    if (voice)
+      voice->noteOff();
+  };
+
+  // Process FX timing (handles DLY, RET, CUT, OFF, ARP)
+  float pitch = trackerFX.process(numSamples, onNoteOn, onNoteOff);
+
+  // Render with modulation
+  if (voice && voice->isActive()) {
+    float pitchMod = pitch - voice->getCurrentNote();
+    voice->process(outL, outR, numSamples, pitchMod, 0.0f, 1.0f, 0.5f);
+  } else {
+    std::fill_n(outL, numSamples, 0.0f);
+    std::fill_n(outR, numSamples, 0.0f);
+  }
+
+  // Check if FX should be cleared
+  if (pitch < 0 && !trackerFX.isActive()) {
+    hasPendingFX = false;
+  }
+}
+
+AudioEngine::AudioEngine() {
+  // Legacy arrays disabled (Voice is now abstract)
+  // trackVoices_.fill(nullptr);
+
+  // Legacy tracking (kept temporarily for old trigger methods)
+  trackInstruments_.fill(-1);
+  trackNotes_.fill(-1);
+  trackChainPositions_.fill(0);
+
+  // Create instrument processors for all slots
+  for (int i = 0; i < NUM_INSTRUMENTS; ++i) {
+    instrumentProcessors_[i] = std::make_unique<PlaitsInstrument>();
+    samplerProcessors_[i] = std::make_unique<SamplerInstrument>();
+    slicerProcessors_[i] = std::make_unique<SlicerInstrument>();
+    vaSynthProcessors_[i] = std::make_unique<VASynthInstrument>();
+    dx7Processors_[i] = std::make_unique<DX7Instrument>();
+  }
 }
 
 AudioEngine::~AudioEngine() = default;
 
-void AudioEngine::play()
-{
-    // Lock-free: signal to audio thread to start playback
-    // The audio thread will handle state reset to avoid mutex contention
-    if (!playing_.load(std::memory_order_relaxed))
-    {
-        pendingPlay_.store(true, std::memory_order_release);
-    }
+void AudioEngine::play() {
+  // Lock-free: signal to audio thread to start playback
+  // The audio thread will handle state reset to avoid mutex contention
+  if (!playing_.load(std::memory_order_relaxed)) {
+    pendingPlay_.store(true, std::memory_order_release);
+  }
 }
 
-void AudioEngine::stop()
-{
-    // Lock-free: signal to audio thread to stop playback
-    // The audio thread will handle cleanup to avoid mutex contention
-    if (playing_.load(std::memory_order_relaxed))
-    {
-        pendingStop_.store(true, std::memory_order_release);
-    }
+void AudioEngine::stop() {
+  // Lock-free: signal to audio thread to stop playback
+  // The audio thread will handle cleanup to avoid mutex contention
+  if (playing_.load(std::memory_order_relaxed)) {
+    pendingStop_.store(true, std::memory_order_release);
+  }
 }
 
-void AudioEngine::triggerNote(int track, int note, int instrumentIndex, float velocity)
-{
-    model::Step emptyStep;
-    triggerNote(track, note, instrumentIndex, velocity, emptyStep);
+void AudioEngine::triggerNote(int track, int note, int instrumentIndex,
+                              float velocity) {
+  model::Step emptyStep;
+  triggerNote(track, note, instrumentIndex, velocity, emptyStep);
 }
 
-void AudioEngine::triggerNote(int track, int note, int instrumentIndex, float velocity, const model::Step& step)
-{
-    std::lock_guard<std::recursive_mutex> lock(mutex_);
+void AudioEngine::triggerNote(int track, int note, int instrumentIndex,
+                              float velocity, const model::Step &step) {
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
 
-    if (!project_) return;
-    if (instrumentIndex < 0 || instrumentIndex >= NUM_INSTRUMENTS) return;
+  if (!project_)
+    return;
+  if (instrumentIndex < 0 || instrumentIndex >= NUM_INSTRUMENTS)
+    return;
 
-    auto* instrument = project_->getInstrument(instrumentIndex);
-    if (!instrument) return;
+  auto *instrument = project_->getInstrument(instrumentIndex);
+  if (!instrument)
+    return;
 
-    // Debug: log ALL triggerNote calls with instrument type
-    static int triggerNoteCount = 0;
-    if (triggerNoteCount++ < 50) { // First 50 calls only
-        std::cerr << "[AudioEngine] triggerNote #" << triggerNoteCount
-                  << ": track=" << track << " note=" << note
-                  << " inst=" << instrumentIndex
-                  << " type=" << static_cast<int>(instrument->getType())
-                  << " (DXPreset=" << static_cast<int>(model::InstrumentType::DXPreset) << ")"
-                  << std::endl;
+  // Debug: log ALL triggerNote calls with instrument type
+  static int triggerNoteCount = 0;
+  if (triggerNoteCount++ < 50) { // First 50 calls only
+    std::cerr << "[AudioEngine] triggerNote #" << triggerNoteCount
+              << ": track=" << track << " note=" << note
+              << " inst=" << instrumentIndex
+              << " type=" << static_cast<int>(instrument->getType())
+              << " (DXPreset="
+              << static_cast<int>(model::InstrumentType::DXPreset) << ")"
+              << std::endl;
+  }
+
+  // Check instrument type and route to appropriate processor
+  if (instrument->getType() == model::InstrumentType::Sampler) {
+    // Handle Sampler instrument
+    // Release previous note only if retriggering the same note on the same
+    // track
+    if (trackInstruments_[track] == instrumentIndex &&
+        trackNotes_[track] == note) {
+      if (auto *sampler = getSamplerProcessor(instrumentIndex)) {
+        sampler->noteOff(note);
+      }
     }
 
-    // Check instrument type and route to appropriate processor
-    if (instrument->getType() == model::InstrumentType::Sampler)
-    {
-        // Handle Sampler instrument
-        // Release previous note only if retriggering the same note on the same track
-        if (trackInstruments_[track] == instrumentIndex && trackNotes_[track] == note)
-        {
-            if (auto* sampler = getSamplerProcessor(instrumentIndex))
-            {
-                sampler->noteOff(note);
-            }
-        }
-
-        if (auto* sampler = getSamplerProcessor(instrumentIndex))
-        {
-            sampler->setInstrument(instrument);
-            sampler->noteOnWithFX(note, velocity, step);
-        }
-
-        trackInstruments_[track] = instrumentIndex;
-        trackNotes_[track] = note;
-        return;
-    }
-
-    if (instrument->getType() == model::InstrumentType::Slicer)
-    {
-        // Handle Slicer instrument
-        // Release previous note only if retriggering the same note (choke behavior)
-        if (trackInstruments_[track] == instrumentIndex && trackNotes_[track] == note)
-        {
-            if (auto* slicer = getSlicerProcessor(instrumentIndex))
-            {
-                slicer->allNotesOff();
-            }
-        }
-
-        if (auto* slicer = getSlicerProcessor(instrumentIndex))
-        {
-            slicer->setInstrument(instrument);
-            slicer->noteOnWithFX(note, velocity, step);
-        }
-
-        trackInstruments_[track] = instrumentIndex;
-        trackNotes_[track] = note;
-        return;
-    }
-
-    if (instrument->getType() == model::InstrumentType::VASynth)
-    {
-        // Handle VASynth instrument
-        // Release previous note only if retriggering the same note on the same track
-        if (trackInstruments_[track] == instrumentIndex && trackNotes_[track] == note)
-        {
-            if (auto* vaSynth = getVASynthProcessor(instrumentIndex))
-            {
-                vaSynth->noteOff(note);
-            }
-        }
-
-        if (auto* vaSynth = getVASynthProcessor(instrumentIndex))
-        {
-            vaSynth->setInstrument(instrument);
-            vaSynth->noteOnWithFX(note, velocity, step);
-        }
-
-        trackInstruments_[track] = instrumentIndex;
-        trackNotes_[track] = note;
-        return;
-    }
-
-    if (instrument->getType() == model::InstrumentType::DXPreset)
-    {
-        // Handle DX7 preset instrument
-        // Release previous note only if retriggering the same note on the same track
-        if (trackInstruments_[track] == instrumentIndex && trackNotes_[track] == note)
-        {
-            if (auto* dx7 = getDX7Processor(instrumentIndex))
-            {
-                dx7->allNotesOff();
-            }
-        }
-
-        // Sync parameters first to ensure preset is loaded
-        syncInstrumentParams(instrumentIndex);
-
-        if (auto* dx7 = getDX7Processor(instrumentIndex))
-        {
-            dx7->noteOnWithFX(note, velocity, step);
-        }
-
-        trackInstruments_[track] = instrumentIndex;
-        trackNotes_[track] = note;
-        return;
-    }
-
-    // Handle Plaits instrument (existing code)
-    // Release previous note on this track if different instrument
-    if (trackInstruments_[track] >= 0 && trackInstruments_[track] != instrumentIndex)
-    {
-        if (auto* prevProcessor = instrumentProcessors_[trackInstruments_[track]].get())
-        {
-            prevProcessor->noteOff(note);  // Release any note from previous instrument
-        }
-    }
-
-    // Sync parameters from model::Instrument to processor
-    syncInstrumentParams(instrumentIndex);
-
-    // Trigger note on instrument processor
-    if (auto* processor = instrumentProcessors_[instrumentIndex].get())
-    {
-        processor->noteOnWithFX(note, velocity, step);
+    if (auto *sampler = getSamplerProcessor(instrumentIndex)) {
+      sampler->setInstrument(instrument);
+      sampler->noteOnWithFX(note, velocity, step);
     }
 
     trackInstruments_[track] = instrumentIndex;
+    trackNotes_[track] = note;
+    return;
+  }
+
+  if (instrument->getType() == model::InstrumentType::Slicer) {
+    // Handle Slicer instrument
+    // Release previous note only if retriggering the same note (choke behavior)
+    if (trackInstruments_[track] == instrumentIndex &&
+        trackNotes_[track] == note) {
+      if (auto *slicer = getSlicerProcessor(instrumentIndex)) {
+        slicer->allNotesOff();
+      }
+    }
+
+    if (auto *slicer = getSlicerProcessor(instrumentIndex)) {
+      slicer->setInstrument(instrument);
+      slicer->noteOnWithFX(note, velocity, step);
+    }
+
+    trackInstruments_[track] = instrumentIndex;
+    trackNotes_[track] = note;
+    return;
+  }
+
+  if (instrument->getType() == model::InstrumentType::VASynth) {
+    // Handle VASynth instrument using Track system
+    auto *vaSynth = getVASynthProcessor(instrumentIndex);
+    if (!vaSynth)
+      return;
+
+    vaSynth->setInstrument(instrument);
+
+    // Create voice on track if needed (or different instrument/type)
+    if (!tracks_[track].voice ||
+        tracks_[track].currentInstrumentIndex != instrumentIndex ||
+        tracks_[track].currentInstrumentType !=
+            model::InstrumentType::VASynth) {
+      tracks_[track].voice = vaSynth->createVoice();
+      tracks_[track].currentInstrumentIndex = instrumentIndex;
+      tracks_[track].currentInstrumentType = model::InstrumentType::VASynth;
+    }
+
+    // Trigger note through Track (handles UniversalTrackerFX and voice)
+    tracks_[track].triggerNote(note, velocity, step, vaSynth);
+
+    trackInstruments_[track] = instrumentIndex;
+    trackNotes_[track] = note;
+    return;
+  }
+
+  if (instrument->getType() == model::InstrumentType::Plaits) {
+    // Handle Plaits instrument using Track system
+    auto *plaits = getPlaitsProcessor(instrumentIndex);
+    if (!plaits)
+      return;
+
+    // PlaitsInstrument manages its own parameters internally
+    // Sync parameters before triggering note
+    syncInstrumentParams(instrumentIndex);
+
+    // Create voice on track if needed (or different instrument/type)
+    if (!tracks_[track].voice ||
+        tracks_[track].currentInstrumentIndex != instrumentIndex ||
+        tracks_[track].currentInstrumentType != model::InstrumentType::Plaits) {
+      tracks_[track].voice = plaits->createVoice();
+      tracks_[track].currentInstrumentIndex = instrumentIndex;
+      tracks_[track].currentInstrumentType = model::InstrumentType::Plaits;
+    }
+
+    // Trigger note through Track (handles UniversalTrackerFX and voice)
+    tracks_[track].triggerNote(note, velocity, step, plaits);
+
+    trackInstruments_[track] = instrumentIndex;
+    trackNotes_[track] = note;
+    return;
+  }
+
+  if (instrument->getType() == model::InstrumentType::DXPreset) {
+    // Handle DX7 preset instrument using Track system
+    auto *dx7 = getDX7Processor(instrumentIndex);
+    if (!dx7)
+      return;
+
+    // Sync parameters first to ensure preset is loaded
+    syncInstrumentParams(instrumentIndex);
+
+    // Create voice on track if needed (or different instrument/type)
+    if (!tracks_[track].voice ||
+        tracks_[track].currentInstrumentIndex != instrumentIndex ||
+        tracks_[track].currentInstrumentType !=
+            model::InstrumentType::DXPreset) {
+      tracks_[track].voice = dx7->createVoice();
+      tracks_[track].currentInstrumentIndex = instrumentIndex;
+      tracks_[track].currentInstrumentType = model::InstrumentType::DXPreset;
+    }
+
+    // Trigger note through Track (handles UniversalTrackerFX and voice)
+    tracks_[track].triggerNote(note, velocity, step, dx7);
+
+    trackInstruments_[track] = instrumentIndex;
+    trackNotes_[track] = note;
+    return;
+  }
+
+  // Handle Plaits instrument (existing code)
+  // Release previous note on this track if different instrument
+  if (trackInstruments_[track] >= 0 &&
+      trackInstruments_[track] != instrumentIndex) {
+    if (auto *prevProcessor =
+            instrumentProcessors_[trackInstruments_[track]].get()) {
+      prevProcessor->noteOff(note); // Release any note from previous instrument
+    }
+  }
+
+  // Sync parameters from model::Instrument to processor
+  syncInstrumentParams(instrumentIndex);
+
+  // Trigger note on instrument processor
+  if (auto *processor = instrumentProcessors_[instrumentIndex].get()) {
+    processor->noteOnWithFX(note, velocity, step);
+  }
+
+  trackInstruments_[track] = instrumentIndex;
 }
 
-void AudioEngine::releaseNote(int track)
-{
-    std::lock_guard<std::recursive_mutex> lock(mutex_);
+void AudioEngine::releaseNote(int track) {
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
 
-    // Release notes on the instrument that was playing on this track
-    int instrumentIndex = trackInstruments_[track];
-    if (instrumentIndex >= 0 && instrumentIndex < NUM_INSTRUMENTS)
-    {
-        // Check instrument type
-        if (project_)
-        {
-            auto* instrument = project_->getInstrument(instrumentIndex);
-            if (instrument && instrument->getType() == model::InstrumentType::Sampler)
-            {
-                // Handle Sampler instrument
-                if (auto* sampler = getSamplerProcessor(instrumentIndex))
-                {
-                    sampler->allNotesOff();
-                }
-                trackInstruments_[track] = -1;
-                trackVoices_[track] = nullptr;
-                return;
-            }
-
-            if (instrument && instrument->getType() == model::InstrumentType::Slicer)
-            {
-                // Handle Slicer instrument
-                if (auto* slicer = getSlicerProcessor(instrumentIndex))
-                {
-                    slicer->allNotesOff();
-                }
-                trackInstruments_[track] = -1;
-                trackVoices_[track] = nullptr;
-                return;
-            }
-
-            if (instrument && instrument->getType() == model::InstrumentType::VASynth)
-            {
-                // Handle VASynth instrument
-                if (auto* vaSynth = getVASynthProcessor(instrumentIndex))
-                {
-                    vaSynth->allNotesOff();
-                }
-                trackInstruments_[track] = -1;
-                trackVoices_[track] = nullptr;
-                return;
-            }
-
-            if (instrument && instrument->getType() == model::InstrumentType::DXPreset)
-            {
-                // Handle DX7 preset instrument
-                if (auto* dx7 = getDX7Processor(instrumentIndex))
-                {
-                    dx7->allNotesOff();
-                }
-                trackInstruments_[track] = -1;
-                trackVoices_[track] = nullptr;
-                return;
-            }
+  // Release notes on the instrument that was playing on this track
+  int instrumentIndex = trackInstruments_[track];
+  if (instrumentIndex >= 0 && instrumentIndex < NUM_INSTRUMENTS) {
+    // Check instrument type
+    if (project_) {
+      auto *instrument = project_->getInstrument(instrumentIndex);
+      if (instrument &&
+          instrument->getType() == model::InstrumentType::Sampler) {
+        // Handle Sampler instrument
+        if (auto *sampler = getSamplerProcessor(instrumentIndex)) {
+          sampler->allNotesOff();
         }
+        trackInstruments_[track] = -1;
+        return;
+      }
 
-        // Handle Plaits instrument (existing code)
-        if (auto* processor = instrumentProcessors_[instrumentIndex].get())
-        {
-            // Note: we don't have the specific note, so we rely on the instrument's
-            // internal tracking. For monophonic playback this works; for polyphonic
-            // we may need to track notes per track.
-            processor->allNotesOff();  // Simple approach for now
+      if (instrument &&
+          instrument->getType() == model::InstrumentType::Slicer) {
+        // Handle Slicer instrument
+        if (auto *slicer = getSlicerProcessor(instrumentIndex)) {
+          slicer->allNotesOff();
         }
-    }
-    trackInstruments_[track] = -1;
+        trackInstruments_[track] = -1;
+        return;
+      }
 
-    // Legacy cleanup
-    if (trackVoices_[track])
-    {
-        trackVoices_[track]->noteOff();
-        trackVoices_[track] = nullptr;
+      if (instrument &&
+          instrument->getType() == model::InstrumentType::VASynth) {
+        // Handle VASynth instrument using Track system
+        // Note off is handled by Track voice
+        if (tracks_[track].voice && tracks_[track].voice->isActive()) {
+          tracks_[track].voice->noteOff();
+        }
+        // Stop tracker FX to prevent ARP/RET from continuing
+        tracks_[track].trackerFX.stop();
+        tracks_[track].hasPendingFX = false;
+        trackInstruments_[track] = -1;
+        return;
+      }
+
+      if (instrument &&
+          instrument->getType() == model::InstrumentType::Plaits) {
+        // Handle Plaits instrument using Track system
+        // Note off is handled by Track voice
+        if (tracks_[track].voice && tracks_[track].voice->isActive()) {
+          tracks_[track].voice->noteOff();
+        }
+        // Stop tracker FX to prevent ARP/RET from continuing
+        tracks_[track].trackerFX.stop();
+        tracks_[track].hasPendingFX = false;
+        trackInstruments_[track] = -1;
+        return;
+      }
+
+      if (instrument &&
+          instrument->getType() == model::InstrumentType::DXPreset) {
+        // Handle DX7 preset instrument using Track system
+        // Note off is handled by Track voice
+        if (tracks_[track].voice && tracks_[track].voice->isActive()) {
+          tracks_[track].voice->noteOff();
+        }
+        // Stop tracker FX to prevent ARP/RET from continuing
+        tracks_[track].trackerFX.stop();
+        tracks_[track].hasPendingFX = false;
+        trackInstruments_[track] = -1;
+        return;
+      }
     }
+
+    // Handle Plaits instrument (existing code)
+    if (auto *processor = instrumentProcessors_[instrumentIndex].get()) {
+      // Note: we don't have the specific note, so we rely on the instrument's
+      // internal tracking. For monophonic playback this works; for polyphonic
+      // we may need to track notes per track.
+      processor->allNotesOff(); // Simple approach for now
+    }
+  }
+  trackInstruments_[track] = -1;
+
+  // Legacy voice array removed (Voice is now abstract, owned by Track)
 }
 
-void AudioEngine::previewChord(const std::vector<int>& notes, int instrumentIndex)
-{
-    // Use tracks 0, 1, 2, etc. for chord preview
-    int track = 0;
-    for (int note : notes)
-    {
-        if (track >= NUM_TRACKS) break;
-        triggerNote(track, note, instrumentIndex, 0.8f);
-        track++;
-    }
+void AudioEngine::previewChord(const std::vector<int> &notes,
+                               int instrumentIndex) {
+  // Use tracks 0, 1, 2, etc. for chord preview
+  int track = 0;
+  for (int note : notes) {
+    if (track >= NUM_TRACKS)
+      break;
+    triggerNote(track, note, instrumentIndex, 0.8f);
+    track++;
+  }
 }
 
-Voice* AudioEngine::allocateVoice(int note)
-{
-    juce::ignoreUnused(note);
+// Voice* AudioEngine::allocateVoice(int note)
+// {
+//     // DISABLED: Old voice allocator (Voice is now abstract, owned by Track)
+//     // This will be fully removed in Task 11
+//     juce::ignoreUnused(note);
+//     return nullptr;
+// }
 
-    // First, look for inactive voice
-    for (auto& voice : voices_)
-    {
-        if (!voice.isActive())
-            return &voice;
+void AudioEngine::prepareToPlay(int samplesPerBlockExpected,
+                                double sampleRate) {
+  sampleRate_ = sampleRate;
+  samplesPerBlock_ = samplesPerBlockExpected;
+
+  // Initialize all instrument processors
+  double tempo = project_ ? project_->getTempo() : 120.0;
+  for (auto &processor : instrumentProcessors_) {
+    if (processor) {
+      processor->init(sampleRate);
+      processor->setTempo(tempo);
     }
+  }
 
-    // Voice stealing: find oldest voice
-    Voice* oldest = &voices_[0];
-    for (auto& voice : voices_)
-    {
-        if (voice.getStartTime() < oldest->getStartTime())
-            oldest = &voice;
+  // Initialize all sampler processors
+  for (auto &sampler : samplerProcessors_) {
+    if (sampler) {
+      sampler->init(sampleRate);
     }
+  }
 
-    oldest->noteOff();
-    return oldest;
+  // Initialize all slicer processors
+  for (auto &slicer : slicerProcessors_) {
+    if (slicer) {
+      slicer->init(sampleRate);
+    }
+  }
+
+  // Initialize all VA synth processors
+  for (auto &vaSynth : vaSynthProcessors_) {
+    if (vaSynth) {
+      vaSynth->init(sampleRate);
+      vaSynth->setTempo(tempo);
+    }
+  }
+
+  // Initialize all DX7 processors
+  for (auto &dx7 : dx7Processors_) {
+    if (dx7) {
+      dx7->init(sampleRate);
+    }
+  }
+
+  // Initialize channel strips
+  for (auto &strip : channelStrips_) {
+    if (!strip) {
+      strip = std::make_unique<ChannelStrip>();
+    }
+    strip->prepare(sampleRate, samplesPerBlockExpected);
+  }
+
+  // Legacy voices removed - Voice is now abstract, owned by Track
+  // (will be fully cleaned up in Task 11)
+
+  // Initialize effects processor
+  effects_.init(sampleRate);
+  effects_.setTempo(static_cast<float>(tempo));
 }
 
-void AudioEngine::prepareToPlay(int samplesPerBlockExpected, double sampleRate)
-{
-    sampleRate_ = sampleRate;
-    samplesPerBlock_ = samplesPerBlockExpected;
+void AudioEngine::releaseResources() { stop(); }
 
-    // Initialize all instrument processors
-    double tempo = project_ ? project_->getTempo() : 120.0;
-    for (auto& processor : instrumentProcessors_)
-    {
-        if (processor)
-        {
-            processor->init(sampleRate);
-            processor->setTempo(tempo);
-        }
+void AudioEngine::getNextAudioBlock(
+    const juce::AudioSourceChannelInfo &bufferToFill) {
+  bufferToFill.clearActiveBufferRegion();
+
+  // Handle pending transport commands (lock-free from UI thread)
+  if (pendingStop_.load(std::memory_order_acquire)) {
+    pendingStop_.store(false, std::memory_order_relaxed);
+    playing_.store(false, std::memory_order_relaxed);
+
+    // Release all notes on all instrument processors
+    for (auto &processor : instrumentProcessors_) {
+      if (processor)
+        processor->allNotesOff();
     }
 
-    // Initialize all sampler processors
-    for (auto& sampler : samplerProcessors_)
-    {
-        if (sampler)
-        {
-            sampler->init(sampleRate);
-        }
+    // Release all sampler processors
+    for (auto &sampler : samplerProcessors_) {
+      if (sampler)
+        sampler->allNotesOff();
     }
 
-    // Initialize all slicer processors
-    for (auto& slicer : slicerProcessors_)
-    {
-        if (slicer)
-        {
-            slicer->init(sampleRate);
-        }
+    // Release all slicer processors
+    for (auto &slicer : slicerProcessors_) {
+      if (slicer)
+        slicer->allNotesOff();
     }
 
-    // Initialize all VA synth processors
-    for (auto& vaSynth : vaSynthProcessors_)
-    {
-        if (vaSynth)
-        {
-            vaSynth->init(sampleRate);
-            vaSynth->setTempo(tempo);
-        }
+    // Release all VA synth processors
+    for (auto &vaSynth : vaSynthProcessors_) {
+      if (vaSynth)
+        vaSynth->allNotesOff();
     }
 
-    // Initialize all DX7 processors
-    for (auto& dx7 : dx7Processors_)
-    {
-        if (dx7)
-        {
-            dx7->init(sampleRate);
-        }
+    // Release all DX7 processors
+    for (auto &dx7 : dx7Processors_) {
+      if (dx7)
+        dx7->allNotesOff();
     }
 
-    // Initialize channel strips
-    for (auto& strip : channelStrips_)
-    {
-        if (!strip)
-        {
-            strip = std::make_unique<ChannelStrip>();
-        }
-        strip->prepare(sampleRate, samplesPerBlockExpected);
+    // Stop all track FX to prevent ARP/RET from continuing after playback stops
+    for (auto &track : tracks_) {
+      track.trackerFX.stop();
+      track.hasPendingFX = false;
+      if (track.voice && track.voice->isActive()) {
+        track.voice->noteOff();
+      }
     }
 
-    // Initialize legacy voices (can be removed later)
-    for (auto& voice : voices_)
-    {
-        voice.init();
+    // Legacy voice array removed (Voice is now abstract, owned by Track)
+    // Reset tracking arrays
+    trackInstruments_.fill(-1);
+    trackNotes_.fill(-1);
+  }
+
+  if (pendingPlay_.load(std::memory_order_acquire)) {
+    pendingPlay_.store(false, std::memory_order_relaxed);
+    playing_.store(true, std::memory_order_relaxed);
+    currentRow_ = 0;
+    samplesUntilNextRow_ = 0.0;
+
+    // Reset song playback state
+    currentSongRow_ = 0;
+    currentChainPosition_ = 0;
+    trackChainPositions_.fill(0);
+  }
+
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
+
+  float *outL =
+      bufferToFill.buffer->getWritePointer(0, bufferToFill.startSample);
+  float *outR =
+      bufferToFill.buffer->getWritePointer(1, bufferToFill.startSample);
+
+  int numSamples = bufferToFill.numSamples;
+
+  // Update tempo for effects
+  if (project_)
+    effects_.setTempo(project_->getTempo());
+
+  // If playing, process pattern(s)
+  if (playing_.load(std::memory_order_relaxed) && project_) {
+    double samplesPerBeat = sampleRate_ * 60.0 / project_->getTempo();
+    double samplesPerRow = samplesPerBeat / 4.0; // 4 rows per beat
+
+    // Get pattern length from column 0's pattern (or current pattern in Pattern
+    // mode)
+    int patternLength = 16; // default
+    if (playMode_ == PlayMode::Pattern) {
+      auto *pattern = project_->getPattern(currentPattern_);
+      if (pattern)
+        patternLength = pattern->getLength();
+    } else {
+      // In Song mode, use the longest pattern across all columns
+      for (int col = 0; col < NUM_TRACKS; ++col) {
+        int patIdx = getPatternIndexForColumn(col);
+        if (patIdx >= 0) {
+          auto *pat = project_->getPattern(patIdx);
+          if (pat && pat->getLength() > patternLength)
+            patternLength = pat->getLength();
+        }
+      }
     }
 
-    // Initialize effects processor
-    effects_.init(sampleRate);
-    effects_.setTempo(static_cast<float>(tempo));
-}
+    int processed = 0;
+    while (processed < numSamples) {
+      if (samplesUntilNextRow_ <= 0.0) {
+        if (playMode_ == PlayMode::Pattern) {
+          // Pattern mode: play single pattern on all 16 tracks
+          auto *pattern = project_->getPattern(currentPattern_);
+          if (pattern) {
+            for (int track = 0; track < NUM_TRACKS; ++track) {
+              const auto &step = pattern->getStep(track, currentRow_);
+              if (step.note == model::Step::NOTE_OFF) {
+                releaseNote(track);
+              } else if (step.note >= 0 && step.instrument >= 0) {
+                float vel = step.volume < 0xFF ? step.volume / 255.0f : 1.0f;
+                triggerNote(track, step.note, step.instrument, vel, step);
+              }
+            }
+            patternLength = pattern->getLength();
+          }
+        } else {
+          // Song mode: play patterns from ALL song columns
+          // Each pattern plays ALL its tracks (like Pattern mode)
+          // Use instrument index as audio track to avoid conflicts
+          const auto &song = project_->getSong();
 
-void AudioEngine::releaseResources()
-{
-    stop();
-}
+          for (int col = 0; col < NUM_TRACKS; ++col) {
+            int patIdx = getPatternIndexForColumn(col);
+            if (patIdx < 0)
+              continue;
 
-void AudioEngine::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferToFill)
-{
-    bufferToFill.clearActiveBufferRegion();
+            auto *pattern = project_->getPattern(patIdx);
+            if (!pattern)
+              continue;
 
-    // Handle pending transport commands (lock-free from UI thread)
-    if (pendingStop_.load(std::memory_order_acquire))
-    {
-        pendingStop_.store(false, std::memory_order_relaxed);
-        playing_.store(false, std::memory_order_relaxed);
+            // Get chain transpose and scale lock for this column
+            int chainTranspose = getChainTransposeForColumn(col);
+            std::string scaleLock;
+            const auto &songTrack = song.getTrack(col);
+            if (currentSongRow_ < static_cast<int>(songTrack.size())) {
+              int chainIndex = songTrack[static_cast<size_t>(currentSongRow_)];
+              if (auto *chain = project_->getChain(chainIndex)) {
+                scaleLock = chain->getScaleLock();
+              }
+            }
 
-        // Release all notes on all instrument processors
-        for (auto& processor : instrumentProcessors_)
-        {
-            if (processor)
-                processor->allNotesOff();
-        }
+            // Play ALL tracks of this pattern (like Pattern mode)
+            if (currentRow_ < pattern->getLength()) {
+              for (int track = 0; track < NUM_TRACKS; ++track) {
+                const auto &step = pattern->getStep(track, currentRow_);
 
-        // Release all sampler processors
-        for (auto& sampler : samplerProcessors_)
-        {
-            if (sampler)
-                sampler->allNotesOff();
-        }
+                if (step.note == model::Step::NOTE_OFF) {
+                  // Use instrument as audio track for release
+                  if (step.instrument >= 0)
+                    releaseNote(step.instrument % NUM_TRACKS);
+                } else if (step.note >= 0 && step.instrument >= 0) {
+                  // Apply chain transpose (scale-degree based)
+                  int transposedNote = step.note;
+                  if (chainTranspose != 0 && !scaleLock.empty()) {
+                    transposedNote = transposeNoteByScaleDegrees(
+                        step.note, chainTranspose, scaleLock);
+                  }
 
-        // Release all slicer processors
-        for (auto& slicer : slicerProcessors_)
-        {
-            if (slicer)
-                slicer->allNotesOff();
-        }
-
-        // Release all VA synth processors
-        for (auto& vaSynth : vaSynthProcessors_)
-        {
-            if (vaSynth)
-                vaSynth->allNotesOff();
-        }
-
-        // Release all DX7 processors
-        for (auto& dx7 : dx7Processors_)
-        {
-            if (dx7)
-                dx7->allNotesOff();
-        }
-
-        // Legacy: Release all voices
-        for (auto& voice : voices_)
-        {
-            if (voice.isActive())
-                voice.noteOff();
-        }
-        trackVoices_.fill(nullptr);
-        trackInstruments_.fill(-1);
-        trackNotes_.fill(-1);
-    }
-
-    if (pendingPlay_.load(std::memory_order_acquire))
-    {
-        pendingPlay_.store(false, std::memory_order_relaxed);
-        playing_.store(true, std::memory_order_relaxed);
-        currentRow_ = 0;
-        samplesUntilNextRow_ = 0.0;
-
-        // Reset song playback state
-        currentSongRow_ = 0;
-        currentChainPosition_ = 0;
-        trackChainPositions_.fill(0);
-    }
-
-    std::lock_guard<std::recursive_mutex> lock(mutex_);
-
-    float* outL = bufferToFill.buffer->getWritePointer(0, bufferToFill.startSample);
-    float* outR = bufferToFill.buffer->getWritePointer(1, bufferToFill.startSample);
-
-    int numSamples = bufferToFill.numSamples;
-
-    // Update tempo for effects
-    if (project_)
-        effects_.setTempo(project_->getTempo());
-
-    // If playing, process pattern(s)
-    if (playing_.load(std::memory_order_relaxed) && project_)
-    {
-        double samplesPerBeat = sampleRate_ * 60.0 / project_->getTempo();
-        double samplesPerRow = samplesPerBeat / 4.0;  // 4 rows per beat
-
-        // Get pattern length from column 0's pattern (or current pattern in Pattern mode)
-        int patternLength = 16;  // default
-        if (playMode_ == PlayMode::Pattern)
-        {
-            auto* pattern = project_->getPattern(currentPattern_);
-            if (pattern) patternLength = pattern->getLength();
-        }
-        else
-        {
-            // In Song mode, use the longest pattern across all columns
-            for (int col = 0; col < NUM_TRACKS; ++col)
-            {
-                int patIdx = getPatternIndexForColumn(col);
-                if (patIdx >= 0)
-                {
-                    auto* pat = project_->getPattern(patIdx);
-                    if (pat && pat->getLength() > patternLength)
-                        patternLength = pat->getLength();
+                  float vel = step.volume < 0xFF ? step.volume / 255.0f : 1.0f;
+                  // Use instrument index as audio track to avoid conflicts
+                  // between patterns using same track with different
+                  // instruments
+                  triggerNote(step.instrument % NUM_TRACKS, transposedNote,
+                              step.instrument, vel, step);
                 }
+              }
             }
+          }
         }
 
-        int processed = 0;
-        while (processed < numSamples)
-        {
-            if (samplesUntilNextRow_ <= 0.0)
-            {
-                if (playMode_ == PlayMode::Pattern)
-                {
-                    // Pattern mode: play single pattern on all 16 tracks
-                    auto* pattern = project_->getPattern(currentPattern_);
-                    if (pattern)
-                    {
-                        for (int track = 0; track < NUM_TRACKS; ++track)
-                        {
-                            const auto& step = pattern->getStep(track, currentRow_);
-                            if (step.note == model::Step::NOTE_OFF)
-                            {
-                                releaseNote(track);
-                            }
-                            else if (step.note >= 0 && step.instrument >= 0)
-                            {
-                                float vel = step.volume < 0xFF ? step.volume / 255.0f : 1.0f;
-                                triggerNote(track, step.note, step.instrument, vel, step);
-                            }
-                        }
-                        patternLength = pattern->getLength();
-                    }
-                }
-                else
-                {
-                    // Song mode: play patterns from ALL song columns
-                    // Each pattern plays ALL its tracks (like Pattern mode)
-                    // Use instrument index as audio track to avoid conflicts
-                    const auto& song = project_->getSong();
+        // Advance row within pattern
+        currentRow_++;
+        if (currentRow_ >= patternLength) {
+          currentRow_ = 0;
 
-                    for (int col = 0; col < NUM_TRACKS; ++col)
-                    {
-                        int patIdx = getPatternIndexForColumn(col);
-                        if (patIdx < 0) continue;
-
-                        auto* pattern = project_->getPattern(patIdx);
-                        if (!pattern) continue;
-
-                        // Get chain transpose and scale lock for this column
-                        int chainTranspose = getChainTransposeForColumn(col);
-                        std::string scaleLock;
-                        const auto& songTrack = song.getTrack(col);
-                        if (currentSongRow_ < static_cast<int>(songTrack.size()))
-                        {
-                            int chainIndex = songTrack[static_cast<size_t>(currentSongRow_)];
-                            if (auto* chain = project_->getChain(chainIndex))
-                            {
-                                scaleLock = chain->getScaleLock();
-                            }
-                        }
-
-                        // Play ALL tracks of this pattern (like Pattern mode)
-                        if (currentRow_ < pattern->getLength())
-                        {
-                            for (int track = 0; track < NUM_TRACKS; ++track)
-                            {
-                                const auto& step = pattern->getStep(track, currentRow_);
-
-                                if (step.note == model::Step::NOTE_OFF)
-                                {
-                                    // Use instrument as audio track for release
-                                    if (step.instrument >= 0)
-                                        releaseNote(step.instrument % NUM_TRACKS);
-                                }
-                                else if (step.note >= 0 && step.instrument >= 0)
-                                {
-                                    // Apply chain transpose (scale-degree based)
-                                    int transposedNote = step.note;
-                                    if (chainTranspose != 0 && !scaleLock.empty())
-                                    {
-                                        transposedNote = transposeNoteByScaleDegrees(step.note, chainTranspose, scaleLock);
-                                    }
-
-                                    float vel = step.volume < 0xFF ? step.volume / 255.0f : 1.0f;
-                                    // Use instrument index as audio track to avoid conflicts
-                                    // between patterns using same track with different instruments
-                                    triggerNote(step.instrument % NUM_TRACKS, transposedNote, step.instrument, vel, step);
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Advance row within pattern
-                currentRow_++;
-                if (currentRow_ >= patternLength)
-                {
-                    currentRow_ = 0;
-
-                    if (playMode_ == PlayMode::Song)
-                    {
-                        // Advance all song columns to their next patterns
-                        advanceAllChains();
-                    }
-                    // In Pattern mode, just loop the same pattern
-                }
-
-                // Apply groove timing from track 0's groove template
-                float grooveOffset = 0.0f;
-                int grooveIdx = project_->getTrackGroove(0);
-                const auto& groove = grooveManager_.getTemplate(grooveIdx);
-                grooveOffset = groove.timings[static_cast<size_t>(currentRow_ % 16)];
-
-                samplesUntilNextRow_ = samplesPerRow * (1.0 + static_cast<double>(grooveOffset));
-
-                // Ensure samplesUntilNextRow_ is always positive to prevent infinite loop
-                // This guards against extreme groove offsets near -1.0
-                if (samplesUntilNextRow_ < 1.0)
-                    samplesUntilNextRow_ = 1.0;
-            }
-
-            // Ensure we always advance by at least 1 sample to avoid infinite loop
-            // This can happen at high BPM when samplesUntilNextRow_ < 1.0
-            int blockSamples = std::min(numSamples - processed,
-                                        std::max(1, static_cast<int>(samplesUntilNextRow_)));
-
-            samplesUntilNextRow_ -= blockSamples;
-            processed += blockSamples;
+          if (playMode_ == PlayMode::Song) {
+            // Advance all song columns to their next patterns
+            advanceAllChains();
+          }
+          // In Pattern mode, just loop the same pattern
         }
+
+        // Apply groove timing from track 0's groove template
+        float grooveOffset = 0.0f;
+        int grooveIdx = project_->getTrackGroove(0);
+        const auto &groove = grooveManager_.getTemplate(grooveIdx);
+        grooveOffset = groove.timings[static_cast<size_t>(currentRow_ % 16)];
+
+        samplesUntilNextRow_ =
+            samplesPerRow * (1.0 + static_cast<double>(grooveOffset));
+
+        // Ensure samplesUntilNextRow_ is always positive to prevent infinite
+        // loop This guards against extreme groove offsets near -1.0
+        if (samplesUntilNextRow_ < 1.0)
+          samplesUntilNextRow_ = 1.0;
+      }
+
+      // Ensure we always advance by at least 1 sample to avoid infinite loop
+      // This can happen at high BPM when samplesUntilNextRow_ < 1.0
+      int blockSamples =
+          std::min(numSamples - processed,
+                   std::max(1, static_cast<int>(samplesUntilNextRow_)));
+
+      samplesUntilNextRow_ -= blockSamples;
+      processed += blockSamples;
+    }
+  }
+
+  // Check if any instrument is soloed
+  bool anySoloed = false;
+  if (project_) {
+    for (int i = 0; i < project_->getInstrumentCount(); ++i) {
+      if (auto *inst = project_->getInstrument(i)) {
+        if (inst->isSoloed()) {
+          anySoloed = true;
+          break;
+        }
+      }
+    }
+  }
+
+  // Temporary buffers for per-instrument rendering
+  std::array<float, 512> tempL{}, tempR{};
+
+  // Buffers for sidechain source capture
+  std::array<float, 512> sidechainSourceL{}, sidechainSourceR{};
+  std::fill(sidechainSourceL.begin(), sidechainSourceL.begin() + numSamples,
+            0.0f);
+  std::fill(sidechainSourceR.begin(), sidechainSourceR.begin() + numSamples,
+            0.0f);
+
+  // Get sidechain source instrument from mixer settings
+  int sidechainSourceInst =
+      project_ ? project_->getMixer().sidechainSource : -1;
+
+  // Render all instrument processors with per-instrument mixing
+  float avgReverb = 0.0f, avgDelay = 0.0f, avgChorus = 0.0f;
+  int activeCount = 0;
+
+  for (int instIdx = 0; instIdx < NUM_INSTRUMENTS; ++instIdx) {
+    auto &processor = instrumentProcessors_[instIdx];
+    if (!processor)
+      continue;
+
+    // Get instrument model for mixer settings
+    model::Instrument *instrument =
+        project_ ? project_->getInstrument(instIdx) : nullptr;
+
+    // Determine if this instrument should play
+    bool shouldPlay = true;
+    float volume = 1.0f;
+    float pan = 0.0f;
+
+    if (instrument) {
+      // Check mute/solo
+      if (anySoloed) {
+        // In solo mode, only play soloed instruments
+        shouldPlay = instrument->isSoloed();
+      } else {
+        // Normal mode, respect mute
+        shouldPlay = !instrument->isMuted();
+      }
+
+      volume = instrument->getVolume();
+      pan = instrument->getPan();
     }
 
-    // Check if any instrument is soloed
-    bool anySoloed = false;
-    if (project_)
-    {
-        for (int i = 0; i < project_->getInstrumentCount(); ++i)
-        {
-            if (auto* inst = project_->getInstrument(i))
-            {
-                if (inst->isSoloed())
-                {
-                    anySoloed = true;
-                    break;
-                }
-            }
-        }
+    if (!shouldPlay) {
+      // Still process to keep envelopes/LFOs running, but don't add to output
+      processor->process(tempL.data(), tempR.data(), numSamples);
+      continue;
     }
 
-    // Temporary buffers for per-instrument rendering
-    std::array<float, 512> tempL{}, tempR{};
+    // Clear temp buffers
+    std::fill(tempL.begin(), tempL.begin() + numSamples, 0.0f);
+    std::fill(tempR.begin(), tempR.begin() + numSamples, 0.0f);
 
-    // Buffers for sidechain source capture
-    std::array<float, 512> sidechainSourceL{}, sidechainSourceR{};
-    std::fill(sidechainSourceL.begin(), sidechainSourceL.begin() + numSamples, 0.0f);
-    std::fill(sidechainSourceR.begin(), sidechainSourceR.begin() + numSamples, 0.0f);
+    // Render instrument to temp buffers
+    processor->process(tempL.data(), tempR.data(), numSamples);
 
-    // Get sidechain source instrument from mixer settings
-    int sidechainSourceInst = project_ ? project_->getMixer().sidechainSource : -1;
-
-    // Render all instrument processors with per-instrument mixing
-    float avgReverb = 0.0f, avgDelay = 0.0f, avgChorus = 0.0f;
-    int activeCount = 0;
-
-    for (int instIdx = 0; instIdx < NUM_INSTRUMENTS; ++instIdx)
-    {
-        auto& processor = instrumentProcessors_[instIdx];
-        if (!processor) continue;
-
-        // Get instrument model for mixer settings
-        model::Instrument* instrument = project_ ? project_->getInstrument(instIdx) : nullptr;
-
-        // Determine if this instrument should play
-        bool shouldPlay = true;
-        float volume = 1.0f;
-        float pan = 0.0f;
-
-        if (instrument)
-        {
-            // Check mute/solo
-            if (anySoloed)
-            {
-                // In solo mode, only play soloed instruments
-                shouldPlay = instrument->isSoloed();
-            }
-            else
-            {
-                // Normal mode, respect mute
-                shouldPlay = !instrument->isMuted();
-            }
-
-            volume = instrument->getVolume();
-            pan = instrument->getPan();
-        }
-
-        if (!shouldPlay)
-        {
-            // Still process to keep envelopes/LFOs running, but don't add to output
-            processor->process(tempL.data(), tempR.data(), numSamples);
-            continue;
-        }
-
-        // Clear temp buffers
-        std::fill(tempL.begin(), tempL.begin() + numSamples, 0.0f);
-        std::fill(tempR.begin(), tempR.begin() + numSamples, 0.0f);
-
-        // Render instrument to temp buffers
-        processor->process(tempL.data(), tempR.data(), numSamples);
-
-        // Apply channel strip processing
-        if (instrument && channelStrips_[instIdx])
-        {
-            channelStrips_[instIdx]->updateParams(instrument->getChannelStrip());
-            channelStrips_[instIdx]->process(tempL.data(), tempR.data(), numSamples);
-        }
-
-        // Apply volume and pan, mix into output
-        // Pan law: constant power (sqrt)
-        float leftGain = volume * std::sqrt((1.0f - pan) / 2.0f);
-        float rightGain = volume * std::sqrt((1.0f + pan) / 2.0f);
-
-        for (int i = 0; i < numSamples; ++i)
-        {
-            // Simple pan: distribute mono sum based on pan
-            float monoSample = (tempL[i] + tempR[i]) * 0.5f;
-            outL[i] += monoSample * leftGain * 2.0f;  // *2 to compensate for mono sum
-            outR[i] += monoSample * rightGain * 2.0f;
-
-            // Capture sidechain source audio
-            if (instIdx == sidechainSourceInst)
-            {
-                sidechainSourceL[i] += monoSample * leftGain * 2.0f;
-                sidechainSourceR[i] += monoSample * rightGain * 2.0f;
-            }
-        }
-
-        // Accumulate send levels from active instruments
-        if (instrument && shouldPlay)
-        {
-            const auto& sends = instrument->getSends();
-            avgReverb += sends.reverb * volume;
-            avgDelay += sends.delay * volume;
-            avgChorus += sends.chorus * volume;
-            activeCount++;
-        }
+    // Apply channel strip processing
+    if (instrument && channelStrips_[instIdx]) {
+      channelStrips_[instIdx]->updateParams(instrument->getChannelStrip());
+      channelStrips_[instIdx]->process(tempL.data(), tempR.data(), numSamples);
     }
 
-    // Process sampler instruments
-    for (int instIdx = 0; instIdx < NUM_INSTRUMENTS; ++instIdx)
-    {
-        auto& sampler = samplerProcessors_[instIdx];
-        if (!sampler) continue;
+    // Apply volume and pan, mix into output
+    // Pan law: constant power (sqrt)
+    float leftGain = volume * std::sqrt((1.0f - pan) / 2.0f);
+    float rightGain = volume * std::sqrt((1.0f + pan) / 2.0f);
 
-        // Get instrument model for mixer settings
-        model::Instrument* instrument = project_ ? project_->getInstrument(instIdx) : nullptr;
+    for (int i = 0; i < numSamples; ++i) {
+      // Simple pan: distribute mono sum based on pan
+      float monoSample = (tempL[i] + tempR[i]) * 0.5f;
+      outL[i] += monoSample * leftGain * 2.0f; // *2 to compensate for mono sum
+      outR[i] += monoSample * rightGain * 2.0f;
 
-        // Only process if this is a Sampler type instrument
-        if (!instrument || instrument->getType() != model::InstrumentType::Sampler)
-            continue;
-
-        // Determine if this instrument should play
-        bool shouldPlay = true;
-        float volume = 1.0f;
-        float pan = 0.0f;
-
-        // Check mute/solo
-        if (anySoloed)
-        {
-            shouldPlay = instrument->isSoloed();
-        }
-        else
-        {
-            shouldPlay = !instrument->isMuted();
-        }
-
-        if (!shouldPlay || !sampler->hasSample())
-        {
-            continue;
-        }
-
-        volume = instrument->getVolume();
-        pan = instrument->getPan();
-
-        // Clear temp buffers
-        std::fill(tempL.begin(), tempL.begin() + numSamples, 0.0f);
-        std::fill(tempR.begin(), tempR.begin() + numSamples, 0.0f);
-
-        // Render sampler to temp buffers
-        sampler->process(tempL.data(), tempR.data(), numSamples);
-
-        // Apply channel strip processing
-        if (instrument && channelStrips_[instIdx])
-        {
-            channelStrips_[instIdx]->updateParams(instrument->getChannelStrip());
-            channelStrips_[instIdx]->process(tempL.data(), tempR.data(), numSamples);
-        }
-
-        // Apply volume and pan, mix into output
-        float leftGain = volume * std::sqrt((1.0f - pan) / 2.0f);
-        float rightGain = volume * std::sqrt((1.0f + pan) / 2.0f);
-
-        for (int i = 0; i < numSamples; ++i)
-        {
-            float monoSample = (tempL[i] + tempR[i]) * 0.5f;
-            outL[i] += monoSample * leftGain * 2.0f;
-            outR[i] += monoSample * rightGain * 2.0f;
-
-            // Capture sidechain source audio
-            if (instIdx == sidechainSourceInst)
-            {
-                sidechainSourceL[i] += monoSample * leftGain * 2.0f;
-                sidechainSourceR[i] += monoSample * rightGain * 2.0f;
-            }
-        }
-
-        // Accumulate send levels
-        const auto& sends = instrument->getSends();
-        avgReverb += sends.reverb * volume;
-        avgDelay += sends.delay * volume;
-        avgChorus += sends.chorus * volume;
-        activeCount++;
+      // Capture sidechain source audio
+      if (instIdx == sidechainSourceInst) {
+        sidechainSourceL[i] += monoSample * leftGain * 2.0f;
+        sidechainSourceR[i] += monoSample * rightGain * 2.0f;
+      }
     }
 
-    // Process slicer instruments
-    for (int instIdx = 0; instIdx < NUM_INSTRUMENTS; ++instIdx)
-    {
-        auto& slicer = slicerProcessors_[instIdx];
-        if (!slicer) continue;
+    // Accumulate send levels from active instruments
+    if (instrument && shouldPlay) {
+      const auto &sends = instrument->getSends();
+      avgReverb += sends.reverb * volume;
+      avgDelay += sends.delay * volume;
+      avgChorus += sends.chorus * volume;
+      activeCount++;
+    }
+  }
 
-        // Get instrument model for mixer settings
-        model::Instrument* instrument = project_ ? project_->getInstrument(instIdx) : nullptr;
+  // Process sampler instruments
+  for (int instIdx = 0; instIdx < NUM_INSTRUMENTS; ++instIdx) {
+    auto &sampler = samplerProcessors_[instIdx];
+    if (!sampler)
+      continue;
 
-        // Only process if this is a Slicer type instrument
-        if (!instrument || instrument->getType() != model::InstrumentType::Slicer)
-            continue;
+    // Get instrument model for mixer settings
+    model::Instrument *instrument =
+        project_ ? project_->getInstrument(instIdx) : nullptr;
 
-        // Determine if this instrument should play
-        bool shouldPlay = true;
-        float volume = 1.0f;
-        float pan = 0.0f;
+    // Only process if this is a Sampler type instrument
+    if (!instrument || instrument->getType() != model::InstrumentType::Sampler)
+      continue;
 
-        // Check mute/solo
-        if (anySoloed)
-        {
-            shouldPlay = instrument->isSoloed();
-        }
-        else
-        {
-            shouldPlay = !instrument->isMuted();
-        }
+    // Determine if this instrument should play
+    bool shouldPlay = true;
+    float volume = 1.0f;
+    float pan = 0.0f;
 
-        if (!shouldPlay || !slicer->hasSample())
-        {
-            continue;
-        }
-
-        volume = instrument->getVolume();
-        pan = instrument->getPan();
-
-        // Clear temp buffers
-        std::fill(tempL.begin(), tempL.begin() + numSamples, 0.0f);
-        std::fill(tempR.begin(), tempR.begin() + numSamples, 0.0f);
-
-        // Render slicer to temp buffers
-        slicer->process(tempL.data(), tempR.data(), numSamples);
-
-        // Apply channel strip processing
-        if (instrument && channelStrips_[instIdx])
-        {
-            channelStrips_[instIdx]->updateParams(instrument->getChannelStrip());
-            channelStrips_[instIdx]->process(tempL.data(), tempR.data(), numSamples);
-        }
-
-        // Apply volume and pan, mix into output
-        float leftGain = volume * std::sqrt((1.0f - pan) / 2.0f);
-        float rightGain = volume * std::sqrt((1.0f + pan) / 2.0f);
-
-        for (int i = 0; i < numSamples; ++i)
-        {
-            float monoSample = (tempL[i] + tempR[i]) * 0.5f;
-            outL[i] += monoSample * leftGain * 2.0f;
-            outR[i] += monoSample * rightGain * 2.0f;
-
-            // Capture sidechain source audio
-            if (instIdx == sidechainSourceInst)
-            {
-                sidechainSourceL[i] += monoSample * leftGain * 2.0f;
-                sidechainSourceR[i] += monoSample * rightGain * 2.0f;
-            }
-        }
-
-        // Accumulate send levels
-        const auto& sends = instrument->getSends();
-        avgReverb += sends.reverb * volume;
-        avgDelay += sends.delay * volume;
-        avgChorus += sends.chorus * volume;
-        activeCount++;
+    // Check mute/solo
+    if (anySoloed) {
+      shouldPlay = instrument->isSoloed();
+    } else {
+      shouldPlay = !instrument->isMuted();
     }
 
-    // Process VA synth instruments
-    for (int instIdx = 0; instIdx < NUM_INSTRUMENTS; ++instIdx)
-    {
-        auto& vaSynth = vaSynthProcessors_[instIdx];
-        if (!vaSynth) continue;
-
-        // Get instrument model for mixer settings
-        model::Instrument* instrument = project_ ? project_->getInstrument(instIdx) : nullptr;
-
-        // Only process if this is a VASynth type instrument
-        if (!instrument || instrument->getType() != model::InstrumentType::VASynth)
-            continue;
-
-        // Determine if this instrument should play
-        bool shouldPlay = true;
-        float volume = 1.0f;
-        float pan = 0.0f;
-
-        // Check mute/solo
-        if (anySoloed)
-        {
-            shouldPlay = instrument->isSoloed();
-        }
-        else
-        {
-            shouldPlay = !instrument->isMuted();
-        }
-
-        if (!shouldPlay)
-        {
-            continue;
-        }
-
-        volume = instrument->getVolume();
-        pan = instrument->getPan();
-
-        // Clear temp buffers
-        std::fill(tempL.begin(), tempL.begin() + numSamples, 0.0f);
-        std::fill(tempR.begin(), tempR.begin() + numSamples, 0.0f);
-
-        // Render VA synth to temp buffers
-        vaSynth->process(tempL.data(), tempR.data(), numSamples);
-
-        // Apply channel strip processing
-        if (instrument && channelStrips_[instIdx])
-        {
-            channelStrips_[instIdx]->updateParams(instrument->getChannelStrip());
-            channelStrips_[instIdx]->process(tempL.data(), tempR.data(), numSamples);
-        }
-
-        // Apply volume and pan, mix into output
-        float leftGain = volume * std::sqrt((1.0f - pan) / 2.0f);
-        float rightGain = volume * std::sqrt((1.0f + pan) / 2.0f);
-
-        for (int i = 0; i < numSamples; ++i)
-        {
-            float monoSample = (tempL[i] + tempR[i]) * 0.5f;
-            outL[i] += monoSample * leftGain * 2.0f;
-            outR[i] += monoSample * rightGain * 2.0f;
-
-            // Capture sidechain source audio
-            if (instIdx == sidechainSourceInst)
-            {
-                sidechainSourceL[i] += monoSample * leftGain * 2.0f;
-                sidechainSourceR[i] += monoSample * rightGain * 2.0f;
-            }
-        }
-
-        // Accumulate send levels
-        const auto& sends = instrument->getSends();
-        avgReverb += sends.reverb * volume;
-        avgDelay += sends.delay * volume;
-        avgChorus += sends.chorus * volume;
-        activeCount++;
+    if (!shouldPlay || !sampler->hasSample()) {
+      continue;
     }
 
-    // Process DX7 preset instruments
-    static int dx7ProcessCallCount = 0;
-    for (int instIdx = 0; instIdx < NUM_INSTRUMENTS; ++instIdx)
-    {
-        auto& dx7 = dx7Processors_[instIdx];
-        if (!dx7) continue;
+    volume = instrument->getVolume();
+    pan = instrument->getPan();
 
-        // Get instrument model for mixer settings
-        model::Instrument* instrument = project_ ? project_->getInstrument(instIdx) : nullptr;
+    // Clear temp buffers
+    std::fill(tempL.begin(), tempL.begin() + numSamples, 0.0f);
+    std::fill(tempR.begin(), tempR.begin() + numSamples, 0.0f);
 
-        // Only process if this is a DXPreset type instrument
-        if (!instrument || instrument->getType() != model::InstrumentType::DXPreset)
-            continue;
+    // Render sampler to temp buffers
+    sampler->process(tempL.data(), tempR.data(), numSamples);
 
-        // Log periodically when DX7 is being processed (every 1000 calls)
-        if (dx7ProcessCallCount++ % 1000 == 0)
-        {
-            std::cerr << "[AudioEngine] Processing DX7 inst=" << instIdx
-                      << " (call #" << dx7ProcessCallCount << ")" << std::endl;
-        }
-
-        // Determine if this instrument should play
-        bool shouldPlay = true;
-        float volume = 1.0f;
-        float pan = 0.0f;
-
-        // Check mute/solo
-        if (anySoloed)
-        {
-            shouldPlay = instrument->isSoloed();
-        }
-        else
-        {
-            shouldPlay = !instrument->isMuted();
-        }
-
-        if (!shouldPlay)
-        {
-            continue;
-        }
-
-        volume = instrument->getVolume();
-        pan = instrument->getPan();
-
-        // Clear temp buffers
-        std::fill(tempL.begin(), tempL.begin() + numSamples, 0.0f);
-        std::fill(tempR.begin(), tempR.begin() + numSamples, 0.0f);
-
-        // Render DX7 to temp buffers
-        dx7->process(tempL.data(), tempR.data(), numSamples);
-
-        // Apply volume and pan, mix into output
-        float leftGain = volume * std::sqrt((1.0f - pan) / 2.0f);
-        float rightGain = volume * std::sqrt((1.0f + pan) / 2.0f);
-
-        for (int i = 0; i < numSamples; ++i)
-        {
-            float monoSample = (tempL[i] + tempR[i]) * 0.5f;
-            outL[i] += monoSample * leftGain * 2.0f;
-            outR[i] += monoSample * rightGain * 2.0f;
-
-            // Capture sidechain source audio
-            if (instIdx == sidechainSourceInst)
-            {
-                sidechainSourceL[i] += monoSample * leftGain * 2.0f;
-                sidechainSourceR[i] += monoSample * rightGain * 2.0f;
-            }
-        }
-
-        // Accumulate send levels
-        const auto& sends = instrument->getSends();
-        avgReverb += sends.reverb * volume;
-        avgDelay += sends.delay * volume;
-        avgChorus += sends.chorus * volume;
-        // Note: drive is now part of ChannelStrip (per-instrument insert), not a send
-        activeCount++;
+    // Apply channel strip processing
+    if (instrument && channelStrips_[instIdx]) {
+      channelStrips_[instIdx]->updateParams(instrument->getChannelStrip());
+      channelStrips_[instIdx]->process(tempL.data(), tempR.data(), numSamples);
     }
 
-    if (activeCount > 0)
-    {
-        avgReverb /= static_cast<float>(activeCount);
-        avgDelay /= static_cast<float>(activeCount);
-        avgChorus /= static_cast<float>(activeCount);
+    // Apply volume and pan, mix into output
+    float leftGain = volume * std::sqrt((1.0f - pan) / 2.0f);
+    float rightGain = volume * std::sqrt((1.0f + pan) / 2.0f);
+
+    for (int i = 0; i < numSamples; ++i) {
+      float monoSample = (tempL[i] + tempR[i]) * 0.5f;
+      outL[i] += monoSample * leftGain * 2.0f;
+      outR[i] += monoSample * rightGain * 2.0f;
+
+      // Capture sidechain source audio
+      if (instIdx == sidechainSourceInst) {
+        sidechainSourceL[i] += monoSample * leftGain * 2.0f;
+        sidechainSourceR[i] += monoSample * rightGain * 2.0f;
+      }
     }
 
-    // Update effect parameters from project settings
-    if (project_)
-    {
-        const auto& mixer = project_->getMixer();
-        effects_.reverb.setParams(mixer.reverbSize, mixer.reverbDamping, 1.0f);
-        effects_.delay.setParams(mixer.delayTime, mixer.delayFeedback, 1.0f);
-        effects_.chorus.setParams(mixer.chorusRate, mixer.chorusDepth, 1.0f);
-        effects_.sidechain.setParams(mixer.sidechainAttack, mixer.sidechainRelease, mixer.sidechainRatio);
-        effects_.djFilter.setPosition(mixer.djFilterPosition);
-        effects_.limiter.setParams(mixer.limiterThreshold, mixer.limiterRelease);
+    // Accumulate send levels
+    const auto &sends = instrument->getSends();
+    avgReverb += sends.reverb * volume;
+    avgDelay += sends.delay * volume;
+    avgChorus += sends.chorus * volume;
+    activeCount++;
+  }
+
+  // Process slicer instruments
+  for (int instIdx = 0; instIdx < NUM_INSTRUMENTS; ++instIdx) {
+    auto &slicer = slicerProcessors_[instIdx];
+    if (!slicer)
+      continue;
+
+    // Get instrument model for mixer settings
+    model::Instrument *instrument =
+        project_ ? project_->getInstrument(instIdx) : nullptr;
+
+    // Only process if this is a Slicer type instrument
+    if (!instrument || instrument->getType() != model::InstrumentType::Slicer)
+      continue;
+
+    // Determine if this instrument should play
+    bool shouldPlay = true;
+    float volume = 1.0f;
+    float pan = 0.0f;
+
+    // Check mute/solo
+    if (anySoloed) {
+      shouldPlay = instrument->isSoloed();
+    } else {
+      shouldPlay = !instrument->isMuted();
     }
 
-    // Apply effects per sample
-    for (int i = 0; i < numSamples; ++i)
-    {
-        // Feed sidechain envelope follower with source audio level
-        if (sidechainSourceInst >= 0)
-        {
-            float sourceLevel = (sidechainSourceL[i] + sidechainSourceR[i]) * 0.5f;
-            effects_.sidechain.feedSource(sourceLevel);
-        }
-
-        // Apply reverb, delay, chorus
-        effects_.process(outL[i], outR[i], avgReverb, avgDelay, avgChorus);
-
-        // Apply sidechain ducking to entire output (all instruments except source are ducked)
-        // The source instrument is NOT ducked - it triggers the ducking
-        if (sidechainSourceInst >= 0)
-        {
-            effects_.sidechain.process(outL[i], outR[i]);
-        }
+    if (!shouldPlay || !slicer->hasSample()) {
+      continue;
     }
 
-    // Apply master volume and master bus effects (DJ filter + limiter)
-    if (project_)
-    {
-        float masterVol = project_->getMixer().masterVolume;
-        for (int i = 0; i < numSamples; ++i)
-        {
-            // Apply master volume
-            outL[i] *= masterVol;
-            outR[i] *= masterVol;
+    volume = instrument->getVolume();
+    pan = instrument->getPan();
 
-            // Apply master bus effects (DJ filter then limiter)
-            // Limiter replaces hard clipping for transparent peak control
-            effects_.processMaster(outL[i], outR[i]);
-        }
+    // Clear temp buffers
+    std::fill(tempL.begin(), tempL.begin() + numSamples, 0.0f);
+    std::fill(tempR.begin(), tempR.begin() + numSamples, 0.0f);
+
+    // Render slicer to temp buffers
+    slicer->process(tempL.data(), tempR.data(), numSamples);
+
+    // Apply channel strip processing
+    if (instrument && channelStrips_[instIdx]) {
+      channelStrips_[instIdx]->updateParams(instrument->getChannelStrip());
+      channelStrips_[instIdx]->process(tempL.data(), tempR.data(), numSamples);
     }
+
+    // Apply volume and pan, mix into output
+    float leftGain = volume * std::sqrt((1.0f - pan) / 2.0f);
+    float rightGain = volume * std::sqrt((1.0f + pan) / 2.0f);
+
+    for (int i = 0; i < numSamples; ++i) {
+      float monoSample = (tempL[i] + tempR[i]) * 0.5f;
+      outL[i] += monoSample * leftGain * 2.0f;
+      outR[i] += monoSample * rightGain * 2.0f;
+
+      // Capture sidechain source audio
+      if (instIdx == sidechainSourceInst) {
+        sidechainSourceL[i] += monoSample * leftGain * 2.0f;
+        sidechainSourceR[i] += monoSample * rightGain * 2.0f;
+      }
+    }
+
+    // Accumulate send levels
+    const auto &sends = instrument->getSends();
+    avgReverb += sends.reverb * volume;
+    avgDelay += sends.delay * volume;
+    avgChorus += sends.chorus * volume;
+    activeCount++;
+  }
+
+  // Process VA synth instruments via Track system (voice-per-track)
+  for (int trackIdx = 0; trackIdx < NUM_TRACKS; ++trackIdx) {
+    auto &track = tracks_[trackIdx];
+
+    // Skip if track has no voice or is not a VASynth instrument
+    if (!track.voice || track.currentInstrumentIndex < 0)
+      continue;
+
+    int instIdx = track.currentInstrumentIndex;
+    auto *vaSynth = getVASynthProcessor(instIdx);
+    if (!vaSynth)
+      continue;
+
+    // Get instrument model for mixer settings
+    model::Instrument *instrument =
+        project_ ? project_->getInstrument(instIdx) : nullptr;
+    if (!instrument || instrument->getType() != model::InstrumentType::VASynth)
+      continue;
+
+    // Determine if this instrument should play
+    bool shouldPlay = true;
+    float volume = 1.0f;
+    float pan = 0.0f;
+
+    // Check mute/solo
+    if (anySoloed) {
+      shouldPlay = instrument->isSoloed();
+    } else {
+      shouldPlay = !instrument->isMuted();
+    }
+
+    if (!shouldPlay) {
+      continue;
+    }
+
+    volume = instrument->getVolume();
+    pan = instrument->getPan();
+
+    // Clear temp buffers
+    std::fill(tempL.begin(), tempL.begin() + numSamples, 0.0f);
+    std::fill(tempR.begin(), tempR.begin() + numSamples, 0.0f);
+
+    // Render track (voice + tracker FX) to temp buffers
+    track.process(tempL.data(), tempR.data(), numSamples, vaSynth);
+
+    // Apply channel strip processing
+    if (instrument && channelStrips_[instIdx]) {
+      channelStrips_[instIdx]->updateParams(instrument->getChannelStrip());
+      channelStrips_[instIdx]->process(tempL.data(), tempR.data(), numSamples);
+    }
+
+    // Apply volume and pan, mix into output
+    float leftGain = volume * std::sqrt((1.0f - pan) / 2.0f);
+    float rightGain = volume * std::sqrt((1.0f + pan) / 2.0f);
+
+    for (int i = 0; i < numSamples; ++i) {
+      float monoSample = (tempL[i] + tempR[i]) * 0.5f;
+      outL[i] += monoSample * leftGain * 2.0f;
+      outR[i] += monoSample * rightGain * 2.0f;
+
+      // Capture sidechain source audio
+      if (instIdx == sidechainSourceInst) {
+        sidechainSourceL[i] += monoSample * leftGain * 2.0f;
+        sidechainSourceR[i] += monoSample * rightGain * 2.0f;
+      }
+    }
+
+    // Accumulate send levels (only count once per instrument, not per track)
+    const auto &sends = instrument->getSends();
+    avgReverb += sends.reverb * volume;
+    avgDelay += sends.delay * volume;
+    avgChorus += sends.chorus * volume;
+    activeCount++;
+  }
+
+  // Process Plaits instruments via Track system (voice-per-track)
+  for (int trackIdx = 0; trackIdx < NUM_TRACKS; ++trackIdx) {
+    auto &track = tracks_[trackIdx];
+
+    // Skip if track has no voice or is not a Plaits instrument
+    if (!track.voice || track.currentInstrumentIndex < 0)
+      continue;
+
+    int instIdx = track.currentInstrumentIndex;
+    auto *plaits = getPlaitsProcessor(instIdx);
+    if (!plaits)
+      continue;
+
+    // Get instrument model for mixer settings
+    model::Instrument *instrument =
+        project_ ? project_->getInstrument(instIdx) : nullptr;
+    if (!instrument || instrument->getType() != model::InstrumentType::Plaits)
+      continue;
+
+    // Determine if this instrument should play
+    bool shouldPlay = true;
+    float volume = 1.0f;
+    float pan = 0.0f;
+
+    // Check mute/solo
+    if (anySoloed) {
+      shouldPlay = instrument->isSoloed();
+    } else {
+      shouldPlay = !instrument->isMuted();
+    }
+
+    if (!shouldPlay) {
+      continue;
+    }
+
+    volume = instrument->getVolume();
+    pan = instrument->getPan();
+
+    // Clear temp buffers
+    std::fill(tempL.begin(), tempL.begin() + numSamples, 0.0f);
+    std::fill(tempR.begin(), tempR.begin() + numSamples, 0.0f);
+
+    // Render track (voice + tracker FX) to temp buffers
+    track.process(tempL.data(), tempR.data(), numSamples, plaits);
+
+    // Apply channel strip processing
+    if (instrument && channelStrips_[instIdx]) {
+      channelStrips_[instIdx]->updateParams(instrument->getChannelStrip());
+      channelStrips_[instIdx]->process(tempL.data(), tempR.data(), numSamples);
+    }
+
+    // Apply volume and pan, mix into output
+    float leftGain = volume * std::sqrt((1.0f - pan) / 2.0f);
+    float rightGain = volume * std::sqrt((1.0f + pan) / 2.0f);
+
+    for (int i = 0; i < numSamples; ++i) {
+      float monoSample = (tempL[i] + tempR[i]) * 0.5f;
+      outL[i] += monoSample * leftGain * 2.0f;
+      outR[i] += monoSample * rightGain * 2.0f;
+
+      // Capture sidechain source audio
+      if (instIdx == sidechainSourceInst) {
+        sidechainSourceL[i] += monoSample * leftGain * 2.0f;
+        sidechainSourceR[i] += monoSample * rightGain * 2.0f;
+      }
+    }
+
+    // Accumulate send levels (only count once per instrument, not per track)
+    const auto &sends = instrument->getSends();
+    avgReverb += sends.reverb * volume;
+    avgDelay += sends.delay * volume;
+    avgChorus += sends.chorus * volume;
+    activeCount++;
+  }
+
+  // Process DX7 preset instruments via Track system (voice-per-track)
+  for (int trackIdx = 0; trackIdx < NUM_TRACKS; ++trackIdx) {
+    auto &track = tracks_[trackIdx];
+
+    // Skip if track has no voice or is not a DX7 instrument
+    if (!track.voice || track.currentInstrumentIndex < 0)
+      continue;
+
+    int instIdx = track.currentInstrumentIndex;
+    auto *dx7 = getDX7Processor(instIdx);
+    if (!dx7)
+      continue;
+
+    // Get instrument model for mixer settings
+    model::Instrument *instrument =
+        project_ ? project_->getInstrument(instIdx) : nullptr;
+    if (!instrument || instrument->getType() != model::InstrumentType::DXPreset)
+      continue;
+
+    // Determine if this instrument should play
+    bool shouldPlay = true;
+    float volume = 1.0f;
+    float pan = 0.0f;
+
+    // Check mute/solo
+    if (anySoloed) {
+      shouldPlay = instrument->isSoloed();
+    } else {
+      shouldPlay = !instrument->isMuted();
+    }
+
+    if (!shouldPlay) {
+      continue;
+    }
+
+    volume = instrument->getVolume();
+    pan = instrument->getPan();
+
+    // Clear temp buffers
+    std::fill(tempL.begin(), tempL.begin() + numSamples, 0.0f);
+    std::fill(tempR.begin(), tempR.begin() + numSamples, 0.0f);
+
+    // Render track (voice + tracker FX) to temp buffers
+    track.process(tempL.data(), tempR.data(), numSamples, dx7);
+
+    // Apply channel strip processing
+    if (instrument && channelStrips_[instIdx]) {
+      channelStrips_[instIdx]->updateParams(instrument->getChannelStrip());
+      channelStrips_[instIdx]->process(tempL.data(), tempR.data(), numSamples);
+    }
+
+    // Apply volume and pan, mix into output
+    float leftGain = volume * std::sqrt((1.0f - pan) / 2.0f);
+    float rightGain = volume * std::sqrt((1.0f + pan) / 2.0f);
+
+    for (int i = 0; i < numSamples; ++i) {
+      float monoSample = (tempL[i] + tempR[i]) * 0.5f;
+      outL[i] += monoSample * leftGain * 2.0f;
+      outR[i] += monoSample * rightGain * 2.0f;
+
+      // Capture sidechain source audio
+      if (instIdx == sidechainSourceInst) {
+        sidechainSourceL[i] += monoSample * leftGain * 2.0f;
+        sidechainSourceR[i] += monoSample * rightGain * 2.0f;
+      }
+    }
+
+    // Accumulate send levels (only count once per instrument, not per track)
+    const auto &sends = instrument->getSends();
+    avgReverb += sends.reverb * volume;
+    avgDelay += sends.delay * volume;
+    avgChorus += sends.chorus * volume;
+    activeCount++;
+  }
+
+  if (activeCount > 0) {
+    avgReverb /= static_cast<float>(activeCount);
+    avgDelay /= static_cast<float>(activeCount);
+    avgChorus /= static_cast<float>(activeCount);
+  }
+
+  // Apply master gain compensation for 16-track voice-per-track architecture
+  // With up to 16 tracks potentially active, we need headroom to prevent
+  // clipping 0.25 = 1/4 = good headroom for typical chord usage (3-4 voices)
+  // The limiter at the end will catch any peaks that still exceed
+  constexpr float trackHeadroomGain = 0.25f;
+  for (int i = 0; i < numSamples; ++i) {
+    outL[i] *= trackHeadroomGain;
+    outR[i] *= trackHeadroomGain;
+  }
+
+  // Update effect parameters from project settings
+  if (project_) {
+    const auto &mixer = project_->getMixer();
+    effects_.reverb.setParams(mixer.reverbSize, mixer.reverbDamping, 1.0f);
+    effects_.delay.setParams(mixer.delayTime, mixer.delayFeedback, 1.0f);
+    effects_.chorus.setParams(mixer.chorusRate, mixer.chorusDepth, 1.0f);
+    effects_.sidechain.setParams(mixer.sidechainAttack, mixer.sidechainRelease,
+                                 mixer.sidechainRatio);
+    effects_.djFilter.setPosition(mixer.djFilterPosition);
+    effects_.limiter.setParams(mixer.limiterThreshold, mixer.limiterRelease);
+  }
+
+  // Apply effects per sample
+  for (int i = 0; i < numSamples; ++i) {
+    // Feed sidechain envelope follower with source audio level
+    if (sidechainSourceInst >= 0) {
+      float sourceLevel = (sidechainSourceL[i] + sidechainSourceR[i]) * 0.5f;
+      effects_.sidechain.feedSource(sourceLevel);
+    }
+
+    // Apply reverb, delay, chorus
+    effects_.process(outL[i], outR[i], avgReverb, avgDelay, avgChorus);
+
+    // Apply sidechain ducking to entire output (all instruments except source
+    // are ducked) The source instrument is NOT ducked - it triggers the ducking
+    if (sidechainSourceInst >= 0) {
+      effects_.sidechain.process(outL[i], outR[i]);
+    }
+  }
+
+  // Apply master volume and master bus effects (DJ filter + limiter)
+  if (project_) {
+    float masterVol = project_->getMixer().masterVolume;
+    for (int i = 0; i < numSamples; ++i) {
+      // Apply master volume
+      outL[i] *= masterVol;
+      outR[i] *= masterVol;
+
+      // Apply master bus effects (DJ filter then limiter)
+      // Limiter replaces hard clipping for transparent peak control
+      effects_.processMaster(outL[i], outR[i]);
+    }
+  }
 }
 
-void AudioEngine::advancePlayhead()
-{
-    // Called from audio thread - advance to next row
-    if (!project_) return;
+void AudioEngine::advancePlayhead() {
+  // Called from audio thread - advance to next row
+  if (!project_)
+    return;
 
-    auto* pattern = project_->getPattern(getCurrentPatternIndex());
-    if (pattern)
-    {
-        currentRow_ = (currentRow_ + 1) % pattern->getLength();
-    }
+  auto *pattern = project_->getPattern(getCurrentPatternIndex());
+  if (pattern) {
+    currentRow_ = (currentRow_ + 1) % pattern->getLength();
+  }
 }
 
-int AudioEngine::getCurrentPatternIndex() const
-{
-    if (playMode_ == PlayMode::Pattern)
-    {
-        // In pattern mode, just return the current pattern
-        return currentPattern_;
-    }
+int AudioEngine::getCurrentPatternIndex() const {
+  if (playMode_ == PlayMode::Pattern) {
+    // In pattern mode, just return the current pattern
+    return currentPattern_;
+  }
 
-    // In song mode, get the pattern from the current chain position
-    if (!project_) return currentPattern_;
+  // In song mode, get the pattern from the current chain position
+  if (!project_)
+    return currentPattern_;
 
-    const auto& song = project_->getSong();
+  const auto &song = project_->getSong();
 
-    // Get chain index from track 0 at current song row (track 0 drives timing)
-    const auto& track0 = song.getTrack(0);
-    if (currentSongRow_ >= static_cast<int>(track0.size()))
-    {
-        return currentPattern_;  // Fallback
-    }
+  // Get chain index from track 0 at current song row (track 0 drives timing)
+  const auto &track0 = song.getTrack(0);
+  if (currentSongRow_ >= static_cast<int>(track0.size())) {
+    return currentPattern_; // Fallback
+  }
 
-    int chainIndex = track0[static_cast<size_t>(currentSongRow_)];
-    if (chainIndex < 0)
-    {
-        return currentPattern_;  // Empty slot
-    }
+  int chainIndex = track0[static_cast<size_t>(currentSongRow_)];
+  if (chainIndex < 0) {
+    return currentPattern_; // Empty slot
+  }
 
-    auto* chain = project_->getChain(chainIndex);
-    if (!chain || chain->getPatternCount() == 0)
-    {
-        return currentPattern_;  // Empty chain
-    }
+  auto *chain = project_->getChain(chainIndex);
+  if (!chain || chain->getPatternCount() == 0) {
+    return currentPattern_; // Empty chain
+  }
 
-    // Get pattern index from current position in chain
-    if (currentChainPosition_ >= chain->getPatternCount())
-    {
-        return currentPattern_;
-    }
+  // Get pattern index from current position in chain
+  if (currentChainPosition_ >= chain->getPatternCount()) {
+    return currentPattern_;
+  }
 
-    return chain->getPatternIndices()[static_cast<size_t>(currentChainPosition_)];
+  return chain->getPatternIndices()[static_cast<size_t>(currentChainPosition_)];
 }
 
-int AudioEngine::getPatternIndexForColumn(int songColumn) const
-{
-    if (playMode_ == PlayMode::Pattern)
-    {
-        // In pattern mode, only column 0 plays
-        return (songColumn == 0) ? currentPattern_.load(std::memory_order_relaxed) : -1;
+int AudioEngine::getPatternIndexForColumn(int songColumn) const {
+  if (playMode_ == PlayMode::Pattern) {
+    // In pattern mode, only column 0 plays
+    return (songColumn == 0) ? currentPattern_.load(std::memory_order_relaxed)
+                             : -1;
+  }
+
+  if (!project_)
+    return -1;
+
+  const auto &song = project_->getSong();
+  const auto &track = song.getTrack(songColumn);
+
+  if (currentSongRow_ >= static_cast<int>(track.size())) {
+    return -1; // No chain at this position
+  }
+
+  int chainIndex = track[static_cast<size_t>(currentSongRow_)];
+  if (chainIndex < 0) {
+    return -1; // Empty slot
+  }
+
+  auto *chain = project_->getChain(chainIndex);
+  if (!chain || chain->getPatternCount() == 0) {
+    return -1; // Empty chain
+  }
+
+  // Get pattern index from this column's position in its chain
+  int chainPos = trackChainPositions_[static_cast<size_t>(songColumn)];
+  if (chainPos >= chain->getPatternCount()) {
+    return -1;
+  }
+
+  return chain->getPatternIndices()[static_cast<size_t>(chainPos)];
+}
+
+void AudioEngine::advanceChain() {
+  // Called when we finish a pattern in song mode
+  if (!project_)
+    return;
+
+  const auto &song = project_->getSong();
+  const auto &track0 = song.getTrack(0);
+
+  if (track0.empty() || song.getLength() == 0) {
+    // No song data - stay on current pattern
+    return;
+  }
+
+  // Get current chain
+  if (currentSongRow_ >= static_cast<int>(track0.size())) {
+    currentSongRow_ = 0;
+    currentChainPosition_ = 0;
+    return;
+  }
+
+  int chainIndex = track0[static_cast<size_t>(currentSongRow_)];
+  auto *chain = (chainIndex >= 0) ? project_->getChain(chainIndex) : nullptr;
+
+  if (chain && chain->getPatternCount() > 0) {
+    // Advance to next pattern in chain
+    currentChainPosition_++;
+
+    if (currentChainPosition_ >= chain->getPatternCount()) {
+      // Finished this chain, move to next song row
+      currentChainPosition_ = 0;
+      currentSongRow_++;
+
+      // Check for end of song
+      if (currentSongRow_ >= song.getLength()) {
+        currentSongRow_ = 0; // Loop back to beginning
+      }
     }
+  } else {
+    // Empty chain slot - skip to next song row
+    currentChainPosition_ = 0;
+    currentSongRow_++;
 
-    if (!project_) return -1;
+    // Check for end of song
+    if (currentSongRow_ >= song.getLength()) {
+      currentSongRow_ = 0; // Loop back to beginning
+    }
+  }
+}
 
-    const auto& song = project_->getSong();
-    const auto& track = song.getTrack(songColumn);
+void AudioEngine::advanceAllChains() {
+  // Advance all song columns' chain positions simultaneously
+  if (!project_)
+    return;
 
+  const auto &song = project_->getSong();
+  if (song.getLength() == 0)
+    return;
+
+  // Find the maximum pattern length across all active chains in this row
+  // We need to know when ALL chains are done with their current pattern
+  bool allChainsFinished = true;
+
+  // Advance each song column's chain position
+  for (int col = 0; col < NUM_TRACKS; ++col) {
+    const auto &track = song.getTrack(col);
     if (currentSongRow_ >= static_cast<int>(track.size()))
-    {
-        return -1;  // No chain at this position
-    }
+      continue;
 
     int chainIndex = track[static_cast<size_t>(currentSongRow_)];
     if (chainIndex < 0)
-    {
-        return -1;  // Empty slot
-    }
+      continue;
 
-    auto* chain = project_->getChain(chainIndex);
+    auto *chain = project_->getChain(chainIndex);
     if (!chain || chain->getPatternCount() == 0)
-    {
-        return -1;  // Empty chain
-    }
+      continue;
 
-    // Get pattern index from this column's position in its chain
-    int chainPos = trackChainPositions_[static_cast<size_t>(songColumn)];
-    if (chainPos >= chain->getPatternCount())
-    {
-        return -1;
-    }
+    // Advance this column's position in its chain
+    trackChainPositions_[static_cast<size_t>(col)]++;
 
-    return chain->getPatternIndices()[static_cast<size_t>(chainPos)];
+    // Check if this chain still has more patterns
+    if (trackChainPositions_[static_cast<size_t>(col)] <
+        chain->getPatternCount()) {
+      allChainsFinished = false;
+    }
+  }
+
+  // If all chains are done (or empty), move to next song row
+  if (allChainsFinished) {
+    currentSongRow_++;
+    trackChainPositions_.fill(0); // Reset all chain positions
+
+    // Loop back to beginning if at end of song
+    if (currentSongRow_ >= song.getLength()) {
+      currentSongRow_ = 0;
+    }
+  }
+
+  // Keep legacy currentChainPosition_ in sync with column 0 for backwards
+  // compatibility
+  currentChainPosition_ = trackChainPositions_[0];
 }
 
-void AudioEngine::advanceChain()
-{
-    // Called when we finish a pattern in song mode
-    if (!project_) return;
+int AudioEngine::getCurrentChainTranspose() const {
+  if (playMode_ != PlayMode::Song || !project_)
+    return 0;
 
-    const auto& song = project_->getSong();
-    const auto& track0 = song.getTrack(0);
+  const auto &song = project_->getSong();
+  const auto &track0 = song.getTrack(0);
 
-    if (track0.empty() || song.getLength() == 0)
-    {
-        // No song data - stay on current pattern
-        return;
-    }
+  if (currentSongRow_ >= static_cast<int>(track0.size()))
+    return 0;
 
-    // Get current chain
-    if (currentSongRow_ >= static_cast<int>(track0.size()))
-    {
-        currentSongRow_ = 0;
-        currentChainPosition_ = 0;
-        return;
-    }
+  int chainIndex = track0[static_cast<size_t>(currentSongRow_)];
+  if (chainIndex < 0)
+    return 0;
 
-    int chainIndex = track0[static_cast<size_t>(currentSongRow_)];
-    auto* chain = (chainIndex >= 0) ? project_->getChain(chainIndex) : nullptr;
+  auto *chain = project_->getChain(chainIndex);
+  if (!chain || currentChainPosition_ >= chain->getPatternCount())
+    return 0;
 
-    if (chain && chain->getPatternCount() > 0)
-    {
-        // Advance to next pattern in chain
-        currentChainPosition_++;
-
-        if (currentChainPosition_ >= chain->getPatternCount())
-        {
-            // Finished this chain, move to next song row
-            currentChainPosition_ = 0;
-            currentSongRow_++;
-
-            // Check for end of song
-            if (currentSongRow_ >= song.getLength())
-            {
-                currentSongRow_ = 0;  // Loop back to beginning
-            }
-        }
-    }
-    else
-    {
-        // Empty chain slot - skip to next song row
-        currentChainPosition_ = 0;
-        currentSongRow_++;
-
-        // Check for end of song
-        if (currentSongRow_ >= song.getLength())
-        {
-            currentSongRow_ = 0;  // Loop back to beginning
-        }
-    }
+  return chain->getTranspose(currentChainPosition_);
 }
 
-void AudioEngine::advanceAllChains()
-{
-    // Advance all song columns' chain positions simultaneously
-    if (!project_) return;
+int AudioEngine::getChainTransposeForColumn(int songColumn) const {
+  if (playMode_ != PlayMode::Song || !project_)
+    return 0;
 
-    const auto& song = project_->getSong();
-    if (song.getLength() == 0) return;
+  const auto &song = project_->getSong();
+  const auto &track = song.getTrack(songColumn);
 
-    // Find the maximum pattern length across all active chains in this row
-    // We need to know when ALL chains are done with their current pattern
-    bool allChainsFinished = true;
+  if (currentSongRow_ >= static_cast<int>(track.size()))
+    return 0;
 
-    // Advance each song column's chain position
-    for (int col = 0; col < NUM_TRACKS; ++col)
-    {
-        const auto& track = song.getTrack(col);
-        if (currentSongRow_ >= static_cast<int>(track.size())) continue;
+  int chainIndex = track[static_cast<size_t>(currentSongRow_)];
+  if (chainIndex < 0)
+    return 0;
 
-        int chainIndex = track[static_cast<size_t>(currentSongRow_)];
-        if (chainIndex < 0) continue;
+  auto *chain = project_->getChain(chainIndex);
+  int chainPos = trackChainPositions_[static_cast<size_t>(songColumn)];
+  if (!chain || chainPos >= chain->getPatternCount())
+    return 0;
 
-        auto* chain = project_->getChain(chainIndex);
-        if (!chain || chain->getPatternCount() == 0) continue;
+  return chain->getTranspose(chainPos);
+}
 
-        // Advance this column's position in its chain
-        trackChainPositions_[static_cast<size_t>(col)]++;
+int AudioEngine::transposeNoteByScaleDegrees(
+    int note, int degrees, const std::string &scaleLock) const {
+  if (degrees == 0 || scaleLock.empty())
+    return note;
 
-        // Check if this chain still has more patterns
-        if (trackChainPositions_[static_cast<size_t>(col)] < chain->getPatternCount())
-        {
-            allChainsFinished = false;
-        }
+  // Parse scale lock (e.g., "C Minor", "A# Major")
+  std::string rootStr;
+  std::string scaleType = "Major";
+  size_t spacePos = scaleLock.find(' ');
+  if (spacePos != std::string::npos) {
+    rootStr = scaleLock.substr(0, spacePos);
+    scaleType = scaleLock.substr(spacePos + 1);
+  } else {
+    rootStr = scaleLock;
+  }
+
+  // Convert root note to MIDI note (C0 = 12, C1 = 24, etc.)
+  static const char *noteNames[] = {"C",  "C#", "D",  "D#", "E",  "F",
+                                    "F#", "G",  "G#", "A",  "A#", "B"};
+  int rootNote = 0; // C by default
+  for (int i = 0; i < 12; ++i) {
+    if (rootStr == noteNames[i]) {
+      rootNote = i;
+      break;
+    }
+  }
+
+  // Scale intervals (semitones from root)
+  static const int majorScale[] = {0, 2, 4, 5, 7, 9, 11};
+  static const int minorScale[] = {0, 2, 3, 5, 7, 8, 10};
+  const int *scale = (scaleType == "Minor") ? minorScale : majorScale;
+
+  // Calculate note position relative to the scale root
+  int noteRelativeToRoot = note - rootNote;
+
+  // Find the scale octave (how many complete octaves from root)
+  int scaleOctave = noteRelativeToRoot / 12;
+  if (noteRelativeToRoot < 0 && noteRelativeToRoot % 12 != 0)
+    scaleOctave--; // Correct for negative modulo
+
+  // Note position within current scale octave (0-11)
+  int noteInScaleOctave = ((noteRelativeToRoot % 12) + 12) % 12;
+
+  // Find current scale degree
+  int currentDegree = 0;
+  int minDistance = 12;
+  for (int i = 0; i < 7; ++i) {
+    int dist = std::abs(noteInScaleOctave - scale[i]);
+    if (dist < minDistance) {
+      minDistance = dist;
+      currentDegree = i;
+    }
+  }
+
+  // Apply transpose in scale degrees
+  int newDegree = currentDegree + degrees;
+  int octaveShift = 0;
+
+  // Handle wrapping
+  while (newDegree >= 7) {
+    newDegree -= 7;
+    octaveShift++;
+  }
+  while (newDegree < 0) {
+    newDegree += 7;
+    octaveShift--;
+  }
+
+  // Calculate new note relative to root, then add root back
+  int newNote = rootNote + (scaleOctave + octaveShift) * 12 + scale[newDegree];
+  return std::clamp(newNote, 1, 127);
+}
+
+void AudioEngine::syncInstrumentParams(int instrumentIndex) {
+  if (!project_)
+    return;
+  if (instrumentIndex < 0 || instrumentIndex >= NUM_INSTRUMENTS)
+    return;
+
+  auto *instrument = project_->getInstrument(instrumentIndex);
+  if (!instrument)
+    return;
+
+  // Handle DX7 preset instrument separately
+  if (instrument->getType() == model::InstrumentType::DXPreset) {
+    auto *dx7 = getDX7Processor(instrumentIndex);
+    if (!dx7)
+      return;
+
+    const auto &dxParams = instrument->getDXParams();
+
+    // Load the preset if we have valid preset index (packedPatch will be
+    // populated by UI)
+    if (dxParams.presetIndex >= 0) {
+      dx7->loadPackedPatch(dxParams.packedPatch.data());
     }
 
-    // If all chains are done (or empty), move to next song row
-    if (allChainsFinished)
-    {
-        currentSongRow_++;
-        trackChainPositions_.fill(0);  // Reset all chain positions
+    // Set polyphony
+    dx7->setPolyphony(dxParams.polyphony);
+    return;
+  }
 
-        // Loop back to beginning if at end of song
-        if (currentSongRow_ >= song.getLength())
-        {
-            currentSongRow_ = 0;
-        }
-    }
+  // Handle Plaits instrument
+  auto *processor = instrumentProcessors_[instrumentIndex].get();
+  if (!processor)
+    return;
 
-    // Keep legacy currentChainPosition_ in sync with column 0 for backwards compatibility
-    currentChainPosition_ = trackChainPositions_[0];
+  // Sync basic parameters from model::Instrument to PlaitsInstrument
+  const auto &params = instrument->getParams();
+  processor->setParameter(kParamEngine,
+                          static_cast<float>(params.engine) / 15.0f);
+  processor->setParameter(kParamHarmonics, params.harmonics);
+  processor->setParameter(kParamTimbre, params.timbre);
+  processor->setParameter(kParamMorph, params.morph);
+  processor->setParameter(kParamAttack, params.attack);
+  processor->setParameter(kParamDecay, params.decay);
+  processor->setParameter(kParamPolyphony,
+                          static_cast<float>(params.polyphony) / 16.0f);
+
+  // Sync filter parameters
+  processor->setParameter(kParamCutoff, params.filter.cutoff);
+  processor->setParameter(kParamResonance, params.filter.resonance);
+
+  // Sync LFO1 parameters
+  processor->setParameter(kParamLfo1Rate,
+                          static_cast<float>(params.lfo1.rate) / 15.0f);
+  processor->setParameter(kParamLfo1Shape,
+                          static_cast<float>(params.lfo1.shape) / 4.0f);
+  processor->setParameter(kParamLfo1Dest,
+                          static_cast<float>(params.lfo1.dest) / 8.0f);
+  processor->setParameter(kParamLfo1Amount,
+                          static_cast<float>(params.lfo1.amount + 64) / 127.0f);
+
+  // Sync LFO2 parameters
+  processor->setParameter(kParamLfo2Rate,
+                          static_cast<float>(params.lfo2.rate) / 15.0f);
+  processor->setParameter(kParamLfo2Shape,
+                          static_cast<float>(params.lfo2.shape) / 4.0f);
+  processor->setParameter(kParamLfo2Dest,
+                          static_cast<float>(params.lfo2.dest) / 8.0f);
+  processor->setParameter(kParamLfo2Amount,
+                          static_cast<float>(params.lfo2.amount + 64) / 127.0f);
+
+  // Sync ENV1 parameters
+  processor->setParameter(kParamEnv1Attack, params.env1.attack);
+  processor->setParameter(kParamEnv1Decay, params.env1.decay);
+  processor->setParameter(kParamEnv1Dest,
+                          static_cast<float>(params.env1.dest) / 8.0f);
+  processor->setParameter(kParamEnv1Amount,
+                          static_cast<float>(params.env1.amount + 64) / 127.0f);
+
+  // Sync ENV2 parameters
+  processor->setParameter(kParamEnv2Attack, params.env2.attack);
+  processor->setParameter(kParamEnv2Decay, params.env2.decay);
+  processor->setParameter(kParamEnv2Dest,
+                          static_cast<float>(params.env2.dest) / 8.0f);
+  processor->setParameter(kParamEnv2Amount,
+                          static_cast<float>(params.env2.amount + 64) / 127.0f);
+
+  // Sync tempo
+  processor->setTempo(project_->getTempo());
 }
 
-int AudioEngine::getCurrentChainTranspose() const
-{
-    if (playMode_ != PlayMode::Song || !project_) return 0;
-
-    const auto& song = project_->getSong();
-    const auto& track0 = song.getTrack(0);
-
-    if (currentSongRow_ >= static_cast<int>(track0.size())) return 0;
-
-    int chainIndex = track0[static_cast<size_t>(currentSongRow_)];
-    if (chainIndex < 0) return 0;
-
-    auto* chain = project_->getChain(chainIndex);
-    if (!chain || currentChainPosition_ >= chain->getPatternCount()) return 0;
-
-    return chain->getTranspose(currentChainPosition_);
+PlaitsInstrument *AudioEngine::getInstrumentProcessor(int index) {
+  if (index >= 0 && index < NUM_INSTRUMENTS)
+    return instrumentProcessors_[index].get();
+  return nullptr;
 }
 
-int AudioEngine::getChainTransposeForColumn(int songColumn) const
-{
-    if (playMode_ != PlayMode::Song || !project_) return 0;
-
-    const auto& song = project_->getSong();
-    const auto& track = song.getTrack(songColumn);
-
-    if (currentSongRow_ >= static_cast<int>(track.size())) return 0;
-
-    int chainIndex = track[static_cast<size_t>(currentSongRow_)];
-    if (chainIndex < 0) return 0;
-
-    auto* chain = project_->getChain(chainIndex);
-    int chainPos = trackChainPositions_[static_cast<size_t>(songColumn)];
-    if (!chain || chainPos >= chain->getPatternCount()) return 0;
-
-    return chain->getTranspose(chainPos);
+const PlaitsInstrument *AudioEngine::getInstrumentProcessor(int index) const {
+  if (index >= 0 && index < NUM_INSTRUMENTS)
+    return instrumentProcessors_[index].get();
+  return nullptr;
 }
 
-int AudioEngine::transposeNoteByScaleDegrees(int note, int degrees, const std::string& scaleLock) const
-{
-    if (degrees == 0 || scaleLock.empty()) return note;
-
-    // Parse scale lock (e.g., "C Minor", "A# Major")
-    std::string rootStr;
-    std::string scaleType = "Major";
-    size_t spacePos = scaleLock.find(' ');
-    if (spacePos != std::string::npos)
-    {
-        rootStr = scaleLock.substr(0, spacePos);
-        scaleType = scaleLock.substr(spacePos + 1);
-    }
-    else
-    {
-        rootStr = scaleLock;
-    }
-
-    // Convert root note to MIDI note (C0 = 12, C1 = 24, etc.)
-    static const char* noteNames[] = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
-    int rootNote = 0;  // C by default
-    for (int i = 0; i < 12; ++i)
-    {
-        if (rootStr == noteNames[i])
-        {
-            rootNote = i;
-            break;
-        }
-    }
-
-    // Scale intervals (semitones from root)
-    static const int majorScale[] = { 0, 2, 4, 5, 7, 9, 11 };
-    static const int minorScale[] = { 0, 2, 3, 5, 7, 8, 10 };
-    const int* scale = (scaleType == "Minor") ? minorScale : majorScale;
-
-    // Calculate note position relative to the scale root
-    int noteRelativeToRoot = note - rootNote;
-
-    // Find the scale octave (how many complete octaves from root)
-    int scaleOctave = noteRelativeToRoot / 12;
-    if (noteRelativeToRoot < 0 && noteRelativeToRoot % 12 != 0)
-        scaleOctave--;  // Correct for negative modulo
-
-    // Note position within current scale octave (0-11)
-    int noteInScaleOctave = ((noteRelativeToRoot % 12) + 12) % 12;
-
-    // Find current scale degree
-    int currentDegree = 0;
-    int minDistance = 12;
-    for (int i = 0; i < 7; ++i)
-    {
-        int dist = std::abs(noteInScaleOctave - scale[i]);
-        if (dist < minDistance)
-        {
-            minDistance = dist;
-            currentDegree = i;
-        }
-    }
-
-    // Apply transpose in scale degrees
-    int newDegree = currentDegree + degrees;
-    int octaveShift = 0;
-
-    // Handle wrapping
-    while (newDegree >= 7)
-    {
-        newDegree -= 7;
-        octaveShift++;
-    }
-    while (newDegree < 0)
-    {
-        newDegree += 7;
-        octaveShift--;
-    }
-
-    // Calculate new note relative to root, then add root back
-    int newNote = rootNote + (scaleOctave + octaveShift) * 12 + scale[newDegree];
-    return std::clamp(newNote, 1, 127);
+SamplerInstrument *AudioEngine::getSamplerProcessor(int index) {
+  if (index >= 0 && index < NUM_INSTRUMENTS)
+    return samplerProcessors_[index].get();
+  return nullptr;
 }
 
-void AudioEngine::syncInstrumentParams(int instrumentIndex)
-{
-    if (!project_) return;
-    if (instrumentIndex < 0 || instrumentIndex >= NUM_INSTRUMENTS) return;
-
-    auto* instrument = project_->getInstrument(instrumentIndex);
-    if (!instrument) return;
-
-    // Handle DX7 preset instrument separately
-    if (instrument->getType() == model::InstrumentType::DXPreset)
-    {
-        auto* dx7 = getDX7Processor(instrumentIndex);
-        if (!dx7) return;
-
-        const auto& dxParams = instrument->getDXParams();
-
-        // Load the preset if we have valid preset index (packedPatch will be populated by UI)
-        if (dxParams.presetIndex >= 0)
-        {
-            dx7->loadPackedPatch(dxParams.packedPatch.data());
-        }
-
-        // Set polyphony
-        dx7->setPolyphony(dxParams.polyphony);
-        return;
-    }
-
-    // Handle Plaits instrument
-    auto* processor = instrumentProcessors_[instrumentIndex].get();
-    if (!processor) return;
-
-    // Sync basic parameters from model::Instrument to PlaitsInstrument
-    const auto& params = instrument->getParams();
-    processor->setParameter(kParamEngine, static_cast<float>(params.engine) / 15.0f);
-    processor->setParameter(kParamHarmonics, params.harmonics);
-    processor->setParameter(kParamTimbre, params.timbre);
-    processor->setParameter(kParamMorph, params.morph);
-    processor->setParameter(kParamAttack, params.attack);
-    processor->setParameter(kParamDecay, params.decay);
-    processor->setParameter(kParamPolyphony, static_cast<float>(params.polyphony) / 16.0f);
-
-    // Sync filter parameters
-    processor->setParameter(kParamCutoff, params.filter.cutoff);
-    processor->setParameter(kParamResonance, params.filter.resonance);
-
-    // Sync LFO1 parameters
-    processor->setParameter(kParamLfo1Rate, static_cast<float>(params.lfo1.rate) / 15.0f);
-    processor->setParameter(kParamLfo1Shape, static_cast<float>(params.lfo1.shape) / 4.0f);
-    processor->setParameter(kParamLfo1Dest, static_cast<float>(params.lfo1.dest) / 8.0f);
-    processor->setParameter(kParamLfo1Amount, static_cast<float>(params.lfo1.amount + 64) / 127.0f);
-
-    // Sync LFO2 parameters
-    processor->setParameter(kParamLfo2Rate, static_cast<float>(params.lfo2.rate) / 15.0f);
-    processor->setParameter(kParamLfo2Shape, static_cast<float>(params.lfo2.shape) / 4.0f);
-    processor->setParameter(kParamLfo2Dest, static_cast<float>(params.lfo2.dest) / 8.0f);
-    processor->setParameter(kParamLfo2Amount, static_cast<float>(params.lfo2.amount + 64) / 127.0f);
-
-    // Sync ENV1 parameters
-    processor->setParameter(kParamEnv1Attack, params.env1.attack);
-    processor->setParameter(kParamEnv1Decay, params.env1.decay);
-    processor->setParameter(kParamEnv1Dest, static_cast<float>(params.env1.dest) / 8.0f);
-    processor->setParameter(kParamEnv1Amount, static_cast<float>(params.env1.amount + 64) / 127.0f);
-
-    // Sync ENV2 parameters
-    processor->setParameter(kParamEnv2Attack, params.env2.attack);
-    processor->setParameter(kParamEnv2Decay, params.env2.decay);
-    processor->setParameter(kParamEnv2Dest, static_cast<float>(params.env2.dest) / 8.0f);
-    processor->setParameter(kParamEnv2Amount, static_cast<float>(params.env2.amount + 64) / 127.0f);
-
-    // Sync tempo
-    processor->setTempo(project_->getTempo());
+SlicerInstrument *AudioEngine::getSlicerProcessor(int index) {
+  if (index >= 0 && index < NUM_INSTRUMENTS)
+    return slicerProcessors_[index].get();
+  return nullptr;
 }
 
-PlaitsInstrument* AudioEngine::getInstrumentProcessor(int index)
-{
-    if (index >= 0 && index < NUM_INSTRUMENTS)
-        return instrumentProcessors_[index].get();
-    return nullptr;
+VASynthInstrument *AudioEngine::getVASynthProcessor(int index) {
+  if (index >= 0 && index < NUM_INSTRUMENTS)
+    return vaSynthProcessors_[index].get();
+  return nullptr;
 }
 
-const PlaitsInstrument* AudioEngine::getInstrumentProcessor(int index) const
-{
-    if (index >= 0 && index < NUM_INSTRUMENTS)
-        return instrumentProcessors_[index].get();
-    return nullptr;
+PlaitsInstrument *AudioEngine::getPlaitsProcessor(int index) {
+  if (index >= 0 && index < NUM_INSTRUMENTS)
+    return instrumentProcessors_[index].get();
+  return nullptr;
 }
 
-SamplerInstrument* AudioEngine::getSamplerProcessor(int index)
-{
-    if (index >= 0 && index < NUM_INSTRUMENTS)
-        return samplerProcessors_[index].get();
-    return nullptr;
-}
-
-SlicerInstrument* AudioEngine::getSlicerProcessor(int index)
-{
-    if (index >= 0 && index < NUM_INSTRUMENTS)
-        return slicerProcessors_[index].get();
-    return nullptr;
-}
-
-VASynthInstrument* AudioEngine::getVASynthProcessor(int index)
-{
-    if (index >= 0 && index < NUM_INSTRUMENTS)
-        return vaSynthProcessors_[index].get();
-    return nullptr;
-}
-
-DX7Instrument* AudioEngine::getDX7Processor(int index)
-{
-    if (index >= 0 && index < NUM_INSTRUMENTS)
-        return dx7Processors_[index].get();
-    return nullptr;
+DX7Instrument *AudioEngine::getDX7Processor(int index) {
+  if (index >= 0 && index < NUM_INSTRUMENTS)
+    return dx7Processors_[index].get();
+  return nullptr;
 }
 
 } // namespace audio

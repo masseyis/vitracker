@@ -54,7 +54,8 @@ public:
         // Portamento
         portamentoSpeed_ = 0;
         portamentoTarget_ = note;
-        currentPitch_ = static_cast<float>(note);
+        // Don't reset currentPitch_ yet - will be set after parsing FX commands
+        // so we can preserve previous pitch for portamento
 
         // Vibrato
         vibratoSpeed_ = 0;
@@ -103,6 +104,12 @@ public:
             }
         }
 
+        // Set current pitch - preserve previous pitch if portamento is active
+        if (portamentoSpeed_ == 0) {
+            currentPitch_ = static_cast<float>(note);
+        }
+        // else: keep currentPitch_ at previous value for portamento glide
+
         // If no delay, activate immediately
         if (noteDelay_ == 0) {
             active_ = true;
@@ -130,14 +137,12 @@ public:
 
                 // Arpeggio - cycle through notes every 2 ticks (starting from tick 2)
                 // This gives a more musical arpeggio speed at typical BPMs
+                // ARP works through pitch modulation, not retriggering
                 if (active_ && tickCounter_ > 0 && tickCounter_ % 2 == 0 && (arpNotes_[1] != 0 || arpNotes_[2] != 0)) {
                     arpIndex_ = (arpIndex_ + 1) % 3;
                     currentNote_ = baseNote_ + arpNotes_[arpIndex_];
-                    // Always trigger on arpeggio tick, even if same note
-                    // (we released the previous note, so need to retrigger)
-                    if (onNoteOn) {
-                        onNoteOn(currentNote_, currentVelocity_);
-                    }
+                    // Don't call onNoteOn for ARP - it works through pitch modulation
+                    // The pitch difference will be applied in the voice processing
                 }
 
                 // Retrigger
@@ -169,7 +174,9 @@ public:
             if (active_) {
                 // Portamento - smooth pitch glide
                 if (portamentoSpeed_ > 0) {
-                    float glideSpeed = portamentoSpeed_ / 255.0f * 0.1f;  // Scale to reasonable rate
+                    // Scale to semitones per sample: FF (255) = ~12 semitones per second at 48kHz
+                    // That's 12 semitones / 48000 samples = 0.00025 per sample
+                    float glideSpeed = portamentoSpeed_ / 255.0f * 12.0f / static_cast<float>(sampleRate_);
                     if (currentPitch_ < portamentoTarget_) {
                         currentPitch_ = std::min(currentPitch_ + glideSpeed, static_cast<float>(portamentoTarget_));
                     } else if (currentPitch_ > portamentoTarget_) {
@@ -183,7 +190,8 @@ public:
                     vibratoPhase_ += (lfoRate * 2.0f * M_PI) / static_cast<float>(sampleRate_);
                     if (vibratoPhase_ > 2.0f * M_PI) vibratoPhase_ -= 2.0f * M_PI;
 
-                    float vibrato = std::sin(vibratoPhase_) * (vibratoDepth_ / 16.0f);  // ±1 semitone max
+                    // Increased depth: FF = ±4 semitones (more noticeable vibrato)
+                    float vibrato = std::sin(vibratoPhase_) * (vibratoDepth_ / 4.0f);
                     return currentPitch_ + vibrato;
                 }
             }
@@ -194,6 +202,13 @@ public:
 
     bool isActive() const { return active_; }
     int getCurrentNote() const { return currentNote_; }
+
+    // Stop all FX and deactivate
+    void stop() {
+        active_ = false;
+        tickCounter_ = 0;
+        sampleCounter_ = 0;
+    }
 
 private:
     void updateTickLength() {

@@ -1,5 +1,6 @@
 #include "PlaitsInstrument.h"
 #include "Voice.h"
+#include "PlaitsVoice.h"
 #include <cmath>
 #include <cstring>
 #include <algorithm>
@@ -7,13 +8,40 @@
 namespace audio {
 
 std::unique_ptr<audio::Voice> PlaitsInstrument::createVoice() {
-    // TODO: Implement PlaitsVoice class
-    return nullptr;
+    auto voice = std::make_unique<PlaitsVoice>();
+    voice->setSampleRate(sampleRate_);
+
+    // Build parameters from member variables
+    model::PlaitsParams params;
+    params.engine = engine_;
+    params.harmonics = harmonics_;
+    params.timbre = timbre_;
+    params.morph = morph_;
+    params.attack = attack_;
+    params.decay = decay_;
+    params.lpgColour = 0.5f;  // Default value
+
+    voice->updateParameters(params);
+    return voice;
 }
 
 void PlaitsInstrument::updateVoiceParameters(audio::Voice* voice) {
-    // TODO: Implement parameter update for PlaitsVoice
-    (void)voice;
+    if (!voice) return;
+
+    auto* plaitsVoice = dynamic_cast<PlaitsVoice*>(voice);
+    if (!plaitsVoice) return;
+
+    // Build parameters from member variables
+    model::PlaitsParams params;
+    params.engine = engine_;
+    params.harmonics = harmonics_;
+    params.timbre = timbre_;
+    params.morph = morph_;
+    params.attack = attack_;
+    params.decay = decay_;
+    params.lpgColour = 0.5f;  // Default value
+
+    plaitsVoice->updateParameters(params);
 }
 
 static const char* kEngineNames[16] = {

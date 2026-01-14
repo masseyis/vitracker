@@ -37,18 +37,16 @@ VASynthInstrument::VASynthInstrument() {
 
 void VASynthInstrument::init(double sampleRate) {
     sampleRate_ = sampleRate;
-    for (auto& voice : voices_) {
-        voice.init(static_cast<float>(sampleRate));
-    }
+    // Legacy polyphony code disabled (will be removed in Task 11)
+    // Voices are now created per-track via createVoice()
     modMatrix_.init();
     modMatrix_.setTempo(tempo_);
 }
 
 void VASynthInstrument::setSampleRate(double sampleRate) {
     sampleRate_ = sampleRate;
-    for (auto& voice : voices_) {
-        voice.setSampleRate(static_cast<float>(sampleRate));
-    }
+    // Legacy polyphony code disabled (will be removed in Task 11)
+    // Sample rate is set per-voice when created
 }
 
 void VASynthInstrument::noteOn(int note, float velocity) {
@@ -57,137 +55,52 @@ void VASynthInstrument::noteOn(int note, float velocity) {
 }
 
 void VASynthInstrument::noteOnWithFX(int note, float velocity, const model::Step& step) {
-    if (!instrument_) return;
+    // STUB: Legacy polyphony code disabled
+    // This will be implemented properly in Task 7 using Track-owned voices
+    // For now, modulation matrix is triggered but no voice is played
+    (void)note;
+    (void)velocity;
+    (void)step;
 
-    const auto& params = instrument_->getVAParams();
-
-    // Handle mono mode
-    if (params.monoMode) {
-        // In mono mode, retrigger existing voice or use first voice
-        auto* voice = &voices_[0];
-        if (voice->isActive()) {
-            // Legato: don't reset envelopes
-            voice->trigger(note, velocity, params, step);
-        } else {
-            voice->trigger(note, velocity, params, step);
-        }
-    } else {
-        // Polyphonic mode
-        auto* voice = findFreeVoice();
-        if (!voice) {
-            voice = findVoiceToSteal();
-        }
-
-        if (voice) {
-            voice->trigger(note, velocity, params, step);
-        }
-    }
-
-    // Trigger modulation envelopes on first note after silence
-    int newActiveCount = 0;
-    for (const auto& v : voices_) {
-        if (v.isActive()) newActiveCount++;
-    }
-    if (activeVoiceCount_ == 0 && newActiveCount > 0) {
+    if (activeVoiceCount_ == 0) {
         modMatrix_.triggerEnvelopes();
+        activeVoiceCount_ = 1;  // Fake active voice to prevent retriggering
     }
-    activeVoiceCount_ = newActiveCount;
 }
 
 void VASynthInstrument::noteOff(int note) {
-    for (auto& voice : voices_) {
-        if (voice.isActive() && voice.getNote() == note) {
-            voice.release();
-        }
-    }
+    // STUB: Will be implemented in Task 7
+    (void)note;
+    activeVoiceCount_ = 0;
 }
 
 void VASynthInstrument::allNotesOff() {
-    for (auto& voice : voices_) {
-        voice.release();
-    }
+    // STUB: Will be implemented in Task 7
+    activeVoiceCount_ = 0;
 }
 
 void VASynthInstrument::process(float* outL, float* outR, int numSamples) {
-    // Clear output buffers
+    // STUB: Legacy polyphony code disabled
+    // This will be implemented properly in Task 7 using Track-owned voices
+    // For now, just clear output and process modulation
     std::fill(outL, outL + numSamples, 0.0f);
     std::fill(outR, outR + numSamples, 0.0f);
 
     if (!instrument_) return;
 
-    const auto& params = instrument_->getVAParams();
-
-    // Process in chunks to avoid buffer overflow
-    int samplesRemaining = numSamples;
-    int offset = 0;
-
-    while (samplesRemaining > 0) {
-        int blockSize = std::min(samplesRemaining, kMaxBlockSize);
-
-        // Clear temp buffers
-        std::fill_n(tempBufferL_.begin(), blockSize, 0.0f);
-        std::fill_n(tempBufferR_.begin(), blockSize, 0.0f);
-
-        // Update modulation (once per block)
-        updateModulationParams();
-        modMatrix_.process(static_cast<float>(sampleRate_), blockSize);
-
-        // Render all voices into temp buffer (mono, we'll duplicate for stereo)
-        for (auto& voice : voices_) {
-            if (voice.isActive()) {
-                for (int i = 0; i < blockSize; ++i) {
-                    float sample = voice.process(params);
-                    tempBufferL_[static_cast<size_t>(i)] += sample;
-                    tempBufferR_[static_cast<size_t>(i)] += sample;
-                }
-            }
-        }
-
-        // Apply modulation (volume, pan, etc.)
-        applyModulation(tempBufferL_.data(), tempBufferR_.data(), blockSize);
-
-        // Copy to output
-        for (int i = 0; i < blockSize; ++i) {
-            outL[offset + i] = tempBufferL_[static_cast<size_t>(i)];
-            outR[offset + i] = tempBufferR_[static_cast<size_t>(i)];
-        }
-
-        offset += blockSize;
-        samplesRemaining -= blockSize;
-    }
-
-    // Update active voice count
-    activeVoiceCount_ = 0;
-    for (const auto& voice : voices_) {
-        if (voice.isActive()) activeVoiceCount_++;
-    }
+    // Update and process modulation (for UI display even if no audio)
+    updateModulationParams();
+    modMatrix_.process(static_cast<float>(sampleRate_), numSamples);
 }
 
 VASynthVoice* VASynthInstrument::findFreeVoice() {
-    // Respect polyphony setting from instrument params
-    int maxVoices = NUM_VOICES;
-    if (instrument_) {
-        maxVoices = std::clamp(instrument_->getVAParams().polyphony, 1, NUM_VOICES);
-    }
-
-    for (int i = 0; i < maxVoices; ++i) {
-        if (!voices_[static_cast<size_t>(i)].isActive()) {
-            return &voices_[static_cast<size_t>(i)];
-        }
-    }
+    // STUB: Will be removed in Task 11
     return nullptr;
 }
 
 VASynthVoice* VASynthInstrument::findVoiceToSteal() {
-    // Steal oldest voice within polyphony limit
-    int maxVoices = NUM_VOICES;
-    if (instrument_) {
-        maxVoices = std::clamp(instrument_->getVAParams().polyphony, 1, NUM_VOICES);
-    }
-    // Simple: steal the first voice within polyphony limit
-    // More sophisticated: could track voice ages and steal oldest
-    (void)maxVoices;  // Used for polyphony limit, but simple impl just steals voice 0
-    return &voices_[0];
+    // STUB: Will be removed in Task 11
+    return nullptr;
 }
 
 int64_t VASynthInstrument::getPlayheadPosition() const {
@@ -198,10 +111,7 @@ int64_t VASynthInstrument::getPlayheadPosition() const {
 void VASynthInstrument::setTempo(double bpm) {
     tempo_ = bpm;
     modMatrix_.setTempo(bpm);
-    // Update tempo for all voices for tracker FX timing
-    for (auto& voice : voices_) {
-        voice.setTempo(static_cast<float>(bpm));
-    }
+    // Legacy polyphony code removed - tempo will be set on Track-owned voices
 }
 
 void VASynthInstrument::updateModulationParams() {

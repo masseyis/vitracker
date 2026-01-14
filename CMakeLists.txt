@@ -76,7 +76,7 @@ target_sources(Vitracker PRIVATE
     src/ui/HelpPopup.cpp
     src/ui/ChordPopup.cpp
     src/ui/AudioSettingsPopup.cpp
-    src/audio/Voice.cpp
+    # src/audio/Voice.cpp  # Old concrete Voice class - replaced by Voice interface
     src/audio/AudioEngine.cpp
     src/audio/Effects.cpp
     src/audio/BiquadFilter.cpp
@@ -90,7 +90,9 @@ target_sources(Vitracker PRIVATE
     src/audio/SlicerInstrument.cpp
     src/audio/VASynthVoice.cpp
     src/audio/VASynthInstrument.cpp
+    src/audio/DX7Voice.cpp
     src/audio/DX7Instrument.cpp
+    src/audio/PlaitsVoice.cpp
     ${DSP_SOURCES}
     ${rubberband_SOURCE_DIR}/single/RubberBandSingle.cpp)
 
